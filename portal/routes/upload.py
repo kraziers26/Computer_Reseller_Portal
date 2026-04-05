@@ -62,7 +62,7 @@ def invoice_to_dict(invoice):
                                if getattr(invoice, 'costco_taxes_paid', None) else None,
         'needs_review':        invoice.needs_review,
         'parse_errors':        invoice.parse_errors,
-        'items':               items,
+        'items':               items if isinstance(items, list) else [],
     }
 
 
