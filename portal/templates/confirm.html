@@ -85,7 +85,7 @@
       <table>
         <thead><tr><th>Description</th><th>SKU / Model</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
         <tbody>
-        {% for item in invoice.items %}
+        {% for item in invoice.items or [] %}
         <tr>
           <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.item_description }}</td>
           <td class="mono">{{ item.sku_model_color or '—' }}</td>
