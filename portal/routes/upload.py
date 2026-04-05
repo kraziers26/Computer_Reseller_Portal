@@ -1,5 +1,5 @@
 import os, sys, uuid, json
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify, send_file
 from flask_login import login_required, current_user
 from ..auth_utils import require_role
 from ..db import db_cursor
@@ -99,6 +99,7 @@ def upload():
 
         invoice_data = invoice_to_dict(invoice)
         invoice_data['_tmp_path'] = tmp_path
+        invoice_data['pdf_url'] = url_for('upload.serve_pdf')
 
         # Store in session for confirmation step
         session['pending_invoice'] = json.dumps(invoice_data)
@@ -132,6 +133,7 @@ def confirm():
 
         # Collect confirmed/corrected values from form
         company_id   = request.form.get('company_id', type=int)
+        form_user_id = request.form.get('user_id', type=int) or current_user.id
         card_last4   = request.form.get('card_last4', '').strip().zfill(4) or None
         order_number = request.form.get('order_number', '').strip()
         price_total  = request.form.get('price_total', type=float)
@@ -139,7 +141,11 @@ def confirm():
 
         if not company_id:
             flash('Please select a company.', 'error')
-            return render_template('confirm.html', invoice=invoice_data, companies=companies)
+                with db_cursor() as (cur2, _):
+            cur2.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+            users = cur2.fetchall()
+    return render_template('confirm.html', invoice=invoice_data, companies=companies,
+                           users=users, current_user_id=current_user.id)
 
         # Lookup cashback rate
         cashback_rate = None
@@ -188,7 +194,7 @@ def confirm():
                 invoice_data['retailer'],
                 invoice_data['purchase_date'],
                 invoice_data['purchase_year_month'],
-                current_user.id,
+                form_user_id,
                 company_id,
                 card_last4,
                 price_total,
@@ -222,7 +228,11 @@ def confirm():
         flash(f'Order #{order_number} submitted successfully!', 'success')
         return redirect(url_for('upload.my_submissions'))
 
-    return render_template('confirm.html', invoice=invoice_data, companies=companies)
+        with db_cursor() as (cur2, _):
+            cur2.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+            users = cur2.fetchall()
+    return render_template('confirm.html', invoice=invoice_data, companies=companies,
+                           users=users, current_user_id=current_user.id)
 
 
 @upload_bp.route('/submissions/mine')
@@ -254,3 +264,18 @@ def my_submissions():
     return render_template('my_submissions.html',
                            submissions=submissions,
                            page=page, per_page=per_page, total=total)
+
+
+@upload_bp.route('/upload/preview-pdf')
+@login_required
+@require_role('submitter')
+def serve_pdf():
+    """Stream the pending invoice PDF back to the browser for inline preview."""
+    if 'pending_invoice' not in session:
+        return 'No pending invoice', 404
+    import json as _json
+    invoice_data = _json.loads(session['pending_invoice'])
+    tmp_path = invoice_data.get('_tmp_path', '')
+    if not tmp_path or not os.path.exists(tmp_path):
+        return 'PDF not found', 404
+    return send_file(tmp_path, mimetype='application/pdf')
