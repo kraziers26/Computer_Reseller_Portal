@@ -207,11 +207,11 @@ def confirm():
                 item_rows = [(str(uuid.uuid4()), tid, it['item_description'],
                               it['sku_model_color'], it['quantity'],
                               it['unit_price'], it['line_total']) for it in items]
-                from psycopg2.extras import execute_values
-                execute_values(cur, """
+                cur.executemany("""
                     INSERT INTO transaction_items
                     (item_id, transaction_id, item_description, sku_model_color,
-                     quantity, unit_price, line_total) VALUES %s
+                     quantity, unit_price, line_total)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, item_rows)
 
         session.pop('pending_invoice', None)
