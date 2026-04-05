@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Upload Invoice — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Upload Invoice</h1>
+  <p>Submit a PDF invoice from any of our 5 retailers</p>
+</div>
+<div class="card" style="max-width:560px">
+  <form method="POST" enctype="multipart/form-data" id="uploadForm">
+    <div class="form-group">
+      <label>Invoice PDF *</label>
+      <div id="dropzone" style="border:2px dashed var(--border);border-radius:8px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s" onclick="document.getElementById('pdfInput').click()">
+        <div id="dz-icon" style="font-size:32px;margin-bottom:8px;opacity:.4">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div id="dz-text" style="color:var(--muted);font-size:13px">Drop PDF here or <span style="color:var(--accent2)">click to browse</span></div>
+        <div id="dz-file" style="color:var(--text);font-size:13px;font-weight:500;display:none;margin-top:8px"></div>
+      </div>
+      <input type="file" id="pdfInput" name="pdf" accept=".pdf" style="display:none" required>
+    </div>
+    <div class="form-group">
+      <label>Retailer support</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        {% for r in ['Amazon','Best Buy','Costco','Walmart','Apple'] %}
+        <span class="badge badge-muted">{{ r }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="divider"></div>
+    <button type="submit" class="btn btn-primary w-full" id="submitBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Parse Invoice
+    </button>
+  </form>
+</div>
+<script>
+const input = document.getElementById('pdfInput');
+const dz = document.getElementById('dropzone');
+const dzText = document.getElementById('dz-text');
+const dzFile = document.getElementById('dz-file');
+const dzIcon = document.getElementById('dz-icon');
+
+input.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) {
+    dzFile.textContent = f.name;
+    dzFile.style.display = 'block';
+    dzText.style.display = 'none';
+    dz.style.borderColor = 'var(--accent)';
+  }
+});
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor='var(--accent)' });
+dz.addEventListener('dragleave', () => dz.style.borderColor='var(--border)');
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f && f.type === 'application/pdf') {
+    const dt = new DataTransfer(); dt.items.add(f); input.files = dt.files;
+    dzFile.textContent = f.name; dzFile.style.display='block'; dzText.style.display='none';
+    dz.style.borderColor='var(--accent)';
+  }
+});
+document.getElementById('uploadForm').addEventListener('submit', () => {
+  document.getElementById('submitBtn').textContent = 'Parsing...';
+  document.getElementById('submitBtn').disabled = true;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Print Batches — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Print Batches</h1><p>Tag invoices for physical reconciliation</p></div>
+<div class="card" style="margin-bottom:16px">
+  <div class="card-title">Recent batches</div>
+  {% if batches %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Batch ID</th><th>Date</th><th>Invoices</th></tr></thead>
+    <tbody>{% for b in batches %}
+    <tr><td class="mono">{{ b.print_batch_id }}</td><td>{{ b.batch_date.strftime('%b %d, %Y') if b.batch_date else '—' }}</td><td>{{ b.count }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p style="color:var(--muted);font-size:13px">No batches yet.</p>{% endif %}
+</div>
+<form method="POST">
+  <div class="card">
+    <div class="card-title">Create new batch</div>
+    <div class="form-group" style="max-width:300px">
+      <label>Batch ID (e.g. BATCH-2026-04)</label>
+      <input type="text" name="batch_id" placeholder="BATCH-YYYY-MM" required>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th><input type="checkbox" id="selectAll" style="width:auto"></th><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Total</th></tr></thead>
+        <tbody>
+        {% for r in unprinted %}
+        <tr>
+          <td><input type="checkbox" name="txn_ids" value="{{ r.transaction_id }}" class="row-check" style="width:auto"></td>
+          <td class="mono">{{ r.order_number[:22] }}</td>
+          <td>{{ r.retailer }}</td>
+          <td>{{ r.purchase_date }}</td>
+          <td>{{ r.username or '—' }}</td>
+          <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">All invoices have been batched.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if unprinted %}
+    <div class="mt-16"><button type="submit" class="btn btn-primary">Tag Selected as Batch</button></div>
+    {% endif %}
+  </div>
+</form>
+<script>
+document.getElementById('selectAll').addEventListener('change', function(){
+  document.querySelectorAll('.row-check').forEach(c => c.checked = this.checked);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}ComputerReseller Invoices Portal{% endblock %}</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;
+  --border:#2e3349;--border2:#3d4260;
+  --text:#e8eaf2;--muted:#7b82a6;--hint:#4a5080;
+  --accent:#4f6ef7;--accent2:#6b8fff;
+  --success:#22c55e;--warning:#f59e0b;--danger:#ef4444;--info:#06b6d4;
+  --font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;
+  --r:10px;--r-sm:6px;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.6}
+
+/* ── Layout ── */
+.app{display:flex;min-height:100vh}
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:0;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column}
+.main{flex:1;padding:28px 32px;overflow-x:hidden;max-width:1200px}
+
+/* ── Sidebar ── */
+.logo{padding:22px 20px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.logo-icon{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;font-weight:600;flex-shrink:0}
+.logo-text{font-size:13px;font-weight:600;color:var(--text);letter-spacing:-.2px}
+.logo-sub{font-size:11px;color:var(--muted);margin-top:1px}
+nav{padding:12px 0;flex:1}
+.nav-section{padding:6px 16px 4px;font-size:10px;font-weight:600;color:var(--hint);text-transform:uppercase;letter-spacing:.8px;margin-top:8px}
+.nav-section:first-child{margin-top:0}
+nav a{display:flex;align-items:center;gap:10px;padding:8px 20px;color:var(--muted);text-decoration:none;font-size:13px;font-weight:400;border-left:2px solid transparent;transition:all .15s}
+nav a:hover{color:var(--text);background:var(--surface2)}
+nav a.active{color:var(--accent2);background:rgba(79,110,247,.1);border-left-color:var(--accent)}
+nav a .icon{width:16px;height:16px;opacity:.7;flex-shrink:0}
+.sidebar-footer{padding:16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
+.sidebar-footer a{color:var(--muted);text-decoration:none}
+.sidebar-footer a:hover{color:var(--text)}
+.user-chip{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;flex-shrink:0}
+
+/* ── Page header ── */
+.page-header{margin-bottom:24px}
+.page-header h1{font-size:22px;font-weight:600;color:var(--text);letter-spacing:-.3px}
+.page-header p{color:var(--muted);margin-top:4px;font-size:13px}
+.page-header-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+/* ── Cards ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.card + .card{margin-top:16px}
+.card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+
+/* ── Metric cards ── */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.metric-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.metric-value{font-size:24px;font-weight:600;color:var(--text);letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.metric-value.accent{color:var(--accent2)}
+.metric-value.success{color:var(--success)}
+.metric-value.warning{color:var(--warning)}
+.metric-value.danger{color:var(--danger)}
+
+/* ── Tables ── */
+.table-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+.mono{font-family:var(--mono);font-size:12px}
+
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500;white-space:nowrap}
+.badge-success{background:rgba(34,197,94,.15);color:#4ade80}
+.badge-warning{background:rgba(245,158,11,.15);color:#fbbf24}
+.badge-danger{background:rgba(239,68,68,.15);color:#f87171}
+.badge-info{background:rgba(6,182,212,.15);color:#22d3ee}
+.badge-muted{background:var(--surface2);color:var(--muted)}
+.badge-accent{background:rgba(79,110,247,.2);color:var(--accent2)}
+
+/* ── Forms ── */
+.form-group{margin-bottom:16px}
+label{display:block;font-size:12px;font-weight:500;color:var(--muted);margin-bottom:6px}
+input,select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 12px;color:var(--text);font-family:var(--font);font-size:13px;outline:none;transition:border-color .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+input::placeholder{color:var(--hint)}
+select option{background:var(--surface2)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:var(--r-sm);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;border:1px solid var(--border);transition:all .15s;text-decoration:none;white-space:nowrap}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{background:#3d5ce0;border-color:#3d5ce0}
+.btn-ghost{background:transparent;color:var(--muted)}
+.btn-ghost:hover{background:var(--surface2);color:var(--text)}
+.btn-danger{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:#f87171}
+.btn-danger:hover{background:rgba(239,68,68,.2)}
+.btn-success{background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.3);color:#4ade80}
+.btn-sm{padding:5px 10px;font-size:12px}
+
+/* ── Alerts/Flash ── */
+.alerts{margin-bottom:20px}
+.alert{padding:11px 14px;border-radius:var(--r-sm);font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.alert-success{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:#4ade80}
+.alert-error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#f87171}
+.alert-warning{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);color:#fbbf24}
+.alert-info{background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.25);color:#22d3ee}
+
+/* ── Pagination ── */
+.pagination{display:flex;align-items:center;gap:6px;margin-top:16px;justify-content:flex-end}
+.pagination a,.pagination span{padding:5px 10px;border-radius:var(--r-sm);font-size:12px;text-decoration:none;border:1px solid var(--border);color:var(--muted)}
+.pagination a:hover{background:var(--surface2);color:var(--text)}
+.pagination .current{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* ── Misc ── */
+.divider{height:1px;background:var(--border);margin:20px 0}
+.text-muted{color:var(--muted)}
+.text-accent{color:var(--accent2)}
+.text-success{color:var(--success)}
+.text-warning{color:var(--warning)}
+.text-danger{color:var(--danger)}
+.mt-16{margin-top:16px}.mt-24{margin-top:24px}
+.flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-8{gap:8px}.gap-12{gap:12px}.gap-16{gap:16px}
+.w-full{width:100%}
+
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{padding:16px}
+  .form-row,.form-row-3{grid-template-columns:1fr}
+  .metrics{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  {% if current_user.is_authenticated %}
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">iG</div>
+      <div><div class="logo-text">CR Invoices Portal</div><div class="logo-sub">Invoice Management</div></div>
+    </div>
+    <nav>
+      {% if current_user.is_submitter %}
+      <div class="nav-section">Submit</div>
+      <a href="{{ url_for('upload.upload') }}" class="{{ 'active' if request.endpoint == 'upload.upload' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload Invoice
+      </a>
+      <a href="{{ url_for('upload.my_submissions') }}" class="{{ 'active' if request.endpoint == 'upload.my_submissions' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        My Submissions
+      </a>
+      {% endif %}
+      {% if current_user.is_admin %}
+      <div class="nav-section">Dashboard</div>
+      <a href="{{ url_for('admin.dashboard') }}" class="{{ 'active' if request.endpoint == 'admin.dashboard' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Overview
+      </a>
+      <div class="nav-section">Submissions</div>
+      <a href="{{ url_for('admin.all_submissions') }}" class="{{ 'active' if request.endpoint == 'admin.all_submissions' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        All Submissions
+      </a>
+      <a href="{{ url_for('admin.print_batch') }}" class="{{ 'active' if request.endpoint == 'admin.print_batch' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Print Batches
+      </a>
+      <div class="nav-section">Financials</div>
+      <a href="{{ url_for('admin.payroll') }}" class="{{ 'active' if request.endpoint == 'admin.payroll' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Payroll
+      </a>
+      <a href="{{ url_for('admin.cashback') }}" class="{{ 'active' if request.endpoint == 'admin.cashback' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        Cash Back
+      </a>
+      <div class="nav-section">Manage</div>
+      <a href="{{ url_for('manage.users') }}" class="{{ 'active' if 'manage.users' in request.endpoint }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        Users
+      </a>
+      <a href="{{ url_for('manage.cards') }}" class="{{ 'active' if 'manage.cards' in request.endpoint }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        Cards
+      </a>
+      <a href="{{ url_for('manage.companies') }}" class="{{ 'active' if 'manage.companies' in request.endpoint }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Companies
+      </a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="avatar">{{ current_user.username[:2].upper() }}</div>
+        <div>
+          <div style="color:var(--text);font-weight:500;font-size:12px">{{ current_user.username }}</div>
+          <div style="font-size:11px;color:var(--muted)">{{ current_user.portal_role }}</div>
+        </div>
+      </div>
+      <a href="{{ url_for('auth.logout') }}">Sign out</a>
+    </div>
+  </aside>
+  {% endif %}
+  <main class="main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="alerts">
+      {% for category, message in messages %}
+      <div class="alert alert-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

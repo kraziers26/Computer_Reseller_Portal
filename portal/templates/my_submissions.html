@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}My Submissions — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>My Submissions</h1><p>{{ total }} total orders submitted</p></div>
+  <a href="{{ url_for('upload.upload') }}" class="btn btn-primary btn-sm">+ Upload Invoice</a>
+</div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Company</th><th>Total</th><th>Type</th><th>Status</th><th>Submitted</th></tr></thead>
+      <tbody>
+      {% for r in submissions %}
+      <tr>
+        <td class="mono">{{ r.order_number[:22] }}</td>
+        <td>{{ r.retailer }}</td>
+        <td>{{ r.purchase_date }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td>{{ r.order_type }}</td>
+        <td>
+          {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Auto-approved</span>
+          {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
+          {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
+          {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
+          {% if r.is_duplicate %}<span class="badge badge-danger" style="margin-left:4px">Dup</span>{% endif %}
+        </td>
+        <td style="color:var(--muted);font-size:12px">{{ r.submitted_at.strftime('%b %d, %Y') if r.submitted_at else '—' }}</td>
+      </tr>
+      {% endfor %}
+      {% if not submissions %}
+      <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:32px">No submissions yet.</td></tr>
+      {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% if total > per_page %}
+  <div class="pagination">
+    {% if page > 1 %}<a href="?page={{ page-1 }}">← Prev</a>{% endif %}
+    <span class="current">{{ page }}</span>
+    {% if page * per_page < total %}<a href="?page={{ page+1 }}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

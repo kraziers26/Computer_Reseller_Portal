@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — ComputerReseller Invoices Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0f1117;--surface:#1a1d27;--border:#2e3349;--text:#e8eaf2;--muted:#7b82a6;--hint:#4a5080;--accent:#4f6ef7;--danger:#ef4444;--font:'DM Sans',sans-serif}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{width:100%;max-width:380px}
+.logo{text-align:center;margin-bottom:36px}
+.logo-icon{width:48px;height:48px;background:var(--accent);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;margin:0 auto 12px}
+.logo h1{font-size:20px;font-weight:600;letter-spacing:-.3px}
+.logo p{color:var(--muted);font-size:13px;margin-top:4px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px}
+.form-group{margin-bottom:16px}
+label{display:block;font-size:12px;font-weight:500;color:var(--muted);margin-bottom:6px}
+input{width:100%;background:#22263a;border:1px solid var(--border);border-radius:6px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:14px;outline:none;transition:border-color .15s}
+input:focus{border-color:var(--accent)}
+input::placeholder{color:var(--hint)}
+.btn{width:100%;padding:11px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-family:var(--font);font-size:14px;font-weight:500;cursor:pointer;margin-top:8px;transition:background .15s}
+.btn:hover{background:#3d5ce0}
+.alert{padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#f87171}
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="logo">
+    <div class="logo-icon">iG</div>
+    <h1>ComputerReseller Invoices Portal</h1>
+    <p>Invoice Management System</p>
+  </div>
+  <div class="card">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="alert">{{ message }}</div>
+    {% endfor %}
+    {% endwith %}
+    <form method="POST">
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" name="email" placeholder="you@example.com" required autofocus>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="••••••••" required>
+      </div>
+      <button type="submit" class="btn">Sign in</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

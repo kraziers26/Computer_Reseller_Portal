@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Confirm Submission — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Confirm Submission</h1>
+  <p>Review extracted data before saving. Correct anything that looks wrong.</p>
+</div>
+
+{% if invoice.parse_errors %}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <strong>Parser notes:</strong> {{ invoice.parse_errors | join(' · ') }}
+</div>
+{% endif %}
+
+<form method="POST" style="max-width:680px">
+  <div class="card">
+    <div class="card-title">Order details</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Retailer</label>
+        <input type="text" value="{{ invoice.retailer }}" readonly style="opacity:.6">
+      </div>
+      <div class="form-group">
+        <label>Order Number *</label>
+        <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Purchase Date</label>
+        <input type="text" value="{{ invoice.purchase_date or '' }}" readonly style="opacity:.6">
+      </div>
+      <div class="form-group">
+        <label>Order Type *</label>
+        <select name="order_type">
+          {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
+          <option value="{{ ot }}" {{ 'selected' if invoice.fulfillment_method == ot }}>{{ ot }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Price Total *</label>
+        <input type="number" name="price_total" step="0.01" value="{{ invoice.price_total or '' }}" required>
+      </div>
+      {% if invoice.retailer == 'Costco' %}
+      <div class="form-group">
+        <label>Costco Taxes Paid</label>
+        <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}">
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-title">Company & card</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Purchase Company *</label>
+        <select name="company_id" required>
+          <option value="">Select company...</option>
+          {% for c in companies %}
+          <option value="{{ c.company_id }}">{{ c.company_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Missing' }}</label>
+        <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}"
+               placeholder="e.g. 3015" maxlength="4" pattern="\d{4}">
+        {% if not invoice.card_last4 %}
+        <div style="font-size:11px;color:var(--warning);margin-top:4px">
+          Not found in PDF. Enter manually or leave blank to flag for review.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if invoice.items %}
+  <div class="card mt-16">
+    <div class="card-title">Line items ({{ invoice.items|length }})</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Description</th><th>SKU / Model</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
+        <tbody>
+        {% for item in invoice.items %}
+        <tr>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.item_description }}</td>
+          <td class="mono">{{ item.sku_model_color or '—' }}</td>
+          <td>{{ item.quantity }}</td>
+          <td class="mono">${{ "{:,.2f}".format(item.unit_price) }}</td>
+          <td class="mono">${{ "{:,.2f}".format(item.line_total) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="flex gap-12 mt-16">
+    <button type="submit" name="action" value="submit" class="btn btn-primary">
+      Submit Order
+    </button>
+    <button type="submit" name="action" value="cancel" class="btn btn-ghost">
+      Cancel
+    </button>
+  </div>
+</form>
+{% endblock %}

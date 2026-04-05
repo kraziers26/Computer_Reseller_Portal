@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Payroll — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Payroll Report</h1><p>Commission breakdown by user and month</p></div>
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 items-center flex-wrap">
+    <select name="month" style="width:160px" onchange="this.form.submit()">
+      <option value="">All months</option>
+      {% for m in months %}<option value="{{ m }}" {{ 'selected' if selected_month == m }}>{{ m }}</option>{% endfor %}
+    </select>
+    <select name="company" style="width:160px" onchange="this.form.submit()">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if selected_company == c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+    </select>
+    {% if selected_month or selected_company %}<a href="{{ url_for('admin.payroll') }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+  </form>
+</div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Month</th><th>User</th><th>Company</th><th>Orders</th><th>Total Purchases</th><th>Gross Paid (1%)</th><th>Net Paid (0.8%)</th><th>Tax Withheld (0.2%)</th></tr></thead>
+      <tbody>
+      {% set ns = namespace(total_purchases=0, total_gross=0, total_net=0, total_tax=0) %}
+      {% for r in payroll_data %}
+      {% set ns.total_purchases = ns.total_purchases + (r.total_purchases or 0) %}
+      {% set ns.total_gross = ns.total_gross + (r.gross_paid or 0) %}
+      {% set ns.total_net = ns.total_net + (r.net_paid or 0) %}
+      {% set ns.total_tax = ns.total_tax + (r.tax_withheld or 0) %}
+      <tr>
+        <td class="mono">{{ r.purchase_year_month }}</td>
+        <td>{{ r.username or '—' }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td>{{ r.order_count }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.total_purchases or 0) }}</td>
+        <td class="mono text-success">${{ "{:,.4f}".format(r.gross_paid or 0) }}</td>
+        <td class="mono">${{ "{:,.4f}".format(r.net_paid or 0) }}</td>
+        <td class="mono text-warning">${{ "{:,.4f}".format(r.tax_withheld or 0) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:32px">No data.</td></tr>
+      {% endfor %}
+      </tbody>
+      {% if payroll_data %}
+      <tfoot>
+        <tr style="font-weight:600;border-top:2px solid var(--border2)">
+          <td colspan="4" style="padding:10px 14px;color:var(--muted)">Total</td>
+          <td class="mono">${{ "{:,.2f}".format(ns.total_purchases) }}</td>
+          <td class="mono text-success">${{ "{:,.4f}".format(ns.total_gross) }}</td>
+          <td class="mono">${{ "{:,.4f}".format(ns.total_net) }}</td>
+          <td class="mono text-warning">${{ "{:,.4f}".format(ns.total_tax) }}</td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

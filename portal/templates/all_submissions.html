@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}All Submissions — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>All Submissions</h1><p>{{ total }} total records</p></div>
+</div>
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 flex-wrap items-center">
+    <select name="retailer" style="width:140px" onchange="this.form.submit()">
+      <option value="">All retailers</option>
+      {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer == r }}>{{ r }}</option>{% endfor %}
+    </select>
+    <select name="company" style="width:160px" onchange="this.form.submit()">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company == c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+    </select>
+    <select name="status" style="width:150px" onchange="this.form.submit()">
+      <option value="">All statuses</option>
+      {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
+      <option value="{{ s }}" {{ 'selected' if filters.status == s }}>{{ s }}</option>{% endfor %}
+    </select>
+    <input type="month" name="month" value="{{ filters.month }}" style="width:150px" onchange="this.form.submit()">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0">
+      <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Duplicates only
+    </label>
+    {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates %}
+    <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
+  </form>
+</div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Company</th><th>Total</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for r in submissions %}
+      <tr>
+        <td class="mono">{{ r.order_number[:22] }}{% if r.is_duplicate %} <span class="badge badge-danger" style="font-size:10px">dup</span>{% endif %}</td>
+        <td>{{ r.retailer }}</td>
+        <td>{{ r.purchase_date }}</td>
+        <td>{{ r.username or '—' }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td class="mono text-muted">${{ "{:,.2f}".format(r.gross_paid_amount or 0) }}</td>
+        <td>
+          {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Approved</span>
+          {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
+          {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
+          {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
+        </td>
+        <td><a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}" class="btn btn-ghost btn-sm">Review</a></td>
+      </tr>
+      {% endfor %}
+      {% if not submissions %}
+      <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
+      {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% if total > per_page %}
+  <div class="pagination">
+    {% if page > 1 %}<a href="?page={{ page-1 }}&retailer={{ filters.retailer }}&status={{ filters.status }}">← Prev</a>{% endif %}
+    <span class="current">{{ page }} / {{ ((total-1)//per_page)+1 }}</span>
+    {% if page * per_page < total %}<a href="?page={{ page+1 }}&retailer={{ filters.retailer }}&status={{ filters.status }}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

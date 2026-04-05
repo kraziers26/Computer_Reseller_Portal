@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Dashboard</h1><p>Overview of all orders and financials</p></div>
+  {% if pending_total > 0 %}
+  <a href="{{ url_for('admin.all_submissions') }}?status=Pending" class="btn btn-primary btn-sm">
+    {{ pending_total }} pending review
+  </a>
+  {% endif %}
+</div>
+
+<div class="metrics">
+  <div class="metric"><div class="metric-label">Total GMV</div><div class="metric-value accent">${{ "{:,.0f}".format(metrics.total_gmv or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Total Orders</div><div class="metric-value">{{ "{:,}".format(metrics.total_orders or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Gross Paid Out</div><div class="metric-value success">${{ "{:,.2f}".format(metrics.total_paid or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_cashback or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Pending Review</div><div class="metric-value {{ 'warning' if metrics.pending_count else '' }}">{{ metrics.pending_count or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Duplicates</div><div class="metric-value {{ 'danger' if metrics.dup_count else '' }}">{{ metrics.dup_count or 0 }}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-title">Recent submissions</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Company</th><th>Total</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in recent %}
+      <tr>
+        <td class="mono">{{ r.order_number[:24] }}</td>
+        <td>{{ r.retailer }}</td>
+        <td>{{ r.purchase_date }}</td>
+        <td>{{ r.username or '—' }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td>
+          {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Auto-approved</span>
+          {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
+          {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
+          {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

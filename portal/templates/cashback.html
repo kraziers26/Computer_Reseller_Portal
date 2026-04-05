@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Cash Back — iGamer Corp{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Cash Back Report</h1><p>Cash back earned per card</p></div>
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 items-center">
+    <select name="month" style="width:160px" onchange="this.form.submit()">
+      <option value="">All time</option>
+      {% for m in months %}<option value="{{ m }}" {{ 'selected' if selected_month == m }}>{{ m }}</option>{% endfor %}
+    </select>
+    {% if selected_month %}<a href="{{ url_for('admin.cashback') }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+  </form>
+</div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Card</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Rate</th><th>Txns</th><th>Total Spend</th><th>Cash Back Earned</th></tr></thead>
+      <tbody>
+      {% for r in cashback_data %}
+      <tr>
+        <td class="mono">{{ r.card_id }}</td>
+        <td>{{ r.card_name }}</td>
+        <td>{{ r.card_brand }}</td>
+        <td>{{ r.cardholder or '—' }}</td>
+        <td>{{ r.company_name }}</td>
+        <td><span class="badge badge-accent">{{ "{:.1%}".format(r.cashback_rate) }}</span></td>
+        <td>{{ r.transactions or 0 }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.total_spend or 0) }}</td>
+        <td class="mono text-success">${{ "{:,.4f}".format(r.total_cashback or 0) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
