@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Confirm Submission — iGamer Corp{% endblock %}
+{% block title %}Confirm Submission — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header">
   <h1>Confirm Submission</h1>
@@ -8,7 +8,7 @@
 
 {% if invoice.parse_errors %}
 <div class="alert alert-warning" style="margin-bottom:16px">
-  <strong>Parser notes:</strong> {{ invoice.parse_errors | join(' · ') }}
+  <strong>Parser notes:</strong> {{ invoice.parse_errors | join(' · ') if invoice.parse_errors else '' }}
 </div>
 {% endif %}
 
@@ -44,12 +44,10 @@
         <label>Price Total *</label>
         <input type="number" name="price_total" step="0.01" value="{{ invoice.price_total or '' }}" required>
       </div>
-      {% if invoice.retailer == 'Costco' %}
       <div class="form-group">
         <label>Costco Taxes Paid</label>
-        <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}">
+        <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}" placeholder="Costco only">
       </div>
-      {% endif %}
     </div>
   </div>
 
@@ -68,7 +66,7 @@
       <div class="form-group">
         <label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Missing' }}</label>
         <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}"
-               placeholder="e.g. 3015" maxlength="4" pattern="\d{4}">
+               placeholder="e.g. 3015" maxlength="4">
         {% if not invoice.card_last4 %}
         <div style="font-size:11px;color:var(--warning);margin-top:4px">
           Not found in PDF. Enter manually or leave blank to flag for review.
@@ -78,27 +76,30 @@
     </div>
   </div>
 
-  {% if invoice.items %}
   <div class="card mt-16">
-    <div class="card-title">Line items ({{ invoice.items|length }})</div>
+    <div class="card-title">Line items</div>
+    {% set items = invoice.get('items', []) if invoice is mapping else [] %}
+    {% if items and items | list | length > 0 %}
     <div class="table-wrap">
       <table>
         <thead><tr><th>Description</th><th>SKU / Model</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
         <tbody>
-        {% for item in invoice.items or [] %}
+        {% for item in items %}
         <tr>
           <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.item_description }}</td>
           <td class="mono">{{ item.sku_model_color or '—' }}</td>
           <td>{{ item.quantity }}</td>
-          <td class="mono">${{ "{:,.2f}".format(item.unit_price) }}</td>
-          <td class="mono">${{ "{:,.2f}".format(item.line_total) }}</td>
+          <td class="mono">${{ "%.2f"|format(item.unit_price|float) }}</td>
+          <td class="mono">${{ "%.2f"|format(item.line_total|float) }}</td>
         </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
+    {% else %}
+    <p style="color:var(--muted);font-size:13px">No line items extracted.</p>
+    {% endif %}
   </div>
-  {% endif %}
 
   <div class="flex gap-12 mt-16">
     <button type="submit" name="action" value="submit" class="btn btn-primary">
