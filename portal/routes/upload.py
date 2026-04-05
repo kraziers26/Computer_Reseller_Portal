@@ -4,7 +4,7 @@ from flask_login import login_required, current_user
 from ..auth_utils import require_role
 from ..db import db_cursor
 
-sys.path.insert(0, '/home/claude/parsers')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'parsers'))
 
 upload_bp = Blueprint('upload', __name__)
 
