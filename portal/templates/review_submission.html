@@ -1,85 +1,97 @@
 {% extends "base.html" %}
-{% block title %}Review #{{ txn.order_number }} — iGamer Corp{% endblock %}
+{% block title %}Review #{{ txn.order_number }} — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>{{ txn.retailer }} — {{ txn.order_number }}</h1>
-  <p>Submitted by {{ txn.username or txn.submitted_by_email }} · {{ txn.submitted_at.strftime('%b %d, %Y') if txn.submitted_at else '' }}</p></div>
-  <div class="flex gap-8">
-    <form method="POST" style="display:inline"><button name="action" value="approve" class="btn btn-success btn-sm">Approve</button></form>
+  <p>Submitted by {{ txn.submitter_name or txn.submitted_by_email }} · {{ txn.submitted_at.strftime('%b %d, %Y') if txn.submitted_at else '' }}</p></div>
+  <div class="flex gap-8 flex-wrap">
+    <form method="POST" style="display:inline"><button name="action" value="approve" class="btn btn-success btn-sm">✓ Approve</button></form>
     <form method="POST" style="display:inline"><button name="action" value="flag" class="btn btn-ghost btn-sm">Flag</button></form>
-    <form method="POST" style="display:inline"><button name="action" value="mark_duplicate" class="btn btn-danger btn-sm">Mark Duplicate</button></form>
+    <form method="POST" style="display:inline"><button name="action" value="mark_duplicate" class="btn btn-ghost btn-sm">Mark Duplicate</button></form>
+    <form method="POST" style="display:inline" onsubmit="return confirm('Inactivate this transaction? It will be hidden from all reports.')">
+      <button name="action" value="inactivate" class="btn btn-danger btn-sm">Inactivate</button>
+    </form>
+    <form method="POST" style="display:inline" onsubmit="return confirm('PERMANENTLY DELETE this transaction? This cannot be undone.')">
+      <button name="action" value="delete" class="btn btn-danger btn-sm" style="background:rgba(239,68,68,.3)">Delete</button>
+    </form>
   </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
   <div class="card">
     <div class="card-title">Order info</div>
     <table style="width:100%"><tbody>
-      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Status</td><td>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px;width:140px">Status</td><td>
         {% if txn.review_status == 'Auto-approved' %}<span class="badge badge-success">Auto-approved</span>
         {% elif txn.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
         {% elif txn.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
         {% else %}<span class="badge badge-muted">{{ txn.review_status }}</span>{% endif %}
       </td></tr>
       <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Purchase Date</td><td>{{ txn.purchase_date }}</td></tr>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Person By</td><td>{{ txn.person_name or '—' }}</td></tr>
       <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Company</td><td>{{ txn.company_name or '—' }}</td></tr>
       <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Card</td><td class="mono">{{ txn.card_id or '—' }}</td></tr>
       <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Order Type</td><td>{{ txn.order_type }}</td></tr>
+      {% if txn.notes %}<tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Notes</td><td style="font-size:13px">{{ txn.notes }}</td></tr>{% endif %}
       {% if txn.is_duplicate %}<tr><td colspan="2"><span class="badge badge-danger">Duplicate</span></td></tr>{% endif %}
     </tbody></table>
   </div>
   <div class="card">
     <div class="card-title">Financials</div>
     <table style="width:100%"><tbody>
-      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Price Total</td><td class="mono">${{ "{:,.2f}".format(txn.price_total or 0) }}</td></tr>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px;width:160px">Price Total</td><td class="mono">${{ "{:,.2f}".format(txn.price_total or 0) }}</td></tr>
       {% if txn.costco_taxes_paid %}<tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Costco Taxes</td><td class="mono">${{ "{:,.2f}".format(txn.costco_taxes_paid) }}</td></tr>{% endif %}
       <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Cash Back Rate</td><td>{{ "{:.1%}".format(txn.cashback_rate) if txn.cashback_rate else '—' }}</td></tr>
-      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Cash Back Value</td><td class="mono">${{ "{:,.4f}".format(txn.cashback_value) if txn.cashback_value else '—' }}</td></tr>
-      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Gross Paid (1%)</td><td class="mono">${{ "{:,.4f}".format(txn.gross_paid_amount) if txn.gross_paid_amount else '—' }}</td></tr>
-      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Net Paid (0.8%)</td><td class="mono">${{ "{:,.4f}".format(txn.net_paid_amount) if txn.net_paid_amount else '—' }}</td></tr>
-      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Tax Withheld</td><td class="mono">${{ "{:,.4f}".format(txn.sales_payroll_tax_withheld) if txn.sales_payroll_tax_withheld else '—' }}</td></tr>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Cash Back Value</td><td class="mono">${{ "{:,.2f}".format(txn.cashback_value or 0) }}</td></tr>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Gross Paid (1%)</td><td class="mono text-success">${{ "{:,.2f}".format(txn.gross_paid_amount or 0) }}</td></tr>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Net Paid (0.8%)</td><td class="mono">${{ "{:,.2f}".format(txn.net_paid_amount or 0) }}</td></tr>
+      <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Tax Withheld (0.2%)</td><td class="mono text-warning">${{ "{:,.2f}".format(txn.sales_payroll_tax_withheld or 0) }}</td></tr>
     </tbody></table>
   </div>
 </div>
 {% if items %}
 <div class="card mt-16">
   <div class="card-title">Line items</div>
-  <div class="table-wrap">
-    <table><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
-    <tbody>{% for i in items %}
-    <tr><td>{{ i.item_description }}</td><td class="mono">{{ i.sku_model_color or '—' }}</td><td>{{ i.quantity }}</td><td class="mono">${{ "{:,.2f}".format(i.unit_price) }}</td><td class="mono">${{ "{:,.2f}".format(i.line_total) }}</td></tr>
-    {% endfor %}</tbody></table>
-  </div>
+  <div class="table-wrap"><table><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
+  <tbody>{% for i in items %}
+  <tr><td>{{ i.item_description }}</td><td class="mono">{{ i.sku_model_color or '—' }}</td><td>{{ i.quantity }}</td><td class="mono">${{ "{:,.2f}".format(i.unit_price) }}</td><td class="mono">${{ "{:,.2f}".format(i.line_total) }}</td></tr>
+  {% endfor %}</tbody></table></div>
 </div>
 {% endif %}
 <div class="card mt-16">
   <div class="card-title">Edit transaction</div>
   <form method="POST">
     <div class="form-row">
-      <div class="form-group">
-        <label>Card Last 4</label>
-        <select name="card_id">
-          <option value="">— None —</option>
-          {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if txn.card_id == c.card_id }}>{{ c.card_id }} — {{ c.card_name }} ({{ c.card_brand }})</option>{% endfor %}
+      <div class="form-group"><label>Person By</label>
+        <select name="user_id">
+          {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if txn.user_id==u.user_id }}>{{ u.username }}</option>{% endfor %}
         </select>
       </div>
-      <div class="form-group">
-        <label>Company</label>
-        <select name="company_id">
-          {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if txn.company_id == c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+      <div class="form-group"><label>Card</label>
+        <select name="card_id">
+          <option value="">— None —</option>
+          {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if txn.card_id==c.card_id }}>{{ c.card_id }} — {{ c.card_name }} ({{ "{:.1%}".format(c.cashback_rate) }})</option>{% endfor %}
         </select>
       </div>
     </div>
     <div class="form-row">
-      <div class="form-group">
-        <label>Order Type</label>
-        <select name="order_type">
-          {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
-          <option value="{{ ot }}" {{ 'selected' if txn.order_type == ot }}>{{ ot }}</option>{% endfor %}
+      <div class="form-group"><label>Company</label>
+        <select name="company_id">
+          {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if txn.company_id==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
         </select>
       </div>
-      <div class="form-group">
-        <label>Price Total</label>
+      <div class="form-group"><label>Order Type</label>
+        <select name="order_type">
+          {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
+          <option value="{{ ot }}" {{ 'selected' if txn.order_type==ot }}>{{ ot }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Price Total</label>
         <input type="number" name="price_total" step="0.01" value="{{ txn.price_total }}">
+      </div>
+      <div class="form-group"><label>Notes</label>
+        <input type="text" name="notes" maxlength="140" value="{{ txn.notes or '' }}" placeholder="Optional note">
       </div>
     </div>
     <button type="submit" name="action" value="edit" class="btn btn-primary">Save Changes</button>
