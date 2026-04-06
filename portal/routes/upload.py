@@ -133,6 +133,7 @@ def confirm():
         order_number = request.form.get('order_number', '').strip()
         price_total  = request.form.get('price_total', type=float)
         order_type   = request.form.get('order_type', 'Delivery')
+        notes        = request.form.get('notes', '').strip()[:140] or None
 
         if not company_id:
             flash('Please select a company.', 'error')
@@ -146,13 +147,13 @@ def confirm():
                 row = cur.fetchone()
                 if row:
                     cashback_rate  = float(row['cashback_rate'])
-                    cashback_value = round(price_total * cashback_rate, 4) if price_total else None
+                    cashback_value = round(price_total * cashback_rate, 2) if price_total else None
 
-        gross_paid   = round(price_total * 0.01, 4) if price_total else None
-        net_paid     = round(gross_paid * 0.8, 4) if gross_paid else None
-        tax_withheld = round(gross_paid * 0.2, 4) if gross_paid else None
-        gross_biz    = round((gross_paid or 0) + (cashback_value or 0), 4) if gross_paid else None
-        net_biz      = round((gross_biz or 0) - (net_paid or 0), 4) if gross_biz else None
+        gross_paid   = round(price_total * 0.01, 2) if price_total else None
+        net_paid     = round(gross_paid * 0.8, 2) if gross_paid else None
+        tax_withheld = round(gross_paid * 0.2, 2) if gross_paid else None
+        gross_biz    = round((gross_paid or 0) + (cashback_value or 0), 2) if gross_paid else None
+        net_biz      = round((gross_biz or 0) - (net_paid or 0), 2) if gross_biz else None
         needs_review = invoice_data.get('needs_review', False) or not card_last4
 
         tid = str(uuid.uuid4())
@@ -164,15 +165,15 @@ def confirm():
                     cashback_rate, cashback_value, commission_type, commission_amount, order_type,
                     invoice_file_path, review_status, is_duplicate, submitted_by_email,
                     gross_paid_amount, net_paid_amount, gross_business_commission,
-                    net_business_commission, sales_payroll_tax_withheld, submitted_at
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,%s,FALSE,%s,%s,%s,%s,%s,%s,NOW())
+                    net_business_commission, sales_payroll_tax_withheld, notes, submitted_at
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,%s,FALSE,%s,%s,%s,%s,%s,%s,%s,NOW())
             """, (tid, order_number, invoice_data['retailer'],
                   invoice_data['purchase_date'], invoice_data['purchase_year_month'],
                   form_user_id, company_id, card_last4, price_total,
                   invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
                   gross_paid, order_type, invoice_data.get('_tmp_path'),
                   'Pending' if needs_review else 'Auto-approved',
-                  current_user.email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld))
+                  current_user.email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld, notes))
 
             items = invoice_data.get('items', [])
             if items:
@@ -202,21 +203,64 @@ def my_submissions():
     page = request.args.get('page', 1, type=int)
     per_page = 20
     offset = (page - 1) * per_page
+
+    # Filters
+    f_retailer = request.args.get('retailer', '')
+    f_company  = request.args.get('company', type=int)
+    f_type     = request.args.get('order_type', '')
+    f_status   = request.args.get('status', '')
+    f_notes    = request.args.get('notes', '')
+    f_order    = request.args.get('order_number', '')
+
+    conditions = ["t.submitted_by_email = %s"]
+    params = [current_user.email]
+
+    if f_retailer:
+        conditions.append("t.retailer = %s"); params.append(f_retailer)
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_type:
+        conditions.append("t.order_type = %s"); params.append(f_type)
+    if f_status:
+        conditions.append("t.review_status = %s"); params.append(f_status)
+    if f_notes:
+        conditions.append("t.notes ILIKE %s"); params.append(f'%{f_notes}%')
+    if f_order:
+        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+
     with db_cursor() as (cur, _):
-        cur.execute("""
+        cur.execute(f"""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.order_type,
                    t.review_status, t.submitted_at, c.company_name,
-                   t.card_id, t.is_duplicate, u.username AS person_name
+                   t.card_id, t.is_duplicate, u.username AS person_name,
+                   t.notes
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            WHERE t.submitted_by_email = %s
+            {where}
             ORDER BY t.submitted_at DESC
             LIMIT %s OFFSET %s
-        """, (current_user.email, per_page, offset))
+        """, params + [per_page, offset])
         submissions = cur.fetchall()
-        cur.execute("SELECT COUNT(*) AS n FROM transactions WHERE submitted_by_email=%s", (current_user.email,))
+
+        cur.execute(f"""
+            SELECT COUNT(*) AS n FROM transactions t {where}
+        """, params)
         total = cur.fetchone()['n']
+
+        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE submitted_by_email=%s ORDER BY retailer",
+                    (current_user.email,))
+        retailers = [r['retailer'] for r in cur.fetchall()]
+
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
+        companies = cur.fetchall()
+
     return render_template('my_submissions.html', submissions=submissions,
-                           page=page, per_page=per_page, total=total)
+                           page=page, per_page=per_page, total=total,
+                           retailers=retailers, companies=companies,
+                           filters={'retailer': f_retailer, 'company': f_company,
+                                    'order_type': f_type, 'status': f_status,
+                                    'notes': f_notes, 'order_number': f_order})
