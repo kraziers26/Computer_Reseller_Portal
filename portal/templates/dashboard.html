@@ -1,19 +1,54 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — iGamer Corp{% endblock %}
+{% block title %}Dashboard — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>Dashboard</h1><p>Overview of all orders and financials</p></div>
   {% if pending_total > 0 %}
-  <a href="{{ url_for('admin.all_submissions') }}?status=Pending" class="btn btn-primary btn-sm">
-    {{ pending_total }} pending review
-  </a>
+  <a href="{{ url_for('admin.all_submissions') }}?status=Pending" class="btn btn-primary btn-sm">{{ pending_total }} pending review</a>
   {% endif %}
 </div>
 
+<!-- Filters -->
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 flex-wrap items-center">
+    <select name="month" style="width:120px" onchange="this.form.submit()">
+      <option value="">All months</option>
+      {% for m in range(1,13) %}
+      <option value="{{ '%02d'|format(m) }}" {{ 'selected' if filters.month=='%02d'|format(m) }}>{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>
+      {% endfor %}
+    </select>
+    <select name="year" style="width:100px" onchange="this.form.submit()">
+      <option value="">All years</option>
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if filters.year==y }}>{{ y }}</option>{% endfor %}
+    </select>
+    <select name="company" style="width:150px" onchange="this.form.submit()">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+    </select>
+    <select name="retailer" style="width:120px" onchange="this.form.submit()">
+      <option value="">All retailers</option>
+      {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
+    </select>
+    <select name="person_by" style="width:140px" onchange="this.form.submit()">
+      <option value="">All persons</option>
+      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
+    </select>
+    <select name="card" style="width:200px" onchange="this.form.submit()">
+      <option value="">All cards</option>
+      {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if filters.card==c.card_id }}>Card {{ c.card_id }} — {{ "%.1f"|format(c.cashback_rate*100) }}% Cash Back</option>{% endfor %}
+    </select>
+    {% if filters.month or filters.year or filters.company or filters.retailer or filters.person_by or filters.card %}
+    <a href="{{ url_for('admin.dashboard') }}" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
 <div class="metrics">
-  <div class="metric"><div class="metric-label">Total GMV</div><div class="metric-value accent">${{ "{:,.0f}".format(metrics.total_gmv or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Total GMV</div><div class="metric-value accent">${{ "{:,.2f}".format(metrics.total_gmv or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Total Orders</div><div class="metric-value">{{ "{:,}".format(metrics.total_orders or 0) }}</div></div>
-  <div class="metric"><div class="metric-label">Gross Paid Out</div><div class="metric-value success">${{ "{:,.2f}".format(metrics.total_paid or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Gross Paid Out</div><div class="metric-value success">${{ "{:,.2f}".format(metrics.total_gross_paid or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Net Paid Out</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_net_paid or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Tax Withheld</div><div class="metric-value warning">${{ "{:,.2f}".format(metrics.total_tax or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_cashback or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Pending Review</div><div class="metric-value {{ 'warning' if metrics.pending_count else '' }}">{{ metrics.pending_count or 0 }}</div></div>
   <div class="metric"><div class="metric-label">Duplicates</div><div class="metric-value {{ 'danger' if metrics.dup_count else '' }}">{{ metrics.dup_count or 0 }}</div></div>
@@ -23,18 +58,20 @@
   <div class="card-title">Recent submissions</div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Company</th><th>Total</th><th>Status</th></tr></thead>
+      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Person By</th><th>Card</th><th>Company</th><th>Total</th><th>Status</th></tr></thead>
       <tbody>
       {% for r in recent %}
       <tr>
-        <td class="mono">{{ r.order_number[:24] }}</td>
+        <td class="mono">{{ r.order_number[:22] }}</td>
         <td>{{ r.retailer }}</td>
         <td>{{ r.purchase_date }}</td>
-        <td>{{ r.username or '—' }}</td>
+        <td>{{ r.submitter_name or '—' }}</td>
+        <td>{{ r.person_name or '—' }}</td>
+        <td class="mono" style="font-size:12px">{% if r.card_id %}Card {{ r.card_id }} — {{ "%.1f"|format((r.cashback_rate or 0)*100) }}%{% else %}—{% endif %}</td>
         <td>{{ r.company_name or '—' }}</td>
         <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
         <td>
-          {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Auto-approved</span>
+          {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Approved</span>
           {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
           {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
           {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
