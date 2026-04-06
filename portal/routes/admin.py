@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required
 from ..auth_utils import require_role
 from ..db import db_cursor
@@ -10,52 +10,94 @@ admin_bp = Blueprint('admin', __name__)
 @login_required
 @require_role('admin')
 def dashboard():
+    # Filters
+    f_month     = request.args.get('month', '')
+    f_year      = request.args.get('year', '')
+    f_company   = request.args.get('company', type=int)
+    f_retailer  = request.args.get('retailer', '')
+    f_submitter = request.args.get('submitter', type=int)
+    f_person    = request.args.get('person_by', type=int)
+    f_card      = request.args.get('card', '')
+
+    conditions = ["t.price_total > 0", "t.is_duplicate = FALSE", "t.is_active = TRUE"]
+    params = []
+    if f_month:
+        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
+    if f_year:
+        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); params.append(f_year)
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_retailer:
+        conditions.append("t.retailer = %s"); params.append(f_retailer)
+    if f_submitter:
+        conditions.append("t.submitted_by_user_id = %s"); params.append(f_submitter)
+    if f_person:
+        conditions.append("t.user_id = %s"); params.append(f_person)
+    if f_card:
+        conditions.append("t.card_id = %s"); params.append(f_card)
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+
     with db_cursor() as (cur, _):
-        # Summary metrics
-        cur.execute("""
+        cur.execute(f"""
             SELECT
-                COUNT(*)                                        AS total_orders,
-                ROUND(SUM(price_total)::numeric, 2)            AS total_gmv,
-                ROUND(SUM(COALESCE(gross_paid_amount,0))::numeric,2) AS total_paid,
-                ROUND(SUM(COALESCE(cashback_value,0))::numeric,2)    AS total_cashback,
-                COUNT(*) FILTER (WHERE review_status='Pending')      AS pending_count,
-                COUNT(*) FILTER (WHERE is_duplicate=TRUE)            AS dup_count
-            FROM transactions WHERE price_total > 0
-        """)
+                COUNT(*)                                              AS total_orders,
+                ROUND(SUM(t.price_total)::numeric, 2)                AS total_gmv,
+                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2) AS total_gross_paid,
+                ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)   AS total_net_paid,
+                ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS total_tax,
+                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2)    AS total_cashback,
+                COUNT(*) FILTER (WHERE t.review_status='Pending')      AS pending_count,
+                COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)            AS dup_count
+            FROM transactions t {where}
+        """, params)
         metrics = cur.fetchone()
 
-        # Monthly GMV last 6 months
-        cur.execute("""
-            SELECT purchase_year_month,
-                   ROUND(SUM(price_total)::numeric,2) AS gmv,
-                   COUNT(*) AS orders
-            FROM transactions
-            WHERE price_total > 0
-              AND purchase_year_month >= TO_CHAR(NOW() - INTERVAL '6 months','YYYY-MM')
-            GROUP BY purchase_year_month
-            ORDER BY purchase_year_month
-        """)
-        monthly = cur.fetchall()
-
         # Recent submissions
-        cur.execute("""
+        cur.execute(f"""
             SELECT t.order_number, t.retailer, t.purchase_date,
                    t.price_total, t.review_status, t.submitted_at,
-                   u.username, c.company_name
+                   sub.username AS submitter_name,
+                   per.username AS person_name,
+                   c.company_name, t.card_id,
+                   d.cashback_rate
             FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
+            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
+            {where}
             ORDER BY t.submitted_at DESC LIMIT 10
-        """)
+        """, params)
         recent = cur.fetchall()
 
-        # Pending review
         cur.execute("SELECT COUNT(*) AS n FROM v_pending_review")
         pending_total = cur.fetchone()['n']
 
+        # Filter options
+        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
+        retailers = [r['retailer'] for r in cur.fetchall()]
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
+        cur.execute("""
+            SELECT d.card_id, d.cashback_rate FROM dim_cards d
+            WHERE d.card_id IN (SELECT DISTINCT card_id FROM transactions WHERE card_id IS NOT NULL AND is_active=TRUE)
+            ORDER BY d.card_id
+        """)
+        cards = cur.fetchall()
+
+        # Years available
+        cur.execute("SELECT DISTINCT TO_CHAR(purchase_date,'YYYY') AS yr FROM transactions WHERE purchase_date IS NOT NULL ORDER BY yr DESC")
+        years = [r['yr'] for r in cur.fetchall()]
+
     return render_template('dashboard.html',
-                           metrics=metrics, monthly=monthly,
-                           recent=recent, pending_total=pending_total)
+                           metrics=metrics, recent=recent, pending_total=pending_total,
+                           retailers=retailers, companies=companies, users=users, cards=cards, years=years,
+                           filters={'month':f_month,'year':f_year,'company':f_company,
+                                    'retailer':f_retailer,'submitter':f_submitter,
+                                    'person_by':f_person,'card':f_card})
 
 
 @admin_bp.route('/submissions/all')
@@ -66,25 +108,33 @@ def all_submissions():
     per_page = 25
     offset   = (page - 1) * per_page
 
-    # Filters
-    retailer   = request.args.get('retailer', '')
-    company    = request.args.get('company', type=int)
-    status     = request.args.get('status', '')
-    month      = request.args.get('month', '')
-    duplicates = request.args.get('duplicates', '')
+    f_retailer   = request.args.get('retailer', '')
+    f_company    = request.args.get('company', type=int)
+    f_status     = request.args.get('status', '')
+    f_month      = request.args.get('month', '')
+    f_duplicates = request.args.get('duplicates', '')
+    f_submitter  = request.args.get('submitter', type=int)
+    f_card       = request.args.get('card', '')
+    f_person     = request.args.get('person_by', type=int)
 
-    conditions = []
-    params     = []
-    if retailer:
-        conditions.append("t.retailer = %s"); params.append(retailer)
-    if company:
-        conditions.append("t.company_id = %s"); params.append(company)
-    if status:
-        conditions.append("t.review_status = %s"); params.append(status)
-    if month:
-        conditions.append("t.purchase_year_month = %s"); params.append(month)
-    if duplicates:
+    conditions = ["t.is_active = TRUE"]
+    params = []
+    if f_retailer:
+        conditions.append("t.retailer = %s"); params.append(f_retailer)
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_status:
+        conditions.append("t.review_status = %s"); params.append(f_status)
+    if f_month:
+        conditions.append("t.purchase_year_month = %s"); params.append(f_month)
+    if f_duplicates:
         conditions.append("t.is_duplicate = TRUE")
+    if f_submitter:
+        conditions.append("sub.user_id = %s"); params.append(f_submitter)
+    if f_card:
+        conditions.append("t.card_id = %s"); params.append(f_card)
+    if f_person:
+        conditions.append("t.user_id = %s"); params.append(f_person)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -93,11 +143,19 @@ def all_submissions():
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.order_type,
                    t.review_status, t.submitted_at, t.is_duplicate,
-                   t.card_id, t.gross_paid_amount,
-                   u.username, c.company_name
+                   t.card_id, d.cashback_rate,
+                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2) AS gross_paid,
+                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)   AS net_paid,
+                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2) AS tax_withheld,
+                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)    AS cashback,
+                   sub.username AS submitter_name,
+                   per.username AS person_name,
+                   c.company_name, t.notes
             FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
+            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
             {where}
             ORDER BY t.submitted_at DESC
             LIMIT %s OFFSET %s
@@ -105,26 +163,34 @@ def all_submissions():
         submissions = cur.fetchall()
 
         cur.execute(f"""
-            SELECT COUNT(*) AS n
-            FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            SELECT COUNT(*) AS n FROM transactions t
+            LEFT JOIN dim_users sub ON t.submitted_by_email = sub.email
             {where}
         """, params)
         total = cur.fetchone()['n']
 
-        cur.execute("SELECT DISTINCT retailer FROM transactions ORDER BY retailer")
+        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
         retailers = [r['retailer'] for r in cur.fetchall()]
-
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
         companies = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
+        cur.execute("""
+            SELECT d.card_id, d.cashback_rate FROM dim_cards d
+            WHERE d.card_id IN (SELECT DISTINCT card_id FROM transactions WHERE card_id IS NOT NULL AND is_active=TRUE)
+            ORDER BY d.card_id
+        """)
+        cards = cur.fetchall()
+        cur.execute("SELECT DISTINCT purchase_year_month FROM transactions WHERE is_active=TRUE ORDER BY purchase_year_month DESC")
+        months = [r['purchase_year_month'] for r in cur.fetchall()]
 
     return render_template('all_submissions.html',
                            submissions=submissions, total=total,
                            page=page, per_page=per_page,
-                           retailers=retailers, companies=companies,
-                           filters={'retailer':retailer,'company':company,
-                                    'status':status,'month':month,'duplicates':duplicates})
+                           retailers=retailers, companies=companies, users=users, cards=cards, months=months,
+                           filters={'retailer':f_retailer,'company':f_company,'status':f_status,
+                                    'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
+                                    'card':f_card,'person_by':f_person})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
@@ -133,56 +199,55 @@ def all_submissions():
 def review_submission(tid):
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT t.*, u.username, c.company_name
+            SELECT t.*, sub.username AS submitter_name, per.username AS person_name,
+                   c.company_name
             FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
+            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
             WHERE t.transaction_id = %s
         """, (str(tid),))
         txn = cur.fetchone()
-
         if not txn:
             flash('Transaction not found.', 'error')
             return redirect(url_for('admin.all_submissions'))
-
         cur.execute("SELECT * FROM transaction_items WHERE transaction_id=%s", (str(tid),))
         items = cur.fetchall()
-
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
         companies = cur.fetchall()
-
-        cur.execute("SELECT card_id, card_name, card_brand FROM dim_cards WHERE is_active=TRUE ORDER BY card_id")
+        cur.execute("SELECT card_id, card_name, card_brand, cashback_rate FROM dim_cards WHERE is_active=TRUE ORDER BY card_id")
         cards = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
 
     if request.method == 'POST':
         action = request.form.get('action')
         with db_cursor() as (cur, conn):
             if action == 'approve':
-                cur.execute("""
-                    UPDATE transactions SET review_status='Reviewed', review_date=NOW()
-                    WHERE transaction_id=%s
-                """, (str(tid),))
+                cur.execute("UPDATE transactions SET review_status='Reviewed', review_date=NOW() WHERE transaction_id=%s", (str(tid),))
                 flash('Transaction approved.', 'success')
-
             elif action == 'flag':
-                cur.execute("""
-                    UPDATE transactions SET review_status='Flagged'
-                    WHERE transaction_id=%s
-                """, (str(tid),))
-                flash('Transaction flagged for follow-up.', 'warning')
-
+                cur.execute("UPDATE transactions SET review_status='Flagged' WHERE transaction_id=%s", (str(tid),))
+                flash('Transaction flagged.', 'warning')
             elif action == 'mark_duplicate':
-                cur.execute("""
-                    UPDATE transactions SET is_duplicate=TRUE, review_status='Flagged'
-                    WHERE transaction_id=%s
-                """, (str(tid),))
+                cur.execute("UPDATE transactions SET is_duplicate=TRUE, review_status='Flagged' WHERE transaction_id=%s", (str(tid),))
                 flash('Marked as duplicate.', 'warning')
-
+            elif action == 'inactivate':
+                cur.execute("UPDATE transactions SET is_active=FALSE WHERE transaction_id=%s", (str(tid),))
+                flash('Transaction inactivated. It will no longer appear in reports.', 'warning')
+                return redirect(url_for('admin.all_submissions'))
+            elif action == 'delete':
+                cur.execute("DELETE FROM transaction_items WHERE transaction_id=%s", (str(tid),))
+                cur.execute("DELETE FROM transactions WHERE transaction_id=%s", (str(tid),))
+                flash('Transaction permanently deleted.', 'danger')
+                return redirect(url_for('admin.all_submissions'))
             elif action == 'edit':
                 card_id    = request.form.get('card_id') or None
                 company_id = request.form.get('company_id', type=int)
+                user_id    = request.form.get('user_id', type=int)
                 order_type = request.form.get('order_type')
                 price      = request.form.get('price_total', type=float)
+                notes      = request.form.get('notes', '').strip()[:140] or None
 
                 cashback_rate = cashback_value = None
                 if card_id and price:
@@ -190,132 +255,163 @@ def review_submission(tid):
                     row = cur.fetchone()
                     if row:
                         cashback_rate  = float(row['cashback_rate'])
-                        cashback_value = round(price * cashback_rate, 4)
+                        cashback_value = round(price * cashback_rate, 2)
 
-                gross_paid   = round(price * 0.01, 4) if price else None
-                net_paid     = round(gross_paid * 0.8, 4) if gross_paid else None
-                tax_withheld = round(gross_paid * 0.2, 4) if gross_paid else None
-                gross_biz    = round((gross_paid or 0)+(cashback_value or 0),4) if gross_paid else None
-                net_biz      = round((gross_biz or 0)-(net_paid or 0),4) if gross_biz else None
+                gross_paid   = round(price * 0.01, 2) if price else None
+                net_paid     = round(gross_paid * 0.8, 2) if gross_paid else None
+                tax_withheld = round(gross_paid * 0.2, 2) if gross_paid else None
+                gross_biz    = round((gross_paid or 0)+(cashback_value or 0),2) if gross_paid else None
+                net_biz      = round((gross_biz or 0)-(net_paid or 0),2) if gross_biz else None
 
                 cur.execute("""
                     UPDATE transactions SET
-                        card_id=%s, company_id=%s, order_type=%s, price_total=%s,
+                        card_id=%s, company_id=%s, user_id=%s, order_type=%s, price_total=%s,
                         cashback_rate=%s, cashback_value=%s,
                         gross_paid_amount=%s, net_paid_amount=%s,
                         gross_business_commission=%s, net_business_commission=%s,
-                        sales_payroll_tax_withheld=%s,
+                        sales_payroll_tax_withheld=%s, notes=%s,
                         review_status='Reviewed', review_date=NOW()
                     WHERE transaction_id=%s
-                """, (card_id, company_id, order_type, price,
+                """, (card_id, company_id, user_id, order_type, price,
                       cashback_rate, cashback_value,
-                      gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
+                      gross_paid, net_paid, gross_biz, net_biz, tax_withheld, notes,
                       str(tid)))
                 flash('Transaction updated.', 'success')
-
         return redirect(url_for('admin.review_submission', tid=tid))
 
     return render_template('review_submission.html',
-                           txn=txn, items=items,
-                           companies=companies, cards=cards)
+                           txn=txn, items=items, companies=companies, cards=cards, users=users)
 
 
 @admin_bp.route('/payroll')
 @login_required
 @require_role('admin')
 def payroll():
-    month = request.args.get('month', '')
+    month   = request.args.get('month', '')
     company = request.args.get('company', type=int)
+    sort_by = request.args.get('sort', 'username')
+    sort_dir = request.args.get('dir', 'asc')
 
-    conditions = ["t.review_status != 'Flagged'", "t.is_duplicate = FALSE", "t.price_total > 0"]
+    valid_sorts = {'username','order_count','total_purchases','gross_paid','net_paid','tax_withheld'}
+    if sort_by not in valid_sorts:
+        sort_by = 'username'
+    order_clause = f"{sort_by} {'DESC' if sort_dir=='desc' else 'ASC'}"
+
+    conditions = ["t.review_status != 'Flagged'", "t.is_duplicate = FALSE",
+                  "t.price_total > 0", "t.is_active = TRUE"]
     params = []
     if month:
         conditions.append("t.purchase_year_month = %s"); params.append(month)
-    if company:
-        conditions.append("t.company_id = %s"); params.append(company)
 
     where = 'WHERE ' + ' AND '.join(conditions)
 
     with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT
-                u.user_id, u.username,
-                c.company_name,
-                t.purchase_year_month,
-                COUNT(t.transaction_id)                                AS order_count,
-                ROUND(SUM(t.price_total)::numeric, 2)                  AS total_purchases,
-                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2) AS gross_paid,
-                ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)   AS net_paid,
-                ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS tax_withheld
-            FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            {where}
-            GROUP BY u.user_id, u.username, c.company_name, t.purchase_year_month
-            ORDER BY t.purchase_year_month DESC, u.username
-        """, params)
-        payroll_data = cur.fetchall()
+        # Separate queries per company
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+
+        company_data = {}
+        for comp in companies:
+            if company and comp['company_id'] != company:
+                continue
+            cparams = params + [comp['company_id']]
+            cur.execute(f"""
+                SELECT
+                    u.user_id, u.username,
+                    t.purchase_year_month,
+                    COUNT(t.transaction_id)                                    AS order_count,
+                    ROUND(SUM(t.price_total)::numeric, 2)                      AS total_purchases,
+                    ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2)     AS gross_paid,
+                    ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)       AS net_paid,
+                    ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS tax_withheld
+                FROM transactions t
+                LEFT JOIN dim_users u ON t.user_id = u.user_id
+                {where} AND t.company_id = %s
+                GROUP BY u.user_id, u.username, t.purchase_year_month
+                ORDER BY t.purchase_year_month DESC, {order_clause}
+            """, cparams)
+            company_data[comp['company_name']] = cur.fetchall()
 
         cur.execute("""
             SELECT DISTINCT purchase_year_month FROM transactions
-            WHERE price_total > 0 ORDER BY purchase_year_month DESC
+            WHERE price_total > 0 AND is_active=TRUE ORDER BY purchase_year_month DESC
         """)
         months = [r['purchase_year_month'] for r in cur.fetchall()]
 
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
-        companies = cur.fetchall()
-
     return render_template('payroll.html',
-                           payroll_data=payroll_data,
-                           months=months, companies=companies,
-                           selected_month=month, selected_company=company)
+                           company_data=company_data, months=months, companies=companies,
+                           selected_month=month, selected_company=company,
+                           sort_by=sort_by, sort_dir=sort_dir)
 
 
 @admin_bp.route('/cashback')
 @login_required
 @require_role('admin')
 def cashback():
-    month = request.args.get('month', '')
+    f_month   = request.args.get('month', '')
+    f_year    = request.args.get('year', '')
+    f_company = request.args.get('company', type=int)
+    f_person  = request.args.get('person_by', type=int)
+
+    conditions = ["t.is_active = TRUE"]
+    t_params = []
+    if f_month:
+        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); t_params.append(f_month)
+    if f_year:
+        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); t_params.append(f_year)
+    if f_person:
+        conditions.append("t.user_id = %s"); t_params.append(f_person)
+    if f_company:
+        conditions.append("t.company_id = %s"); t_params.append(f_company)
+
+    t_where = ('AND ' + ' AND '.join(conditions)) if conditions else ''
 
     with db_cursor() as (cur, _):
-        params = []
-        month_filter = ''
-        if month:
-            month_filter = 'AND t.purchase_year_month = %s'
-            params.append(month)
-
         cur.execute(f"""
             SELECT
                 d.card_id, d.card_name, d.card_brand,
                 u.username AS cardholder,
                 c.company_name,
                 d.cashback_rate,
-                COUNT(t.transaction_id)                             AS transactions,
-                ROUND(SUM(t.price_total)::numeric, 2)               AS total_spend,
-                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,4) AS total_cashback
+                COUNT(t.transaction_id)                               AS transactions,
+                ROUND(SUM(COALESCE(t.price_total,0))::numeric, 2)    AS total_spend,
+                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric, 2) AS total_cashback
             FROM dim_cards d
             LEFT JOIN transactions t  ON t.card_id    = d.card_id
                                       AND t.price_total > 0
                                       AND t.is_duplicate = FALSE
-                                      {month_filter}
+                                      {t_where}
             LEFT JOIN dim_users u     ON d.user_id    = u.user_id
             LEFT JOIN dim_companies c ON d.company_id = c.company_id
             WHERE d.is_active = TRUE
             GROUP BY d.card_id, d.card_name, d.card_brand,
                      u.username, c.company_name, d.cashback_rate
             ORDER BY total_cashback DESC NULLS LAST
-        """, params)
+        """, t_params)
         cashback_data = cur.fetchall()
 
-        cur.execute("""
-            SELECT DISTINCT purchase_year_month FROM transactions
-            WHERE price_total > 0 ORDER BY purchase_year_month DESC
-        """)
-        months = [r['purchase_year_month'] for r in cur.fetchall()]
+        # Total cashback by company
+        cur.execute(f"""
+            SELECT c.company_name,
+                   ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2) AS total
+            FROM transactions t
+            JOIN dim_companies c ON t.company_id = c.company_id
+            WHERE t.price_total > 0 AND t.is_duplicate = FALSE {t_where}
+            GROUP BY c.company_name ORDER BY total DESC
+        """, t_params)
+        company_cashback = cur.fetchall()
+
+        cur.execute("SELECT DISTINCT TO_CHAR(purchase_date,'YYYY') AS yr FROM transactions WHERE purchase_date IS NOT NULL ORDER BY yr DESC")
+        years = [r['yr'] for r in cur.fetchall()]
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
 
     return render_template('cashback.html',
-                           cashback_data=cashback_data,
-                           months=months, selected_month=month)
+                           cashback_data=cashback_data, company_cashback=company_cashback,
+                           years=years, companies=companies, users=users,
+                           filters={'month':f_month,'year':f_year,'company':f_company,'person_by':f_person})
 
 
 @admin_bp.route('/print-batch', methods=['GET', 'POST'])
@@ -325,12 +421,10 @@ def print_batch():
     if request.method == 'POST':
         txn_ids  = request.form.getlist('txn_ids')
         batch_id = request.form.get('batch_id', '').strip()
-
         if txn_ids and batch_id:
             with db_cursor() as (cur, conn):
                 cur.execute("""
-                    UPDATE transactions
-                    SET print_batch_id = %s, print_date = NOW()
+                    UPDATE transactions SET print_batch_id=%s, print_date=NOW()
                     WHERE transaction_id = ANY(%s::uuid[])
                 """, (batch_id, txn_ids))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
@@ -343,17 +437,14 @@ def print_batch():
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            WHERE t.print_date IS NULL AND t.review_status != 'Flagged'
+            WHERE t.print_date IS NULL AND t.review_status != 'Flagged' AND t.is_active=TRUE
             ORDER BY t.purchase_date DESC
         """)
         unprinted = cur.fetchall()
-
         cur.execute("""
             SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS count
-            FROM transactions
-            WHERE print_batch_id IS NOT NULL
-            GROUP BY print_batch_id
-            ORDER BY batch_date DESC LIMIT 20
+            FROM transactions WHERE print_batch_id IS NOT NULL
+            GROUP BY print_batch_id ORDER BY batch_date DESC LIMIT 20
         """)
         batches = cur.fetchall()
 
