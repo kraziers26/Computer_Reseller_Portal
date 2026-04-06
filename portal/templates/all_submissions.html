@@ -1,29 +1,41 @@
 {% extends "base.html" %}
-{% block title %}All Submissions — iGamer Corp{% endblock %}
+{% block title %}All Submissions — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>All Submissions</h1><p>{{ total }} total records</p></div>
+  <div><h1>All Submissions</h1><p>{{ total }} records</p></div>
 </div>
 <div class="card" style="margin-bottom:16px">
   <form method="GET" class="flex gap-12 flex-wrap items-center">
-    <select name="retailer" style="width:140px" onchange="this.form.submit()">
+    <select name="retailer" style="width:130px" onchange="this.form.submit()">
       <option value="">All retailers</option>
-      {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer == r }}>{{ r }}</option>{% endfor %}
+      {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
     </select>
-    <select name="company" style="width:160px" onchange="this.form.submit()">
+    <select name="company" style="width:150px" onchange="this.form.submit()">
       <option value="">All companies</option>
-      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company == c.company_id }}>{{ c.company_name }}</option>{% endfor %}
-    </select>
-    <select name="status" style="width:150px" onchange="this.form.submit()">
-      <option value="">All statuses</option>
-      {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
-      <option value="{{ s }}" {{ 'selected' if filters.status == s }}>{{ s }}</option>{% endfor %}
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
     </select>
     <input type="month" name="month" value="{{ filters.month }}" style="width:150px" onchange="this.form.submit()">
+    <select name="submitter" style="width:140px" onchange="this.form.submit()">
+      <option value="">All submitters</option>
+      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.submitter==u.user_id }}>{{ u.username }}</option>{% endfor %}
+    </select>
+    <select name="card" style="width:200px" onchange="this.form.submit()">
+      <option value="">All cards</option>
+      {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if filters.card==c.card_id }}>Card {{ c.card_id }} — {{ "%.1f"|format(c.cashback_rate*100) }}% Cash Back</option>{% endfor %}
+    </select>
+    <select name="status" style="width:140px" onchange="this.form.submit()">
+      <option value="">All statuses</option>
+      {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
+      <option value="{{ s }}" {{ 'selected' if filters.status==s }}>{{ s }}</option>{% endfor %}
+    </select>
+    <select name="person_by" style="width:140px" onchange="this.form.submit()">
+      <option value="">All persons</option>
+      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
+    </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0">
       <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Duplicates only
     </label>
-    {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates %}
+    {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by %}
     <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
     {% endif %}
   </form>
@@ -31,17 +43,22 @@
 <div class="card">
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Company</th><th>Total</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Person By</th><th>Card</th><th>Company</th><th>Total</th><th>Gross Paid</th><th>Net Paid</th><th>Tax</th><th>Cash Back</th><th>Status</th><th></th></tr></thead>
       <tbody>
       {% for r in submissions %}
       <tr>
-        <td class="mono">{{ r.order_number[:22] }}{% if r.is_duplicate %} <span class="badge badge-danger" style="font-size:10px">dup</span>{% endif %}</td>
+        <td class="mono" style="font-size:12px">{{ r.order_number[:20] }}{% if r.is_duplicate %} <span class="badge badge-danger" style="font-size:10px">dup</span>{% endif %}</td>
         <td>{{ r.retailer }}</td>
         <td>{{ r.purchase_date }}</td>
-        <td>{{ r.username or '—' }}</td>
+        <td>{{ r.submitter_name or '—' }}</td>
+        <td>{{ r.person_name or '—' }}</td>
+        <td class="mono" style="font-size:12px">{% if r.card_id %}Card {{ r.card_id }} — {{ "%.1f"|format((r.cashback_rate or 0)*100) }}%{% else %}—{% endif %}</td>
         <td>{{ r.company_name or '—' }}</td>
         <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td class="mono text-muted">${{ "{:,.2f}".format(r.gross_paid_amount or 0) }}</td>
+        <td class="mono text-success">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
+        <td class="mono text-warning">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
+        <td class="mono">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
         <td>
           {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Approved</span>
           {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
@@ -52,7 +69,7 @@
       </tr>
       {% endfor %}
       {% if not submissions %}
-      <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
+      <tr><td colspan="14" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
       {% endif %}
       </tbody>
     </table>
