@@ -1,11 +1,15 @@
 {% extends "base.html" %}
-{% block title %}All Submissions — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}My Submissions — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>All Submissions</h1><p>{{ total }} records</p></div>
+  <div><h1>My Submissions</h1><p>{{ total }} records</p></div>
+  <a href="{{ url_for('upload.upload') }}" class="btn btn-primary btn-sm">+ Upload Invoice</a>
 </div>
+
 <div class="card" style="margin-bottom:16px">
   <form method="GET" class="flex gap-12 flex-wrap items-center">
+    <input type="text" name="order_number" value="{{ filters.order_number }}"
+           placeholder="Order #" style="width:140px" oninput="this.form.submit()">
     <select name="retailer" style="width:130px" onchange="this.form.submit()">
       <option value="">All retailers</option>
       {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
@@ -14,71 +18,60 @@
       <option value="">All companies</option>
       {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
     </select>
-    <input type="month" name="month" value="{{ filters.month }}" style="width:150px" onchange="this.form.submit()">
-    <select name="submitter" style="width:140px" onchange="this.form.submit()">
-      <option value="">All submitters</option>
-      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.submitter==u.user_id }}>{{ u.username }}</option>{% endfor %}
-    </select>
-    <select name="card" style="width:200px" onchange="this.form.submit()">
-      <option value="">All cards</option>
-      {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if filters.card==c.card_id }}>Card {{ c.card_id }} — {{ "%.1f"|format(c.cashback_rate*100) }}% Cash Back</option>{% endfor %}
+    <select name="order_type" style="width:150px" onchange="this.form.submit()">
+      <option value="">All types</option>
+      {% for t in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
+      <option value="{{ t }}" {{ 'selected' if filters.order_type==t }}>{{ t }}</option>{% endfor %}
     </select>
     <select name="status" style="width:140px" onchange="this.form.submit()">
       <option value="">All statuses</option>
       {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
       <option value="{{ s }}" {{ 'selected' if filters.status==s }}>{{ s }}</option>{% endfor %}
     </select>
-    <select name="person_by" style="width:140px" onchange="this.form.submit()">
-      <option value="">All persons</option>
-      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
-    </select>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0">
-      <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Duplicates only
-    </label>
-    {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by %}
-    <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
+    <input type="text" name="notes" value="{{ filters.notes }}"
+           placeholder="Search notes..." style="width:150px" oninput="this.form.submit()">
+    {% if filters.retailer or filters.company or filters.order_type or filters.status or filters.notes or filters.order_number %}
+    <a href="{{ url_for('upload.my_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
     {% endif %}
   </form>
 </div>
+
 <div class="card">
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Person By</th><th>Card</th><th>Company</th><th>Total</th><th>Gross Paid</th><th>Net Paid</th><th>Tax</th><th>Cash Back</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Person By</th><th>Company</th><th>Total</th><th>Type</th><th>Status</th><th>Submitted</th><th>Notes</th></tr></thead>
       <tbody>
       {% for r in submissions %}
       <tr>
-        <td class="mono" style="font-size:12px">{{ r.order_number[:20] }}{% if r.is_duplicate %} <span class="badge badge-danger" style="font-size:10px">dup</span>{% endif %}</td>
+        <td class="mono">{{ r.order_number[:22] }}</td>
         <td>{{ r.retailer }}</td>
         <td>{{ r.purchase_date }}</td>
-        <td>{{ r.submitter_name or '—' }}</td>
         <td>{{ r.person_name or '—' }}</td>
-        <td class="mono" style="font-size:12px">{% if r.card_id %}Card {{ r.card_id }} — {{ "%.1f"|format((r.cashback_rate or 0)*100) }}%{% else %}—{% endif %}</td>
         <td>{{ r.company_name or '—' }}</td>
-        <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td class="mono text-success">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
-        <td class="mono">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
-        <td class="mono text-warning">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
-        <td class="mono">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
+        <td class="mono">${{ "%.2f"|format((r.price_total or 0)|float) }}</td>
+        <td style="font-size:12px">{{ r.order_type }}</td>
         <td>
           {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Approved</span>
           {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
           {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
           {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
+          {% if r.is_duplicate %}<span class="badge badge-danger" style="margin-left:4px">Dup</span>{% endif %}
         </td>
-        <td><a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}" class="btn btn-ghost btn-sm">Review</a></td>
+        <td style="color:var(--muted);font-size:12px">{{ r.submitted_at.strftime('%b %d, %Y') if r.submitted_at else '—' }}</td>
+        <td style="font-size:12px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.notes or '—' }}</td>
       </tr>
       {% endfor %}
       {% if not submissions %}
-      <tr><td colspan="14" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
+      <tr><td colspan="10" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
       {% endif %}
       </tbody>
     </table>
   </div>
   {% if total > per_page %}
   <div class="pagination">
-    {% if page > 1 %}<a href="?page={{ page-1 }}&retailer={{ filters.retailer }}&status={{ filters.status }}">← Prev</a>{% endif %}
-    <span class="current">{{ page }} / {{ ((total-1)//per_page)+1 }}</span>
-    {% if page * per_page < total %}<a href="?page={{ page+1 }}&retailer={{ filters.retailer }}&status={{ filters.status }}">Next →</a>{% endif %}
+    {% if page > 1 %}<a href="?page={{ page-1 }}">← Prev</a>{% endif %}
+    <span class="current">{{ page }}</span>
+    {% if page * per_page < total %}<a href="?page={{ page+1 }}">Next →</a>{% endif %}
   </div>
   {% endif %}
 </div>
