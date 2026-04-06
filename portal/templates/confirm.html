@@ -14,7 +14,6 @@
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
 
-  <!-- LEFT: Form -->
   <form method="POST" id="confirmForm">
     <div class="card">
       <div class="card-title">Order details</div>
@@ -58,7 +57,7 @@
       <div class="card-title">Person & company</div>
       <div class="form-row">
         <div class="form-group">
-          <label>Person By * <span style="font-size:11px;color:var(--muted)">(who made this purchase)</span></label>
+          <label>Person By *</label>
           <select name="user_id" required>
             {% for u in users %}
             <option value="{{ u.user_id }}" {{ 'selected' if u.user_id == current_user_id }}>{{ u.username }}</option>
@@ -75,15 +74,19 @@
           </select>
         </div>
       </div>
-      <div class="form-group">
-        <label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found in PDF' }}</label>
-        <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}"
-               placeholder="e.g. 3015" maxlength="4" style="max-width:160px">
-        {% if not invoice.card_last4 %}
-        <div style="font-size:11px;color:var(--warning);margin-top:4px">
-          Not found in PDF. Enter manually or leave blank to flag for review.
+      <div class="form-row">
+        <div class="form-group">
+          <label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
+          <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}"
+                 placeholder="e.g. 3015" maxlength="4">
+          {% if not invoice.card_last4 %}
+          <div style="font-size:11px;color:var(--warning);margin-top:4px">Not found in PDF. Enter manually or leave blank to flag.</div>
+          {% endif %}
         </div>
-        {% endif %}
+        <div class="form-group">
+          <label>Notes <span style="font-size:11px;color:var(--muted)">(optional, 140 chars)</span></label>
+          <input type="text" name="notes" maxlength="140" placeholder="e.g. Holiday restock, client order, etc.">
+        </div>
       </div>
     </div>
 
@@ -117,7 +120,6 @@
     </div>
   </form>
 
-  <!-- RIGHT: PDF Preview -->
   <div style="position:sticky;top:20px">
     <div class="card" style="padding:12px">
       <div class="card-title" style="margin-bottom:10px">Invoice Preview</div>
@@ -130,15 +132,10 @@
   </div>
 
 </div>
-
 <style>
 @media(max-width:900px){
-  div[style*="grid-template-columns:1fr 1fr"]{
-    grid-template-columns:1fr !important;
-  }
-  div[style*="position:sticky"]{
-    display:none;
-  }
+  div[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}
+  div[style*="position:sticky"]{display:none}
 }
 </style>
 {% endblock %}
