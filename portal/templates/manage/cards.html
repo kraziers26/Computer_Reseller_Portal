@@ -1,64 +1,83 @@
 {% extends "base.html" %}
-{% block title %}Cash Back — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}Manage Cards — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
-<div class="page-header"><h1>Cash Back Report</h1><p>Cash back earned per card</p></div>
-
-<!-- Company KPI cards -->
-{% if company_cashback %}
-<div class="metrics" style="margin-bottom:20px">
-  {% for r in company_cashback %}
-  <div class="metric"><div class="metric-label">{{ r.company_name }}</div><div class="metric-value accent">${{ "{:,.2f}".format(r.total or 0) }}</div></div>
-  {% endfor %}
-  <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value success">${{ "{:,.2f}".format(company_cashback|sum(attribute='total') or 0) }}</div></div>
+<div class="page-header page-header-row">
+  <h1>Cards</h1><p>{{ cards|length }} cards on file</p>
 </div>
-{% endif %}
-
-<div class="card" style="margin-bottom:16px">
-  <form method="GET" class="flex gap-12 items-center flex-wrap">
-    <select name="month" style="width:110px" onchange="this.form.submit()">
-      <option value="">All months</option>
-      {% for m in range(1,13) %}
-      <option value="{{ '%02d'|format(m) }}" {{ 'selected' if filters.month=='%02d'|format(m) }}>{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>
-      {% endfor %}
-    </select>
-    <select name="year" style="width:100px" onchange="this.form.submit()">
-      <option value="">All years</option>
-      {% for y in years %}<option value="{{ y }}" {{ 'selected' if filters.year==y }}>{{ y }}</option>{% endfor %}
-    </select>
-    <select name="company" style="width:150px" onchange="this.form.submit()">
-      <option value="">All companies</option>
-      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
-    </select>
-    <select name="person_by" style="width:140px" onchange="this.form.submit()">
-      <option value="">All persons</option>
-      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
-    </select>
-    {% if filters.month or filters.year or filters.company or filters.person_by %}
-    <a href="{{ url_for('admin.cashback') }}" class="btn btn-ghost btn-sm">Clear</a>
-    {% endif %}
-  </form>
-</div>
-
 <div class="card">
   <div class="table-wrap"><table>
-    <thead><tr><th>Card</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Rate</th><th>Txns</th><th>Total Spend</th>
-      <th><a href="?month={{ filters.month }}&year={{ filters.year }}&sort=cashback&dir=desc" style="color:inherit;text-decoration:none">Cash Back ↓</a></th>
-    </tr></thead>
+    <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th><th></th></tr></thead>
     <tbody>
-    {% for r in cashback_data %}
-    <tr>
-      <td class="mono">{{ r.card_id }}</td>
-      <td>{{ r.card_name }}</td>
-      <td>{{ r.card_brand }}</td>
-      <td>{{ r.cardholder or '—' }}</td>
-      <td>{{ r.company_name }}</td>
-      <td><span class="badge badge-accent">{{ "{:.1%}".format(r.cashback_rate) }}</span></td>
-      <td>{{ r.transactions or 0 }}</td>
-      <td class="mono">${{ "{:,.2f}".format(r.total_spend or 0) }}</td>
-      <td class="mono text-success">${{ "{:,.2f}".format(r.total_cashback or 0) }}</td>
+    {% for c in cards %}
+    <tr style="{{ 'opacity:.5' if not c.is_active }}">
+      <td class="mono">{{ c.card_id }}</td>
+      <td>{{ c.card_name }}</td>
+      <td>{{ c.card_brand }}</td>
+      <td>{{ c.cardholder_name or '—' }}</td>
+      <td>{{ c.company_name }}</td>
+      <td class="mono">${{ "{:,.0f}".format(c.credit_limit or 0) }}</td>
+      <td><span class="badge badge-accent">{{ "{:.1%}".format(c.cashback_rate) }}</span></td>
+      <td>{% if c.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
+      <td><button onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='block'" class="btn btn-ghost btn-sm">Edit</button></td>
+    </tr>
+    <tr id="edit-card-{{ c.card_id }}" style="display:none;background:var(--surface2)">
+      <td colspan="9" style="padding:16px">
+        <form method="POST" action="{{ url_for('manage.edit_card', card_id=c.card_id) }}">
+          <input type="hidden" name="action" value="update">
+          <div class="form-row-3">
+            <div class="form-group"><label>Card Name</label><input name="card_name" value="{{ c.card_name }}"></div>
+            <div class="form-group"><label>Brand</label><input name="card_brand" value="{{ c.card_brand }}"></div>
+            <div class="form-group"><label>Cash Back % <span style="font-size:11px;color:var(--muted)">(e.g. 1.5 for 1.5%)</span></label>
+              <input name="cashback_rate" type="number" step="0.01" value="{{ "%.2f"|format(c.cashback_rate*100) }}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Cardholder</label>
+              <select name="user_id"><option value="">— None —</option>{% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if c.user_id==u.user_id }}>{{ u.username }}</option>{% endfor %}</select>
+            </div>
+            <div class="form-group"><label>Company</label>
+              <select name="company_id" required>{% for co in companies %}<option value="{{ co.company_id }}" {{ 'selected' if c.company_id==co.company_id }}>{{ co.company_name }}</option>{% endfor %}</select>
+            </div>
+            <div class="form-group"><label>Credit Limit</label>
+              <input name="credit_limit" type="number" step="1" value="{{ c.credit_limit or '' }}">
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;color:var(--text)">
+            <input type="checkbox" name="is_active" style="width:auto" {{ 'checked' if c.is_active }}> Active
+          </label>
+          <div class="flex gap-8">
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+            <button type="button" onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='none'" class="btn btn-ghost btn-sm">Cancel</button>
+          </div>
+        </form>
+      </td>
     </tr>
     {% endfor %}
     </tbody>
   </table></div>
+</div>
+
+<div class="card mt-16">
+  <div class="card-title">Add new card</div>
+  <form method="POST" action="{{ url_for('manage.new_card') }}">
+    <div class="form-row">
+      <div class="form-group"><label>Last 4 digits *</label><input name="card_id" maxlength="4" required placeholder="e.g. 1234"></div>
+      <div class="form-group"><label>Card name *</label><input name="card_name" required placeholder="Ink Unlimited"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Brand *</label><input name="card_brand" required placeholder="Chase"></div>
+      <div class="form-group"><label>Cash back % *</label><input name="cashback_rate" type="number" step="0.01" required placeholder="1.5"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Cardholder</label>
+        <select name="user_id"><option value="">— None —</option>{% for u in users %}<option value="{{ u.user_id }}">{{ u.username }}</option>{% endfor %}</select>
+      </div>
+      <div class="form-group"><label>Company *</label>
+        <select name="company_id" required><option value="">Select...</option>{% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}</select>
+      </div>
+    </div>
+    <div class="form-group" style="max-width:200px"><label>Credit limit</label><input name="credit_limit" type="number" step="1" placeholder="25000"></div>
+    <button type="submit" class="btn btn-primary">Add Card</button>
+  </form>
 </div>
 {% endblock %}
