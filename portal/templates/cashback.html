@@ -1,36 +1,64 @@
 {% extends "base.html" %}
-{% block title %}Cash Back — iGamer Corp{% endblock %}
+{% block title %}Cash Back — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header"><h1>Cash Back Report</h1><p>Cash back earned per card</p></div>
+
+<!-- Company KPI cards -->
+{% if company_cashback %}
+<div class="metrics" style="margin-bottom:20px">
+  {% for r in company_cashback %}
+  <div class="metric"><div class="metric-label">{{ r.company_name }}</div><div class="metric-value accent">${{ "{:,.2f}".format(r.total or 0) }}</div></div>
+  {% endfor %}
+  <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value success">${{ "{:,.2f}".format(company_cashback|sum(attribute='total') or 0) }}</div></div>
+</div>
+{% endif %}
+
 <div class="card" style="margin-bottom:16px">
-  <form method="GET" class="flex gap-12 items-center">
-    <select name="month" style="width:160px" onchange="this.form.submit()">
-      <option value="">All time</option>
-      {% for m in months %}<option value="{{ m }}" {{ 'selected' if selected_month == m }}>{{ m }}</option>{% endfor %}
+  <form method="GET" class="flex gap-12 items-center flex-wrap">
+    <select name="month" style="width:110px" onchange="this.form.submit()">
+      <option value="">All months</option>
+      {% for m in range(1,13) %}
+      <option value="{{ '%02d'|format(m) }}" {{ 'selected' if filters.month=='%02d'|format(m) }}>{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>
+      {% endfor %}
     </select>
-    {% if selected_month %}<a href="{{ url_for('admin.cashback') }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+    <select name="year" style="width:100px" onchange="this.form.submit()">
+      <option value="">All years</option>
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if filters.year==y }}>{{ y }}</option>{% endfor %}
+    </select>
+    <select name="company" style="width:150px" onchange="this.form.submit()">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+    </select>
+    <select name="person_by" style="width:140px" onchange="this.form.submit()">
+      <option value="">All persons</option>
+      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
+    </select>
+    {% if filters.month or filters.year or filters.company or filters.person_by %}
+    <a href="{{ url_for('admin.cashback') }}" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
   </form>
 </div>
+
 <div class="card">
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Card</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Rate</th><th>Txns</th><th>Total Spend</th><th>Cash Back Earned</th></tr></thead>
-      <tbody>
-      {% for r in cashback_data %}
-      <tr>
-        <td class="mono">{{ r.card_id }}</td>
-        <td>{{ r.card_name }}</td>
-        <td>{{ r.card_brand }}</td>
-        <td>{{ r.cardholder or '—' }}</td>
-        <td>{{ r.company_name }}</td>
-        <td><span class="badge badge-accent">{{ "{:.1%}".format(r.cashback_rate) }}</span></td>
-        <td>{{ r.transactions or 0 }}</td>
-        <td class="mono">${{ "{:,.2f}".format(r.total_spend or 0) }}</td>
-        <td class="mono text-success">${{ "{:,.4f}".format(r.total_cashback or 0) }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Card</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Rate</th><th>Txns</th><th>Total Spend</th>
+      <th><a href="?month={{ filters.month }}&year={{ filters.year }}&sort=cashback&dir=desc" style="color:inherit;text-decoration:none">Cash Back ↓</a></th>
+    </tr></thead>
+    <tbody>
+    {% for r in cashback_data %}
+    <tr>
+      <td class="mono">{{ r.card_id }}</td>
+      <td>{{ r.card_name }}</td>
+      <td>{{ r.card_brand }}</td>
+      <td>{{ r.cardholder or '—' }}</td>
+      <td>{{ r.company_name }}</td>
+      <td><span class="badge badge-accent">{{ "{:.1%}".format(r.cashback_rate) }}</span></td>
+      <td>{{ r.transactions or 0 }}</td>
+      <td class="mono">${{ "{:,.2f}".format(r.total_spend or 0) }}</td>
+      <td class="mono text-success">${{ "{:,.2f}".format(r.total_cashback or 0) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
 </div>
 {% endblock %}
