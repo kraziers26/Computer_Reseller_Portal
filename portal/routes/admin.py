@@ -795,3 +795,153 @@ def audit_log():
     return render_template('audit_log.html', logs=logs, total=total,
                            page=page, per_page=per_page, actions=actions,
                            filters={'action': f_action, 'user': f_user})
+
+@admin_bp.route('/costco-taxes/export')
+@login_required
+@require_role('admin')
+def export_costco_taxes():
+    import io
+    from flask import send_file as sf
+    fmt = request.args.get('fmt', 'excel')
+
+    f_month      = request.args.get('month', '')
+    f_year       = request.args.get('year', '')
+    f_company    = request.args.get('company', type=int)
+    f_person     = request.args.get('person_by', type=int)
+    f_membership = request.args.get('membership', '')
+
+    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
+    params = []
+    if f_month:
+        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
+    if f_year:
+        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); params.append(f_year)
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_person:
+        conditions.append("t.user_id = %s"); params.append(f_person)
+    if f_membership:
+        conditions.append("t.membership_number = %s"); params.append(f_membership)
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT t.order_number, t.purchase_date, per.username AS person_name,
+                   c.company_name, t.membership_number, t.card_id,
+                   ROUND(t.price_total::numeric,2)                              AS total,
+                   ROUND(COALESCE(t.costco_taxes_paid,0)::numeric,2)            AS costco_tax,
+                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2)            AS gross_paid,
+                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)              AS net_paid,
+                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2)   AS tax_withheld,
+                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)               AS cashback,
+                   t.review_status
+            FROM transactions t
+            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            {where}
+            ORDER BY t.purchase_date DESC
+        """, params)
+        rows = cur.fetchall()
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Costco Taxes'
+
+    headers = ['Order #', 'Date', 'Person By', 'Company', 'Membership #',
+               'Card', 'Total', 'Costco Tax', 'Gross Paid', 'Net Paid',
+               'Tax Withheld', 'Cash Back', 'Status']
+    hfont = Font(bold=True, color='FFFFFF')
+    hfill = PatternFill('solid', start_color='1a1d27')
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = hfont; cell.fill = hfill
+        cell.alignment = Alignment(horizontal='center')
+
+    money_cols = {7,8,9,10,11,12}
+    for ri, r in enumerate(rows, 2):
+        vals = [r['order_number'], str(r['purchase_date']) if r['purchase_date'] else '',
+                r['person_name'] or '', r['company_name'] or '',
+                r['membership_number'] or '', r['card_id'] or '',
+                float(r['total'] or 0), float(r['costco_tax'] or 0),
+                float(r['gross_paid'] or 0), float(r['net_paid'] or 0),
+                float(r['tax_withheld'] or 0), float(r['cashback'] or 0),
+                r['review_status'] or '']
+        for ci, v in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            if ci in money_cols:
+                cell.number_format = '$#,##0.00'
+
+    # Totals row
+    tr = len(rows) + 2
+    ws.cell(row=tr, column=1, value='TOTAL').font = Font(bold=True)
+    for ci, col in zip(range(7,13), 'GHIJKL'):
+        ws.cell(row=tr, column=ci,
+                value=f'=SUM({col}2:{col}{tr-1})').font = Font(bold=True)
+        ws.cell(row=tr, column=ci).number_format = '$#,##0.00'
+
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 16
+
+    fname = f"costco_taxes{'_'+f_year if f_year else ''}.xlsx"
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return sf(buf, as_attachment=True, download_name=fname,
+              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@admin_bp.route('/audit-log/export')
+@login_required
+@require_role('admin')
+def export_audit_log():
+    import io
+    from flask import send_file as sf
+    f_action = request.args.get('action', '')
+    f_user   = request.args.get('user', '')
+
+    conditions, params = [], []
+    if f_action:
+        conditions.append("a.action = %s"); params.append(f_action)
+    if f_user:
+        conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
+    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT a.created_at, a.action, u.username, a.user_email,
+                   a.target_type, a.target_id, a.detail, a.ip_address
+            FROM audit_log a
+            LEFT JOIN dim_users u ON a.user_id = u.user_id
+            {where}
+            ORDER BY a.created_at DESC LIMIT 5000
+        """, params)
+        rows = cur.fetchall()
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Audit Log'
+    headers = ['Timestamp', 'Action', 'Username', 'Email', 'Target Type', 'Target ID', 'Detail', 'IP Address']
+    hfont = Font(bold=True, color='FFFFFF')
+    hfill = PatternFill('solid', start_color='1a1d27')
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = hfont; cell.fill = hfill
+        cell.alignment = Alignment(horizontal='center')
+
+    for ri, r in enumerate(rows, 2):
+        ws.cell(row=ri, column=1, value=str(r['created_at']) if r['created_at'] else '')
+        ws.cell(row=ri, column=2, value=r['action'] or '')
+        ws.cell(row=ri, column=3, value=r['username'] or '')
+        ws.cell(row=ri, column=4, value=r['user_email'] or '')
+        ws.cell(row=ri, column=5, value=r['target_type'] or '')
+        ws.cell(row=ri, column=6, value=r['target_id'] or '')
+        ws.cell(row=ri, column=7, value=r['detail'] or '')
+        ws.cell(row=ri, column=8, value=r['ip_address'] or '')
+
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 22
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return sf(buf, as_attachment=True, download_name='audit_log.xlsx',
+              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
