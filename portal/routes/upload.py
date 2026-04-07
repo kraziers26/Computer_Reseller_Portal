@@ -139,30 +139,62 @@ def upload():
             ORDER BY d.created_at DESC LIMIT 1
         """, (current_user.id,))
         active_draft = cur.fetchone()
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
 
     if request.method == 'POST':
-        if 'pdf' not in request.files:
-            flash('No file selected.', 'error')
-            return render_template('upload.html', companies=companies, active_draft=active_draft)
-        f = request.files['pdf']
-        if not f.filename or not allowed_file(f.filename):
-            flash('Please upload a PDF file.', 'error')
-            return render_template('upload.html', companies=companies, active_draft=active_draft)
-        tmp_path = os.path.join(UPLOAD_FOLDER, f'{uuid.uuid4()}.pdf')
-        f.save(tmp_path)
-        invoice = run_parser(tmp_path)
-        if not invoice:
-            os.remove(tmp_path)
-            flash('Could not read this PDF as a valid invoice. Try Manual Entry instead.', 'error')
-            return render_template('upload.html', companies=companies, active_draft=active_draft)
-        invoice_data = invoice_to_dict(invoice)
-        invoice_data['_tmp_path'] = tmp_path
-        session['pending_invoice'] = json.dumps(invoice_data)
-        return redirect(url_for('upload.confirm'))
+        files = request.files.getlist('pdfs')
+        valid = [f for f in files if f.filename and allowed_file(f.filename)]
 
-    return render_template('upload.html', companies=companies, active_draft=active_draft)
+        if not valid:
+            flash('Please select at least one PDF file.', 'error')
+            return render_template('upload.html', active_draft=active_draft)
+
+        # SINGLE FILE → go straight to confirm
+        if len(valid) == 1:
+            f = valid[0]
+            tmp_path = os.path.join(UPLOAD_FOLDER, f'{uuid.uuid4()}.pdf')
+            f.save(tmp_path)
+            invoice = run_parser(tmp_path)
+            if not invoice:
+                os.remove(tmp_path)
+                flash('Could not parse this PDF. Try Manual Entry instead.', 'error')
+                return render_template('upload.html', active_draft=active_draft)
+            invoice_data = invoice_to_dict(invoice)
+            invoice_data['_tmp_path'] = tmp_path
+            session['pending_invoice'] = json.dumps(invoice_data)
+            return redirect(url_for('upload.confirm'))
+
+        # MULTIPLE FILES → create batch draft
+        draft_id = str(uuid.uuid4())
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                INSERT INTO batch_drafts (draft_id, user_id, total_files)
+                VALUES (%s,%s,%s)
+            """, (draft_id, current_user.id, len(valid)))
+
+            for pos, f in enumerate(valid):
+                tmp_path = os.path.join(UPLOAD_FOLDER, f'{uuid.uuid4()}.pdf')
+                f.save(tmp_path)
+                invoice = run_parser(tmp_path)
+                pdf_bytes = open(tmp_path, 'rb').read()
+                os.remove(tmp_path)
+                if invoice:
+                    inv_dict = invoice_to_dict(invoice)
+                    cur.execute("""
+                        INSERT INTO batch_draft_items
+                        (draft_id, position, filename, parse_status, invoice_data, pdf_bytes)
+                        VALUES (%s,%s,%s,'parsed',%s,%s)
+                    """, (draft_id, pos, f.filename, json.dumps(inv_dict), pdf_bytes))
+                else:
+                    cur.execute("""
+                        INSERT INTO batch_draft_items
+                        (draft_id, position, filename, parse_status, error_message, pdf_bytes)
+                        VALUES (%s,%s,%s,'failed','Could not parse this PDF',%s)
+                    """, (draft_id, pos, f.filename, pdf_bytes))
+
+        flash(f'Batch of {len(valid)} files created.', 'success')
+        return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+    return render_template('upload.html', active_draft=active_draft)
 
 
 @upload_bp.route('/upload/preview-pdf')
