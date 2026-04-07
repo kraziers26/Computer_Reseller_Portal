@@ -649,9 +649,8 @@ def storage():
         """)
         monthly = cur.fetchall()
 
-    # Railway free tier is 1GB = 1073741824 bytes
-    # Paid hobby plan is 5GB
-    db_limit = 1073741824  # 1GB conservative estimate
+    # Railway Hobby plan = 5GB
+    db_limit = 5368709120  # 5GB
 
     return render_template('storage.html',
                            db_bytes=db_bytes, db_limit=db_limit,
