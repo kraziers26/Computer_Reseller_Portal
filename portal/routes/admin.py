@@ -200,7 +200,8 @@ def review_submission(tid):
     with db_cursor() as (cur, _):
         cur.execute("""
             SELECT t.*, sub.username AS submitter_name, per.username AS person_name,
-                   c.company_name
+                   c.company_name,
+                   (t.invoice_pdf IS NOT NULL) AS has_pdf_in_db
             FROM transactions t
             LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
             LEFT JOIN dim_users per    ON t.user_id    = per.user_id
@@ -655,3 +656,19 @@ def storage():
     return render_template('storage.html',
                            db_bytes=db_bytes, db_limit=db_limit,
                            tables=tables, pdf_stats=pdf_stats, monthly=monthly)
+
+
+@admin_bp.route('/transaction-pdf/<string:tid>')
+@login_required
+@require_role('admin')
+def serve_transaction_pdf(tid):
+    from flask import send_file, abort
+    import io
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT invoice_pdf FROM transactions WHERE transaction_id=%s", (str(tid),))
+        row = cur.fetchone()
+    if not row or not row['invoice_pdf']:
+        abort(404)
+    return send_file(io.BytesIO(bytes(row['invoice_pdf'])),
+                     mimetype='application/pdf',
+                     download_name=f'invoice-{tid[:8]}.pdf')
