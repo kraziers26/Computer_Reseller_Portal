@@ -23,6 +23,10 @@ input::placeholder{color:var(--hint)}
 .btn{width:100%;padding:11px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-family:var(--font);font-size:14px;font-weight:500;cursor:pointer;margin-top:8px;transition:background .15s}
 .btn:hover{background:#3d5ce0}
 .alert{padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#f87171}
+.alert-info{background:rgba(79,110,247,.1);border-color:rgba(79,110,247,.25);color:#818cf8}
+.forgot{text-align:center;margin-top:16px}
+.forgot a{font-size:13px;color:var(--muted);text-decoration:none}
+.forgot a:hover{color:var(--text)}
 </style>
 </head>
 <body>
@@ -35,7 +39,7 @@ input::placeholder{color:var(--hint)}
   <div class="card">
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
-    <div class="alert">{{ message }}</div>
+    <div class="alert {{ 'alert-info' if category == 'info' else '' }}">{{ message }}</div>
     {% endfor %}
     {% endwith %}
     <form method="POST">
@@ -50,6 +54,9 @@ input::placeholder{color:var(--hint)}
       </div>
       <button type="submit" class="btn">Sign in</button>
     </form>
+    <div class="forgot">
+      <a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a>
+    </div>
   </div>
 </div>
 </body>
