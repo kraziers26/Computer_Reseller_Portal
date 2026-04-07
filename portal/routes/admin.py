@@ -449,3 +449,147 @@ def print_batch():
         batches = cur.fetchall()
 
     return render_template('print_batch.html', unprinted=unprinted, batches=batches)
+
+
+@admin_bp.route('/admin/batch/<batch_id>')
+@login_required
+@require_role('admin')
+def batch_detail(batch_id):
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT t.transaction_id, t.order_number, t.retailer,
+                   t.purchase_date, t.price_total, t.invoice_file_path,
+                   t.print_date, u.username AS person_name, c.company_name
+            FROM transactions t
+            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
+            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            WHERE t.print_batch_id = %s
+            ORDER BY t.purchase_date
+        """, (batch_id,))
+        invoices = cur.fetchall()
+        batch_date = invoices[0]['print_date'] if invoices else None
+    return render_template('batch_detail.html', batch_id=batch_id,
+                           invoices=invoices, batch_date=batch_date)
+
+
+@admin_bp.route('/admin/unbatch', methods=['POST'])
+@login_required
+@require_role('admin')
+def unbatch():
+    batch_id = request.form.get('batch_id', '').strip()
+    if batch_id:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                UPDATE transactions SET print_batch_id=NULL, print_date=NULL
+                WHERE print_batch_id=%s
+            """, (batch_id,))
+        flash(f'Batch {batch_id} released. Invoices returned to unprinted queue.', 'success')
+    return redirect(url_for('admin.print_batch'))
+
+
+@admin_bp.route('/admin/print-invoice/<uuid:tid>')
+@login_required
+@require_role('admin')
+def print_invoice(tid):
+    from flask import send_file, abort
+    import os
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT invoice_file_path FROM transactions WHERE transaction_id=%s", (str(tid),))
+        row = cur.fetchone()
+    if not row or not row['invoice_file_path']:
+        abort(404)
+    path = row['invoice_file_path']
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, mimetype='application/pdf')
+
+
+@admin_bp.route('/payroll/export')
+@login_required
+@require_role('admin')
+def export_payroll():
+    import io
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        flash('openpyxl not installed. Add it to requirements.txt.', 'error')
+        return redirect(url_for('admin.payroll'))
+    from flask import send_file as sf
+
+    month   = request.args.get('month', '')
+    company = request.args.get('company', type=int)
+
+    conditions = ["t.review_status != 'Flagged'", "t.is_duplicate=FALSE",
+                  "t.price_total>0", "t.is_active=TRUE"]
+    params = []
+    if month:
+        conditions.append("t.purchase_year_month=%s"); params.append(month)
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    header_font = Font(bold=True, color='FFFFFF')
+    header_fill = PatternFill('solid', start_color='1a1d27')
+
+    for comp in companies:
+        if company and comp['company_id'] != company:
+            continue
+        with db_cursor() as (cur, _):
+            cur.execute(f"""
+                SELECT u.username, t.purchase_year_month,
+                       COUNT(*) AS orders,
+                       ROUND(SUM(t.price_total)::numeric,2) AS purchases,
+                       ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2) AS gross_paid,
+                       ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2) AS net_paid,
+                       ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS tax_withheld
+                FROM transactions t
+                LEFT JOIN dim_users u ON t.user_id=u.user_id
+                {where} AND t.company_id=%s
+                GROUP BY u.username, t.purchase_year_month
+                ORDER BY t.purchase_year_month DESC, u.username
+            """, params + [comp['company_id']])
+            rows = cur.fetchall()
+
+        if not rows:
+            continue
+
+        ws = wb.create_sheet(title=comp['company_name'][:31])
+        headers = ['Person', 'Month', 'Orders', 'Total Purchases', 'Gross Paid (1%)', 'Net Paid (0.8%)', 'Tax Withheld (0.2%)']
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+
+        for row_idx, r in enumerate(rows, 2):
+            ws.cell(row=row_idx, column=1, value=r['username'] or '—')
+            ws.cell(row=row_idx, column=2, value=r['purchase_year_month'])
+            ws.cell(row=row_idx, column=3, value=r['orders'])
+            for col, key in enumerate(['purchases','gross_paid','net_paid','tax_withheld'], 4):
+                cell = ws.cell(row=row_idx, column=col, value=float(r[key] or 0))
+                cell.number_format = '$#,##0.00'
+
+        # Totals row
+        total_row = len(rows) + 2
+        ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
+        ws.cell(row=total_row, column=3, value=f'=SUM(C2:C{total_row-1})').font = Font(bold=True)
+        for col in range(4, 8):
+            col_letter = chr(64+col)
+            ws.cell(row=total_row, column=col, value=f'=SUM({col_letter}2:{col_letter}{total_row-1})').font = Font(bold=True)
+            ws.cell(row=total_row, column=col).number_format = '$#,##0.00'
+
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 18
+
+    fname = f"payroll{'_'+month if month else ''}.xlsx"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return sf(buf, as_attachment=True, download_name=fname,
+              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
