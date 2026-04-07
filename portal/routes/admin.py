@@ -434,6 +434,7 @@ def print_batch():
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.print_date,
                    t.print_batch_id, t.invoice_file_path,
+                   (t.invoice_pdf IS NOT NULL) AS has_pdf,
                    u.username, c.company_name
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
@@ -460,6 +461,7 @@ def batch_detail(batch_id):
         cur.execute("""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.invoice_file_path,
+                   (t.invoice_pdf IS NOT NULL) AS has_pdf,
                    t.print_date, u.username AS person_name, c.company_name
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
