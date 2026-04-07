@@ -42,6 +42,8 @@ def login():
 @auth_bp.route('/logout')
 @login_required
 def logout():
+    from ..security import audit
+    audit('logout')
     logout_user()
     return redirect(url_for('auth.login'))
 
@@ -318,5 +320,40 @@ def setup_batch_tables():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_batch_drafts_user ON batch_drafts(user_id, status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_batch_items_draft ON batch_draft_items(draft_id, position)")
         return "<h1>✅ Batch tables created!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-membership-col-igamer-2024')
+def setup_membership_col():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS membership_number TEXT")
+        return "<h1>✅ membership_number column added!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-audit-log-igamer-2024')
+def setup_audit_log():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    log_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id     INTEGER REFERENCES dim_users(user_id) ON DELETE SET NULL,
+                    user_email  TEXT,
+                    action      TEXT NOT NULL,
+                    target_type TEXT,
+                    target_id   TEXT,
+                    detail      TEXT,
+                    ip_address  TEXT,
+                    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action, created_at DESC)")
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS membership_number TEXT")
+        return "<h1>✅ audit_log table + membership_number column created!</h1><p><b>Remove this route now.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
