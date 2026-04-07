@@ -27,6 +27,7 @@ class CostcoInvoice:
     items: list = field(default_factory=list)
     parse_errors: list = field(default_factory=list)
     needs_review: bool = False
+    membership_number: Optional[str] = None
 
 
 def extract_text(pdf_path: str) -> str:
@@ -68,6 +69,11 @@ def parse_order_header(text: str, invoice: CostcoInvoice):
     else:
         invoice.parse_errors.append("order_number not found")
         invoice.needs_review = True
+
+    # Membership number
+    m = re.search(r'Membership Number[:\s]+(\d{5,})', text, re.IGNORECASE)
+    if m:
+        invoice.membership_number = m.group(1).strip()
 
     # Order date — label and value separated by address column text
     m = re.search(r'Order Date\s*\n[^\n]*\n\s*(\d{2}/\d{2}/\d{4})', text)
