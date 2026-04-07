@@ -7,62 +7,105 @@
 </div>
 
 <div class="card" style="margin-bottom:16px">
-  <form method="GET" class="flex gap-12 flex-wrap items-center">
-    <input type="text" name="order_number" value="{{ filters.order_number }}"
-           placeholder="Order #" style="width:140px" oninput="this.form.submit()">
-    <select name="retailer" style="width:130px" onchange="this.form.submit()">
-      <option value="">All retailers</option>
-      {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
-    </select>
-    <select name="company" style="width:150px" onchange="this.form.submit()">
-      <option value="">All companies</option>
-      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
-    </select>
-    <select name="order_type" style="width:150px" onchange="this.form.submit()">
-      <option value="">All types</option>
-      {% for t in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
-      <option value="{{ t }}" {{ 'selected' if filters.order_type==t }}>{{ t }}</option>{% endfor %}
-    </select>
-    <select name="status" style="width:140px" onchange="this.form.submit()">
-      <option value="">All statuses</option>
-      {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
-      <option value="{{ s }}" {{ 'selected' if filters.status==s }}>{{ s }}</option>{% endfor %}
-    </select>
-    <input type="text" name="notes" value="{{ filters.notes }}"
-           placeholder="Search notes..." style="width:150px" oninput="this.form.submit()">
-    {% if filters.retailer or filters.company or filters.order_type or filters.status or filters.notes or filters.order_number %}
-    <a href="{{ url_for('upload.my_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
-    {% endif %}
+  <form method="GET">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:end">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
+        <input type="text" name="order_number" value="{{ filters.order_number }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
+        <select name="retailer" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+        <select name="company" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Type</div>
+        <select name="order_type" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for t in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
+          <option value="{{ t }}" {{ 'selected' if filters.order_type==t }}>{{ t }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Status</div>
+        <select name="status" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
+          <option value="{{ s }}" {{ 'selected' if filters.status==s }}>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Notes</div>
+        <input type="text" name="notes" value="{{ filters.notes }}" placeholder="Search notes..." style="width:100%" oninput="this.form.submit()">
+      </div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:2px">
+        {% if filters.retailer or filters.company or filters.order_type or filters.status or filters.notes or filters.order_number %}
+        <a href="{{ url_for('upload.my_submissions') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
+        {% endif %}
+      </div>
+    </div>
   </form>
 </div>
 
 <div class="card">
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Person By</th><th>Company</th><th>Total</th><th>Type</th><th>Status</th><th>Submitted</th><th>Notes</th></tr></thead>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Order #</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
+          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Type</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Submitted</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Notes</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoice</th>
+        </tr>
+      </thead>
       <tbody>
       {% for r in submissions %}
-      <tr>
-        <td class="mono">{{ r.order_number[:22] }}</td>
-        <td>{{ r.retailer }}</td>
-        <td>{{ r.purchase_date }}</td>
-        <td>{{ r.person_name or '—' }}</td>
-        <td>{{ r.company_name or '—' }}</td>
-        <td class="mono">${{ "%.2f"|format((r.price_total or 0)|float) }}</td>
-        <td style="font-size:12px">{{ r.order_type }}</td>
-        <td>
-          {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Approved</span>
-          {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
-          {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
-          {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
-          {% if r.is_duplicate %}<span class="badge badge-danger" style="margin-left:4px">Dup</span>{% endif %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:9px 12px;font-family:var(--mono);font-size:11px;white-space:nowrap">{{ r.order_number[:20] }}</td>
+        <td style="padding:9px 12px;white-space:nowrap">{{ r.retailer }}</td>
+        <td style="padding:9px 12px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
+        <td style="padding:9px 12px;white-space:nowrap">{{ r.person_name or '—' }}</td>
+        <td style="padding:9px 12px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
+        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format((r.price_total or 0)|float) }}</td>
+        <td style="padding:9px 12px;font-size:11px;white-space:nowrap">{{ r.order_type }}</td>
+        <td style="padding:9px 12px;white-space:nowrap">
+          {% if r.review_status == 'Auto-approved' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:11px;padding:2px 8px;border-radius:20px">Approved</span>
+          {% elif r.review_status == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:11px;padding:2px 8px;border-radius:20px">Pending</span>
+          {% elif r.review_status == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:11px;padding:2px 8px;border-radius:20px">Flagged</span>
+          {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:20px">{{ r.review_status }}</span>{% endif %}
+          {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
         </td>
-        <td style="color:var(--muted);font-size:12px">{{ r.submitted_at.strftime('%b %d, %Y') if r.submitted_at else '—' }}</td>
-        <td style="font-size:12px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.notes or '—' }}</td>
+        <td style="padding:9px 12px;color:var(--muted);font-size:11px;white-space:nowrap">{{ r.submitted_at.strftime('%b %d, %Y') if r.submitted_at else '—' }}</td>
+        <td style="padding:9px 12px;font-size:12px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.notes or '—' }}</td>
+        <td style="padding:9px 12px;white-space:nowrap">
+          {% if r.has_pdf %}
+            <a href="{{ url_for('admin.serve_transaction_pdf', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨 View</a>
+          {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
+            <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 View</a>
+          {% else %}
+            <span style="color:var(--hint);font-size:11px">—</span>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
       {% if not submissions %}
-      <tr><td colspan="10" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
+      <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
       {% endif %}
       </tbody>
     </table>
