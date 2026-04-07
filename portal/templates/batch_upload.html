@@ -16,6 +16,7 @@
   <div class="flex gap-12">
     <a href="{{ url_for('upload.batch_review', draft_id=existing_draft.draft_id) }}" class="btn btn-primary">Continue Draft</a>
     <form method="POST">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="action" value="discard_draft">
       <button type="submit" class="btn btn-danger" onclick="return confirm('Discard this draft? All unsubmitted invoices will be lost.')">Discard & Start New</button>
     </form>
@@ -24,6 +25,7 @@
 {% else %}
 <div class="card" style="max-width:600px">
   <form method="POST" enctype="multipart/form-data" id="batchForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="upload">
     <div class="form-group">
       <label>Select PDFs <span style="color:var(--muted);font-size:12px">(hold Ctrl/Cmd to select multiple)</span></label>
