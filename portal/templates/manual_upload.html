@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Manual Entry — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Manual Entry</h1><p>Enter invoice details without parsing</p></div>
+  <a href="{{ url_for('upload.upload') }}" class="btn btn-ghost btn-sm">← Back</a>
+</div>
+
+<form method="POST" enctype="multipart/form-data" style="max-width:720px">
+  <div class="card">
+    <div class="card-title">Order details</div>
+    <div class="form-row">
+      <div class="form-group"><label>Retailer *</label>
+        <select name="retailer" required>
+          <option value="">Select retailer...</option>
+          {% for r in ['Amazon','Best Buy','Costco','Walmart','Apple','Other'] %}
+          <option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group"><label>Order Number *</label>
+        <input type="text" name="order_number" required placeholder="Full order number">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Purchase Date *</label>
+        <input type="date" name="purchase_date" required>
+      </div>
+      <div class="form-group"><label>Order Type *</label>
+        <select name="order_type" required>
+          {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
+          <option value="{{ ot }}">{{ ot }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Price Total *</label>
+        <input type="number" name="price_total" step="0.01" required placeholder="0.00">
+      </div>
+      <div class="form-group"><label>Costco Taxes Paid</label>
+        <input type="number" name="costco_taxes" step="0.01" placeholder="Costco only">
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-title">Item description <span style="font-size:12px;color:var(--muted);font-weight:400">(optional)</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Description</label>
+        <input type="text" name="item_description" placeholder="e.g. MacBook Air 13-inch M3">
+      </div>
+      <div class="form-group"><label>SKU / Model / Color</label>
+        <input type="text" name="sku" placeholder="e.g. MQKP3LL/A">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Quantity</label>
+        <input type="number" name="quantity" min="1" value="1">
+      </div>
+      <div class="form-group"><label>Unit Price</label>
+        <input type="number" name="unit_price" step="0.01" placeholder="0.00">
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-title">Person, company & card</div>
+    <div class="form-row">
+      <div class="form-group"><label>Person By *</label>
+        <select name="user_id" required>
+          {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id==current_user_id }}>{{ u.username }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group"><label>Purchase Company *</label>
+        <select name="company_id" required>
+          <option value="">Select company...</option>
+          {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Card Used</label>
+        <select name="card_last4">
+          <option value="">— Not specified —</option>
+          {% for c in cards %}<option value="{{ c.card_id }}">{{ c.card_id }} — {{ c.card_name }} ({{ "%.1f"|format(c.cashback_rate*100) }}%)</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
+        <input type="text" name="notes" maxlength="140" placeholder="Optional tag or note">
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-16">
+    <div class="card-title">Invoice PDF <span style="font-size:12px;color:var(--muted);font-weight:400">(optional)</span></div>
+    <div class="form-group">
+      <label>Attach PDF — will be stored but not parsed</label>
+      <input type="file" name="pdf" accept=".pdf" style="background:var(--surface2);border:1px solid var(--border);padding:8px;border-radius:6px;width:100%">
+    </div>
+  </div>
+
+  <div class="flex gap-12 mt-16">
+    <button type="submit" class="btn btn-primary">Submit Order</button>
+    <a href="{{ url_for('upload.upload') }}" class="btn btn-ghost">Cancel</a>
+  </div>
+</form>
+{% endblock %}
