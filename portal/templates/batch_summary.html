@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Batch Summary — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Batch Summary</h1>
+  <p>{{ draft.completed_count }} submitted · {{ items|selectattr('parse_status','eq','failed')|list|length }} failed · {{ items|selectattr('parse_status','eq','skipped')|list|length }} skipped</p></div>
+  <a href="{{ url_for('upload.upload') }}" class="btn btn-primary">Done</a>
+</div>
+
+{% set submitted = items|selectattr('parse_status','eq','submitted')|list %}
+{% set failed = items|selectattr('parse_status','eq','failed')|list %}
+{% set skipped = items|selectattr('parse_status','eq','skipped')|list %}
+
+{% if submitted %}
+<div class="card" style="margin-bottom:16px">
+  <div class="card-title text-success">✅ Submitted ({{ submitted|length }})</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>File</th><th>Retailer</th><th>Order #</th><th>Total</th></tr></thead>
+    <tbody>
+    {% for i in submitted %}
+    <tr>
+      <td style="font-size:12px">{{ i.filename }}</td>
+      <td>{{ i.invoice_data.retailer if i.invoice_data is mapping else '—' }}</td>
+      <td class="mono" style="font-size:12px">{{ i.txn_order_number or '—' }}</td>
+      <td class="mono">
+        {% if i.invoice_data is mapping and i.invoice_data.price_total %}
+          ${{ "%.2f"|format(i.invoice_data.price_total|float) }}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if failed %}
+<div class="card" style="margin-bottom:16px">
+  <div class="card-title text-danger">❌ Failed to parse ({{ failed|length }})</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:12px">These PDFs could not be parsed. Use Manual Entry to submit them.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>File</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+    {% for i in failed %}
+    <tr>
+      <td style="font-size:12px">{{ i.filename }}</td>
+      <td style="font-size:12px;color:var(--danger)">{{ i.error_message or 'Parse failed' }}</td>
+      <td><a href="{{ url_for('upload.manual_upload') }}" class="btn btn-ghost btn-sm">Manual Entry</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if skipped %}
+<div class="card">
+  <div class="card-title text-warning">⏭ Skipped ({{ skipped|length }})</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:12px">These were skipped. You can start a new batch to submit them.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>File</th><th>Retailer</th></tr></thead>
+    <tbody>
+    {% for i in skipped %}
+    <tr>
+      <td style="font-size:12px">{{ i.filename }}</td>
+      <td>{{ i.invoice_data.retailer if i.invoice_data is mapping else '—' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+{% endblock %}
