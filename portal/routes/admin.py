@@ -202,7 +202,8 @@ def review_submission(tid):
         cur.execute("""
             SELECT t.*, sub.username AS submitter_name, per.username AS person_name,
                    c.company_name,
-                   (t.invoice_pdf IS NOT NULL) AS has_pdf_in_db
+                   (t.invoice_pdf IS NOT NULL) AS has_pdf_in_db,
+                   t.membership_number
             FROM transactions t
             LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
             LEFT JOIN dim_users per    ON t.user_id    = per.user_id
