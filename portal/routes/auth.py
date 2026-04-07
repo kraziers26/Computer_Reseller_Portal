@@ -47,6 +47,125 @@ def logout():
     logout_user()
     return redirect(url_for('auth.login'))
 
+
+@auth_bp.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        if email:
+            _send_reset_email(email)
+        # Always show same message — don't reveal if email exists
+        flash('If that email is registered, a reset link has been sent.', 'info')
+        return redirect(url_for('auth.login'))
+    return render_template('forgot_password.html')
+
+
+@auth_bp.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    import hashlib
+    from ..db import db_cursor
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT r.token_id, r.user_id, r.expires_at, r.used
+            FROM password_reset_tokens r
+            WHERE r.token_hash = %s
+        """, (token_hash,))
+        row = cur.fetchone()
+
+    if not row or row['used'] or row['expires_at'] < __import__('datetime').datetime.now():
+        flash('This reset link is invalid or has expired. Request a new one.', 'error')
+        return redirect(url_for('auth.forgot_password'))
+
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm', '')
+        if len(password) < 8:
+            flash('Password must be at least 8 characters.', 'error')
+            return render_template('reset_password.html', token=token)
+        if password != confirm:
+            flash('Passwords do not match.', 'error')
+            return render_template('reset_password.html', token=token)
+
+        import bcrypt
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        with db_cursor() as (cur, conn):
+            cur.execute("UPDATE dim_users SET portal_password_hash=%s WHERE user_id=%s",
+                        (hashed, row['user_id']))
+            cur.execute("UPDATE password_reset_tokens SET used=TRUE WHERE token_hash=%s",
+                        (token_hash,))
+
+        from ..security import audit
+        audit('password_reset', 'user', str(row['user_id']))
+        flash('Password updated successfully. Please log in.', 'success')
+        return redirect(url_for('auth.login'))
+
+    return render_template('reset_password.html', token=token)
+
+
+def _send_reset_email(email: str):
+    """Generate token and send reset email via Resend. Silent on failure."""
+    import os, secrets, hashlib
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, _):
+            cur.execute("SELECT user_id, username FROM dim_users WHERE email=%s AND is_active=TRUE",
+                        (email,))
+            user = cur.fetchone()
+        if not user:
+            return  # Don't reveal whether email exists
+
+        token      = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        with db_cursor() as (cur, conn):
+            # Invalidate any existing unused tokens for this user
+            cur.execute("""
+                UPDATE password_reset_tokens SET used=TRUE
+                WHERE user_id=%s AND used=FALSE
+            """, (user['user_id'],))
+            cur.execute("""
+                INSERT INTO password_reset_tokens (user_id, token_hash)
+                VALUES (%s, %s)
+            """, (user['user_id'], token_hash))
+
+        base_url = os.environ.get('APP_BASE_URL', 'https://computerresellerportal-production.up.railway.app')
+        reset_url = f"{base_url}/reset-password/{token}"
+
+        import resend
+        resend.api_key = os.environ.get('RESEND_API_KEY', '')
+        if not resend.api_key:
+            return
+
+        resend.Emails.send({
+            'from':    os.environ.get('RESEND_FROM_EMAIL', 'noreply@igamercorp.com'),
+            'to':      [email],
+            'subject': 'Reset your iGamer Corp Portal password',
+            'html':    f"""
+                <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+                  <h2 style="color:#1a1d27">Password Reset</h2>
+                  <p>Hi {user['username']},</p>
+                  <p>Click the button below to reset your portal password.
+                     This link expires in <strong>1 hour</strong>.</p>
+                  <a href="{reset_url}"
+                     style="display:inline-block;background:#4f6ef7;color:#fff;
+                            padding:12px 24px;border-radius:6px;text-decoration:none;
+                            font-weight:600;margin:16px 0">
+                    Reset Password
+                  </a>
+                  <p style="color:#666;font-size:13px">
+                    If you didn't request this, you can safely ignore this email.
+                  </p>
+                  <p style="color:#666;font-size:12px">
+                    Link: {reset_url}
+                  </p>
+                </div>
+            """
+        })
+    except Exception:
+        pass  # Never crash the app on email failure
+
 @auth_bp.route('/setup-db-igamer-2024')
 def setup_db():
     import bcrypt
@@ -354,6 +473,17 @@ def setup_audit_log():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id, created_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action, created_at DESC)")
             cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS membership_number TEXT")
-        return "<h1>✅ audit_log table + membership_number column created!</h1><p><b>Remove this route now.</b></p>"
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    token_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id     INTEGER NOT NULL REFERENCES dim_users(user_id) ON DELETE CASCADE,
+                    token_hash  TEXT NOT NULL UNIQUE,
+                    expires_at  TIMESTAMP NOT NULL DEFAULT NOW() + INTERVAL '1 hour',
+                    used        BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_reset_tokens_hash ON password_reset_tokens(token_hash)")
+        return "<h1>✅ All tables created!</h1><p>audit_log, password_reset_tokens, membership_number column. <b>Remove this route now.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
