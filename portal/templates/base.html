@@ -145,13 +145,9 @@ select option{background:var(--surface2)}
     <nav>
       {% if current_user.is_submitter %}
       <div class="nav-section">Submit</div>
-      <a href="{{ url_for('upload.upload') }}" class="{{ 'active' if request.endpoint == 'upload.upload' }}">
+      <a href="{{ url_for('upload.upload') }}" class="{{ 'active' if request.endpoint in ('upload.upload','upload.batch_review','upload.batch_item_confirm','upload.batch_summary') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Upload Invoice
-      </a>
-      <a href="{{ url_for('upload.batch_upload') }}" class="{{ 'active' if 'batch' in (request.endpoint or '') }}">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8"/><path d="M12 3v4"/></svg>
-        Batch Upload
       </a>
       <a href="{{ url_for('upload.manual_upload') }}" class="{{ 'active' if request.endpoint == 'upload.manual_upload' }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
