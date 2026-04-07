@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Costco Taxes — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Costco Taxes</h1><p>Tax withheld on all Costco transactions</p></div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom:16px">
+  <form method="GET">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:end">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Month</div>
+        <select name="month" style="width:100%" onchange="this.form.submit()">
+          <option value="">All months</option>
+          {% for m in range(1,13) %}
+          <option value="{{ '%02d'|format(m) }}" {{ 'selected' if filters.month=='%02d'|format(m) }}>
+            {{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}
+          </option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Year</div>
+        <select name="year" style="width:100%" onchange="this.form.submit()">
+          <option value="">All years</option>
+          {% for y in years %}<option value="{{ y }}" {{ 'selected' if filters.year==y }}>{{ y }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+        <select name="company" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Person By</div>
+        <select name="person_by" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Membership #</div>
+        <select name="membership" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for m in memberships %}<option value="{{ m }}" {{ 'selected' if filters.membership==m }}>{{ m }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:2px">
+        {% if filters.month or filters.year or filters.company or filters.person_by or filters.membership %}
+        <a href="{{ url_for('admin.costco_taxes') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- KPI Cards -->
+<div class="metrics" style="margin-bottom:20px">
+  <div class="metric"><div class="metric-label">Costco Taxes Withheld</div><div class="metric-value danger">${{ "{:,.2f}".format(metrics.total_taxes or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Total Orders</div><div class="metric-value">{{ metrics.total_orders or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Total GMV</div><div class="metric-value accent">${{ "{:,.2f}".format(metrics.total_gmv or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Gross Paid Out</div><div class="metric-value success">${{ "{:,.2f}".format(metrics.total_gross_paid or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_cashback or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Unique Memberships</div><div class="metric-value">{{ metrics.unique_memberships or 0 }}</div></div>
+</div>
+
+<!-- Transactions Table -->
+<div class="card">
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Order #</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Membership #</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Card</th>
+          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Costco Tax</th>
+          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Gross Paid</th>
+          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Net Paid</th>
+          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Cash Back</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
+          <th style="padding:10px 12px;border-bottom:1px solid var(--border)">PDF</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in transactions %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:9px 12px;font-family:var(--mono);font-size:11px;white-space:nowrap">{{ r.order_number[:20] }}</td>
+        <td style="padding:9px 12px;font-size:12px;color:var(--muted);white-space:nowrap">{{ r.purchase_date }}</td>
+        <td style="padding:9px 12px;white-space:nowrap">{{ r.person_name or '—' }}</td>
+        <td style="padding:9px 12px;font-size:12px;white-space:nowrap">{{ r.company_name or '—' }}</td>
+        <td style="padding:9px 12px;font-family:var(--mono);font-size:12px">{{ r.membership_number or '—' }}</td>
+        <td style="padding:9px 12px;font-family:var(--mono);font-size:11px;white-space:nowrap">
+          {% if r.card_id %}{{ r.card_id }} <span style="color:var(--muted)">{{ "%.1f"|format((r.cashback_rate or 0)*100) }}%</span>{% else %}—{% endif %}
+        </td>
+        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#f87171">${{ "{:,.2f}".format(r.costco_taxes_paid or 0) }}</td>
+        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
+        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
+        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
+        <td style="padding:9px 12px;white-space:nowrap">
+          {% if r.review_status == 'Auto-approved' or r.review_status == 'Reviewed' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:11px;padding:2px 8px;border-radius:20px">Approved</span>
+          {% elif r.review_status == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:11px;padding:2px 8px;border-radius:20px">Pending</span>
+          {% else %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:11px;padding:2px 8px;border-radius:20px">{{ r.review_status }}</span>{% endif %}
+        </td>
+        <td style="padding:9px 12px;white-space:nowrap">
+          {% if r.has_pdf %}
+            <a href="{{ url_for('admin.serve_transaction_pdf', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨</a>
+          {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
+            <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗</a>
+          {% else %}
+            <span style="color:var(--hint);font-size:11px">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not transactions %}
+      <tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px">No Costco transactions match filters.</td></tr>
+      {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
