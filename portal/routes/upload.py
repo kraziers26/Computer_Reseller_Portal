@@ -55,6 +55,7 @@ def invoice_to_dict(invoice):
             'price_total': float(invoice.price_total) if invoice.price_total else None,
             'costco_taxes_paid': float(invoice.costco_taxes_paid)
                                  if getattr(invoice, 'costco_taxes_paid', None) else None,
+            'membership_number': getattr(invoice, 'membership_number', None),
             'needs_review': invoice.needs_review,
             'parse_errors': invoice.parse_errors,
             'items': items}
@@ -246,6 +247,9 @@ def confirm():
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+        from ..security import audit
+        audit('transaction_submitted', 'transaction', tid,
+              detail=f"order={request.form.get('order_number','')} retailer={invoice_data['retailer']}")
         flash(f"Order #{request.form.get('order_number','')} submitted!", 'success')
         return redirect(url_for('upload.my_submissions'))
 
@@ -582,7 +586,9 @@ def my_submissions():
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.order_type,
                    t.review_status, t.submitted_at, c.company_name,
-                   t.card_id, t.is_duplicate, u.username AS person_name, t.notes
+                   t.card_id, t.is_duplicate, u.username AS person_name,
+                   t.notes, t.invoice_file_path,
+                   (t.invoice_pdf IS NOT NULL) AS has_pdf
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id=c.company_id
             LEFT JOIN dim_users u     ON t.user_id=u.user_id
