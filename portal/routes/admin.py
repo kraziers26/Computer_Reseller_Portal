@@ -607,3 +607,51 @@ def export_payroll():
     buf.seek(0)
     return sf(buf, as_attachment=True, download_name=fname,
               mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@admin_bp.route('/storage')
+@login_required
+@require_role('admin')
+def storage():
+    with db_cursor() as (cur, _):
+        # Total DB size
+        cur.execute("SELECT pg_database_size(current_database()) AS bytes")
+        db_bytes = cur.fetchone()['bytes']
+
+        # Per-table sizes
+        cur.execute("""
+            SELECT tablename,
+                   pg_total_relation_size(schemaname||'.'||tablename) AS bytes,
+                   pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+            FROM pg_tables WHERE schemaname='public'
+            ORDER BY bytes DESC
+        """)
+        tables = cur.fetchall()
+
+        # PDF storage specifically
+        cur.execute("""
+            SELECT COUNT(*) FILTER (WHERE invoice_pdf IS NOT NULL) AS pdf_count,
+                   COALESCE(SUM(LENGTH(invoice_pdf)),0) AS pdf_bytes
+            FROM transactions
+        """)
+        pdf_stats = cur.fetchone()
+
+        # Transaction count over time
+        cur.execute("""
+            SELECT purchase_year_month,
+                   COUNT(*) AS orders,
+                   ROUND(SUM(price_total)::numeric,2) AS gmv
+            FROM transactions
+            WHERE is_active=TRUE AND price_total > 0
+            GROUP BY purchase_year_month
+            ORDER BY purchase_year_month DESC
+            LIMIT 12
+        """)
+        monthly = cur.fetchall()
+
+    # Railway free tier is 1GB = 1073741824 bytes
+    # Paid hobby plan is 5GB
+    db_limit = 1073741824  # 1GB conservative estimate
+
+    return render_template('storage.html',
+                           db_bytes=db_bytes, db_limit=db_limit,
+                           tables=tables, pdf_stats=pdf_stats, monthly=monthly)
