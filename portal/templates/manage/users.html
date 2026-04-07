@@ -1,8 +1,66 @@
 {% extends "base.html" %}
 {% block title %}Manage Users — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
-<div class="page-header"><h1>Users</h1><p>{{ users|length }} users</p></div>
+<div class="page-header page-header-row">
+  <h1>Users</h1>
+  <button onclick="toggleSection('new-user-form')" class="btn btn-primary btn-sm">+ Add User</button>
+</div>
 
+<!-- Add New User -->
+<div id="new-user-form" style="display:none;margin-bottom:20px">
+  <div class="card" style="border-color:var(--accent)">
+    <div class="card-title">Add new user</div>
+    <form method="POST" action="{{ url_for('manage.new_user') }}">
+      <div class="form-row-3">
+        <div class="form-group">
+          <label>Username * <span style="font-size:11px;color:var(--muted)">(display name)</span></label>
+          <input name="username" required placeholder="e.g. Maria G">
+        </div>
+        <div class="form-group">
+          <label>Full Name</label>
+          <input name="full_name" placeholder="e.g. Maria Garcia">
+        </div>
+        <div class="form-group">
+          <label>Email *</label>
+          <input name="email" type="email" required placeholder="maria@example.com">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Phone</label>
+          <input name="phone" placeholder="+1 305 000 0000">
+        </div>
+        <div class="form-group">
+          <label>Portal Role *</label>
+          <select name="portal_role" required>
+            <option value="none">none — Telegram only</option>
+            <option value="submitter">submitter — Can upload invoices</option>
+            <option value="admin">admin — Full access</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Companies</label>
+        <div class="flex gap-16 flex-wrap">
+          {% for c in companies %}
+          <label style="display:flex;align-items:center;gap:6px;color:var(--text);margin-bottom:0;font-size:13px">
+            <input type="checkbox" name="company_ids" value="{{ c.company_id }}" style="width:auto"> {{ c.company_name }}
+          </label>{% endfor %}
+        </div>
+      </div>
+      <div class="form-group" style="max-width:300px">
+        <label>Password <span style="font-size:11px;color:var(--muted)">(min 8 chars, required if role is not none)</span></label>
+        <input type="password" name="password" minlength="8" placeholder="Set initial password">
+      </div>
+      <div class="flex gap-8">
+        <button type="submit" class="btn btn-primary">Create User</button>
+        <button type="button" onclick="toggleSection('new-user-form')" class="btn btn-ghost">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- User list -->
 <div class="card">
   <div class="table-wrap"><table>
     <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Companies</th><th>Active</th><th></th></tr></thead>
@@ -40,15 +98,15 @@
             </div>
           </div>
           <div class="form-group"><label>Companies</label>
-            <div class="flex gap-12 flex-wrap">
+            <div class="flex gap-16 flex-wrap">
               {% for c in companies %}
-              <label style="display:flex;align-items:center;gap:6px;color:var(--text);margin-bottom:0">
+              <label style="display:flex;align-items:center;gap:6px;color:var(--text);margin-bottom:0;font-size:13px">
                 <input type="checkbox" name="company_ids" value="{{ c.company_id }}" style="width:auto"
                   {{ 'checked' if c.company_id in (u.company_ids or []) }}> {{ c.company_name }}
               </label>{% endfor %}
             </div>
           </div>
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px">
             <input type="checkbox" name="is_active" style="width:auto" {{ 'checked' if u.is_active }}> Active
           </label>
           <div class="flex gap-8">
@@ -66,16 +124,18 @@
           <input type="hidden" name="action" value="set_password">
           <div style="max-width:400px">
             <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Set a new password for <strong>{{ u.username }}</strong></p>
-            <div class="form-group">
-              <label>New Password <span style="font-size:11px;color:var(--muted)">(min 8 characters)</span></label>
-              <input type="password" name="password" minlength="8" required placeholder="Enter new password">
+            <div class="form-row">
+              <div class="form-group">
+                <label>New Password</label>
+                <input type="password" name="password" id="pw-input-{{ u.user_id }}" minlength="8" required placeholder="Min 8 characters">
+              </div>
+              <div class="form-group">
+                <label>Confirm Password</label>
+                <input type="password" name="password_confirm" minlength="8" required placeholder="Repeat password"
+                       oninput="checkPwMatch('{{ u.user_id }}', this)">
+              </div>
             </div>
-            <div class="form-group">
-              <label>Confirm Password</label>
-              <input type="password" name="password_confirm" minlength="8" required placeholder="Confirm password"
-                     oninput="checkMatch(this)">
-              <div id="pw-match-{{ u.user_id }}" style="font-size:11px;margin-top:4px"></div>
-            </div>
+            <div id="pw-match-msg-{{ u.user_id }}" style="font-size:12px;margin-bottom:12px"></div>
             <div class="flex gap-8">
               <button type="submit" class="btn btn-primary btn-sm">Set Password</button>
               <button type="button" onclick="toggleSection('pw-{{ u.user_id }}')" class="btn btn-ghost btn-sm">Cancel</button>
@@ -92,21 +152,20 @@
 <script>
 function toggleSection(id) {
   const el = document.getElementById(id);
-  el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? (el.tagName === 'TR' ? 'table-row' : 'block') : 'none';
 }
-function checkMatch(el) {
-  const uid = el.closest('tr').id.replace('pw-','');
-  const pw = el.closest('form').querySelector('[name=password]').value;
-  const feedback = el.closest('form').querySelector('[id^=pw-match]');
-  if (!feedback) return;
-  if (el.value && el.value !== pw) {
-    feedback.textContent = '⚠ Passwords do not match';
-    feedback.style.color = 'var(--danger)';
-  } else if (el.value) {
-    feedback.textContent = '✓ Passwords match';
-    feedback.style.color = 'var(--success)';
+
+function checkPwMatch(uid, el) {
+  const pw = document.getElementById('pw-input-' + uid).value;
+  const msg = document.getElementById('pw-match-msg-' + uid);
+  if (!el.value) { msg.textContent = ''; return; }
+  if (el.value === pw) {
+    msg.textContent = '✓ Passwords match';
+    msg.style.color = 'var(--success)';
   } else {
-    feedback.textContent = '';
+    msg.textContent = '✗ Passwords do not match';
+    msg.style.color = 'var(--danger)';
   }
 }
 </script>
