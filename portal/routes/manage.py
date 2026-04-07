@@ -57,13 +57,17 @@ def edit_user(uid):
 
         elif action == 'set_password':
             password = request.form.get('password', '')
+            confirm  = request.form.get('password_confirm', '')
             if len(password) < 8:
                 flash('Password must be at least 8 characters.', 'error')
+                return redirect(url_for('manage.users'))
+            if password != confirm:
+                flash('Passwords do not match.', 'error')
                 return redirect(url_for('manage.users'))
             hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
             cur.execute("UPDATE dim_users SET portal_password_hash=%s WHERE user_id=%s",
                         (hashed, uid))
-            flash('Password updated.', 'success')
+            flash(f'Password updated successfully.', 'success')
 
         elif action == 'deactivate':
             cur.execute("UPDATE dim_users SET is_active=FALSE WHERE user_id=%s", (uid,))
