@@ -114,6 +114,14 @@
             <input type="text" name="notes" maxlength="140" value="{{ txn.notes or '' }}" placeholder="Optional note">
           </div>
         </div>
+        {% if txn.retailer == 'Costco' %}
+        <div class="form-row">
+          <div class="form-group"><label>Membership # <span style="font-size:11px;color:var(--muted)">(Costco)</span></label>
+            <input type="text" name="membership_number" value="{{ txn.membership_number or '' }}" placeholder="e.g. 111957620835" style="font-family:monospace">
+          </div>
+          <div class="form-group"></div>
+        </div>
+        {% endif %}
         <button type="submit" name="action" value="edit" class="btn btn-primary">Save Changes</button>
       </form>
     </div>
