@@ -492,23 +492,28 @@ def unbatch():
 @login_required
 @require_role('admin')
 def print_invoice(tid):
-    from flask import send_file, abort
-    import os
+    from flask import send_file, abort, redirect as redir
+    import io, os
     with db_cursor() as (cur, _):
-        cur.execute("SELECT invoice_file_path, invoice_url FROM transactions WHERE transaction_id=%s", (str(tid),))
+        cur.execute("SELECT invoice_file_path, invoice_pdf FROM transactions WHERE transaction_id=%s", (str(tid),))
         row = cur.fetchone()
     if not row:
         abort(404)
-    # Try invoice_file_path first (local file), then invoice_url (Google Drive)
-    path = row.get('invoice_file_path') or ''
-    url  = row.get('invoice_url') or ''
+    # Priority 1: PDF stored in DB (survives redeploys)
+    if row['invoice_pdf']:
+        return send_file(io.BytesIO(bytes(row['invoice_pdf'])),
+                         mimetype='application/pdf',
+                         download_name=f'invoice-{tid[:8]}.pdf')
+    # Priority 2: Google Drive / HTTP link
+    path = row['invoice_file_path'] or ''
+    if path.startswith('http'):
+        return redir(path)
+    # Priority 3: Local file still exists
     if path and os.path.exists(path):
         return send_file(path, mimetype='application/pdf')
-    elif url and url.startswith('http'):
-        from flask import redirect as redir
-        return redir(url)
-    else:
-        abort(404)
+    # Nothing available
+    from flask import make_response
+    return make_response("<h2>Invoice PDF unavailable</h2><p>This invoice was submitted before PDF storage was enabled. Re-upload the invoice to attach the PDF.</p><a href='javascript:history.back()'>← Go back</a>", 404)
 
 
 @admin_bp.route('/payroll/export')
