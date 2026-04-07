@@ -488,21 +488,27 @@ def unbatch():
     return redirect(url_for('admin.print_batch'))
 
 
-@admin_bp.route('/print-invoice/<uuid:tid>')
+@admin_bp.route('/print-invoice/<string:tid>')
 @login_required
 @require_role('admin')
 def print_invoice(tid):
     from flask import send_file, abort
     import os
     with db_cursor() as (cur, _):
-        cur.execute("SELECT invoice_file_path FROM transactions WHERE transaction_id=%s", (str(tid),))
+        cur.execute("SELECT invoice_file_path, invoice_url FROM transactions WHERE transaction_id=%s", (str(tid),))
         row = cur.fetchone()
-    if not row or not row['invoice_file_path']:
+    if not row:
         abort(404)
-    path = row['invoice_file_path']
-    if not os.path.exists(path):
+    # Try invoice_file_path first (local file), then invoice_url (Google Drive)
+    path = row.get('invoice_file_path') or ''
+    url  = row.get('invoice_url') or ''
+    if path and os.path.exists(path):
+        return send_file(path, mimetype='application/pdf')
+    elif url and url.startswith('http'):
+        from flask import redirect as redir
+        return redir(url)
+    else:
         abort(404)
-    return send_file(path, mimetype='application/pdf')
 
 
 @admin_bp.route('/payroll/export')
