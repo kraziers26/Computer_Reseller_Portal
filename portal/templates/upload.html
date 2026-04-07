@@ -1,55 +1,121 @@
 {% extends "base.html" %}
 {% block title %}Upload Invoice — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
-<div class="page-header">
-  <h1>Upload Invoice</h1>
-  <p>Choose how you'd like to submit an invoice</p>
+<div class="page-header page-header-row">
+  <div><h1>Upload Invoice</h1><p>Drop one or more PDFs — single file goes straight to review, multiple files create a batch</p></div>
+  <a href="{{ url_for('upload.manual_upload') }}" class="btn btn-ghost btn-sm">✍️ Manual Entry</a>
 </div>
 
 {% if active_draft %}
-<div class="alert alert-warning" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
-  <span>📋 You have an active batch draft from {{ active_draft.created_at.strftime('%b %d') }} — {{ active_draft.completed_count }}/{{ active_draft.total_files }} submitted</span>
+<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+  <span style="font-size:13px;color:#fbbf24">📋 Active batch draft from {{ active_draft.created_at.strftime('%b %d') }} — {{ active_draft.completed_count }}/{{ active_draft.total_files }} submitted</span>
   <a href="{{ url_for('upload.batch_review', draft_id=active_draft.draft_id) }}" class="btn btn-primary btn-sm" style="margin-left:16px">Continue Batch →</a>
 </div>
 {% endif %}
 
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;max-width:800px">
+<div style="max-width:640px">
+  <form method="POST" enctype="multipart/form-data" id="uploadForm">
+    <div id="dropzone"
+         style="border:2px dashed var(--border);border-radius:12px;padding:56px 40px;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface)"
+         onclick="document.getElementById('pdfInput').click()">
+      <div style="margin-bottom:16px;opacity:.5">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <div id="dz-main" style="font-size:15px;font-weight:500;color:var(--text);margin-bottom:6px">
+        Drop invoice PDFs here
+      </div>
+      <div id="dz-sub" style="font-size:13px;color:var(--muted)">
+        or <span style="color:var(--accent2)">click to browse</span> — Amazon, Best Buy, Costco, Walmart, Apple
+      </div>
+      <div id="dz-files" style="margin-top:16px;display:none"></div>
+    </div>
 
-  <!-- Single -->
-  <div class="card" style="text-align:center;padding:28px 20px">
-    <div style="font-size:32px;margin-bottom:12px">📄</div>
-    <div style="font-size:16px;font-weight:600;margin-bottom:8px">Single Invoice</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Upload one PDF and review before submitting</div>
-    <form method="POST" enctype="multipart/form-data" id="singleForm">
-      <input type="file" id="singlePdf" name="pdf" accept=".pdf" style="display:none" required onchange="this.form.submit()">
-      <button type="button" onclick="document.getElementById('singlePdf').click()" class="btn btn-primary w-full">
-        Select PDF
+    <input type="file" id="pdfInput" name="pdfs" accept=".pdf" multiple style="display:none" required>
+
+    <div id="submitArea" style="display:none;margin-top:16px">
+      <button type="submit" class="btn btn-primary w-full" id="submitBtn" style="padding:12px">
+        <span id="submitLabel">Upload & Parse</span>
       </button>
-    </form>
-  </div>
+      <div style="text-align:center;margin-top:10px;font-size:12px;color:var(--muted)" id="modeHint"></div>
+    </div>
+  </form>
 
-  <!-- Batch -->
-  <div class="card" style="text-align:center;padding:28px 20px">
-    <div style="font-size:32px;margin-bottom:12px">📦</div>
-    <div style="font-size:16px;font-weight:600;margin-bottom:8px">Batch Upload</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Upload multiple PDFs and review each one</div>
-    <a href="{{ url_for('upload.batch_upload') }}" class="btn btn-primary w-full">Start Batch</a>
+  <div style="margin-top:20px;display:flex;gap:20px;font-size:12px;color:var(--hint)">
+    <span>📄 Single file → review & confirm</span>
+    <span>📦 Multiple files → batch queue with draft save</span>
+    <span>✍️ <a href="{{ url_for('upload.manual_upload') }}" style="color:var(--muted)">Manual entry</a> if parsing fails</span>
   </div>
-
-  <!-- Manual -->
-  <div class="card" style="text-align:center;padding:28px 20px">
-    <div style="font-size:32px;margin-bottom:12px">✍️</div>
-    <div style="font-size:16px;font-weight:600;margin-bottom:8px">Manual Entry</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Fill in form manually — no parsing needed</div>
-    <a href="{{ url_for('upload.manual_upload') }}" class="btn btn-ghost w-full">Enter Manually</a>
-  </div>
-
 </div>
 
 <script>
-document.getElementById('singleForm').addEventListener('submit', function(){
-  this.querySelector('button').textContent = 'Parsing...';
-  this.querySelector('button').disabled = true;
+const input    = document.getElementById('pdfInput');
+const dz       = document.getElementById('dropzone');
+const dzMain   = document.getElementById('dz-main');
+const dzSub    = document.getElementById('dz-sub');
+const dzFiles  = document.getElementById('dz-files');
+const submitArea = document.getElementById('submitArea');
+const submitBtn  = document.getElementById('submitBtn');
+const submitLabel = document.getElementById('submitLabel');
+const modeHint   = document.getElementById('modeHint');
+
+function updateUI(files) {
+  if (!files || !files.length) return;
+  const count = files.length;
+
+  dzFiles.innerHTML = [...files].map(f =>
+    `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;margin:3px">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      ${f.name}
+    </div>`
+  ).join('');
+  dzFiles.style.display = 'block';
+
+  dzMain.textContent = count === 1 ? '1 file selected' : `${count} files selected`;
+  dzSub.style.display = 'none';
+  dz.style.borderColor = 'var(--accent)';
+  dz.style.background = 'rgba(79,110,247,.05)';
+
+  submitArea.style.display = 'block';
+  if (count === 1) {
+    submitLabel.textContent = 'Parse & Review';
+    modeHint.textContent = 'Single invoice → goes straight to confirmation';
+  } else {
+    submitLabel.textContent = `Parse ${count} Invoices`;
+    modeHint.textContent = `Batch of ${count} → saved as draft, review each one`;
+  }
+}
+
+input.addEventListener('change', e => updateUI(e.target.files));
+
+dz.addEventListener('dragover', e => {
+  e.preventDefault();
+  dz.style.borderColor = 'var(--accent)';
+  dz.style.background  = 'rgba(79,110,247,.05)';
+});
+dz.addEventListener('dragleave', e => {
+  if (!e.relatedTarget || !dz.contains(e.relatedTarget)) {
+    dz.style.borderColor = 'var(--border)';
+    dz.style.background  = 'var(--surface)';
+  }
+});
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  const dt = new DataTransfer();
+  [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf')).forEach(f => dt.items.add(f));
+  if (dt.files.length) {
+    input.files = dt.files;
+    updateUI(dt.files);
+  }
+});
+
+document.getElementById('uploadForm').addEventListener('submit', function() {
+  submitBtn.disabled = true;
+  const count = input.files.length;
+  submitLabel.textContent = count === 1 ? 'Parsing...' : `Parsing ${count} files...`;
 });
 </script>
 {% endblock %}
