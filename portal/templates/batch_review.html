@@ -13,13 +13,14 @@
     {% endif %}
     <form method="POST" action="{{ url_for('upload.batch_discard', draft_id=draft.draft_id) }}"
           onsubmit="return confirm('Discard this entire batch?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-ghost btn-sm">Discard Batch</button>
     </form>
   </div>
 </div>
 
 <div class="card">
-  <div class="table-wrap"><table>
+  <div><table>
     <thead><tr><th>#</th><th>File</th><th>Retailer</th><th>Order #</th><th>Total</th><th>Card</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {% for item in items %}
