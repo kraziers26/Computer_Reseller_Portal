@@ -99,9 +99,9 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
                 review_status, is_duplicate, submitted_by_email,
                 gross_paid_amount, net_paid_amount, gross_business_commission,
                 net_business_commission, sales_payroll_tax_withheld, notes,
-                invoice_pdf, submitted_at
+                membership_number, invoice_pdf, submitted_at
             ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,FALSE,%s,
-                      %s,%s,%s,%s,%s,%s,%s,NOW())
+                      %s,%s,%s,%s,%s,%s,%s,%s,NOW())
         """, (tid, order_number, invoice_data['retailer'],
               invoice_data['purchase_date'], invoice_data['purchase_year_month'],
               form_user_id, company_id, card_last4, price_total,
@@ -109,7 +109,7 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
               gross_paid, order_type,
               'Pending' if needs_review else 'Auto-approved',
               current_email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
-              notes, pdf_bytes))
+              notes, invoice_data.get('membership_number'), pdf_bytes))
 
         items = invoice_data.get('items', [])
         if items:
