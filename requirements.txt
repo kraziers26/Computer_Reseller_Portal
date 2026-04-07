@@ -7,3 +7,6 @@ werkzeug==3.0.3
 gunicorn==21.2.0
 pdfplumber==0.11.4
 openpyxl==3.1.2
+flask-limiter==3.5.0
+flask-wtf==1.2.1
+flask-talisman==1.1.0
