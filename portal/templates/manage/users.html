@@ -11,6 +11,7 @@
   <div class="card" style="border-color:var(--accent)">
     <div class="card-title">Add new user</div>
     <form method="POST" action="{{ url_for('manage.new_user') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-row-3">
         <div class="form-group">
           <label>Username * <span style="font-size:11px;color:var(--muted)">(display name)</span></label>
@@ -62,7 +63,7 @@
 
 <!-- User list -->
 <div class="card">
-  <div class="table-wrap"><table>
+  <div><table>
     <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Companies</th><th>Active</th><th></th></tr></thead>
     <tbody>
     {% for u in users %}
@@ -83,6 +84,7 @@
     <tr id="edit-{{ u.user_id }}" style="display:none;background:var(--surface2)">
       <td colspan="7" style="padding:16px">
         <form method="POST" action="{{ url_for('manage.edit_user', uid=u.user_id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="update">
           <div class="form-row-3">
             <div class="form-group"><label>Full Name</label><input name="full_name" value="{{ u.full_name or '' }}"></div>
@@ -121,6 +123,7 @@
     <tr id="pw-{{ u.user_id }}" style="display:none;background:var(--surface2)">
       <td colspan="7" style="padding:16px">
         <form method="POST" action="{{ url_for('manage.edit_user', uid=u.user_id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="set_password">
           <div style="max-width:400px">
             <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Set a new password for <strong>{{ u.username }}</strong></p>
