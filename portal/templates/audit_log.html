@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Audit Log — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Audit Log</h1><p>{{ total }} events recorded</p></div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 flex-wrap items-center">
+    <select name="action" style="width:200px" onchange="this.form.submit()">
+      <option value="">All actions</option>
+      {% for a in actions %}<option value="{{ a }}" {{ 'selected' if filters.action==a }}>{{ a }}</option>{% endfor %}
+    </select>
+    <input type="text" name="user" value="{{ filters.user }}" placeholder="Filter by email..."
+           style="width:200px" oninput="this.form.submit()">
+    {% if filters.action or filters.user %}
+    <a href="{{ url_for('admin.audit_log') }}" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Time</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">User</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Action</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Target</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Detail</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">IP</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in logs %}
+      {% set is_danger = r.action in ('transaction_deleted','transaction_inactivated') %}
+      {% set is_warn   = r.action in ('transaction_flagged','transaction_marked_duplicate','login_failed') %}
+      {% set is_ok     = r.action in ('login_success','transaction_approved','transaction_submitted') %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px;font-size:11px;color:var(--muted);white-space:nowrap">
+          {{ r.created_at.strftime('%b %d %H:%M:%S') if r.created_at else '—' }}
+        </td>
+        <td style="padding:8px 12px;font-size:12px;white-space:nowrap">
+          {{ r.username or r.user_email or '—' }}
+        </td>
+        <td style="padding:8px 12px;white-space:nowrap">
+          <span style="font-size:11px;padding:2px 8px;border-radius:20px;
+            background:{{ 'rgba(239,68,68,.15)' if is_danger else 'rgba(245,158,11,.15)' if is_warn else 'rgba(34,197,94,.15)' if is_ok else 'var(--surface2)' }};
+            color:{{ '#f87171' if is_danger else '#fbbf24' if is_warn else '#4ade80' if is_ok else 'var(--muted)' }}">
+            {{ r.action }}
+          </span>
+        </td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--muted)">
+          {{ r.target_type or '' }}
+          {% if r.target_id %}<span class="mono" style="font-size:10px">{{ r.target_id[:12] }}...</span>{% endif %}
+        </td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          {{ r.detail or '—' }}
+        </td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--hint)">
+          {{ r.ip_address or '—' }}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not logs %}
+      <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">No audit events yet.</td></tr>
+      {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% if total > per_page %}
+  <div class="pagination">
+    {% if page > 1 %}<a href="?page={{ page-1 }}&action={{ filters.action }}">← Prev</a>{% endif %}
+    <span class="current">{{ page }} / {{ ((total-1)//per_page)+1 }}</span>
+    {% if page * per_page < total %}<a href="?page={{ page+1 }}&action={{ filters.action }}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
