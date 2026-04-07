@@ -3,7 +3,20 @@
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>Audit Log</h1><p>{{ total }} events recorded</p></div>
+  <div class="flex gap-8">
+    <a href="{{ url_for('admin.export_audit_log', action=filters.action, user=filters.user) }}"
+       class="btn btn-ghost btn-sm">⬇ Export Excel</a>
+    <button onclick="window.print()" class="btn btn-ghost btn-sm">🖨 Print PDF</button>
+  </div>
 </div>
+
+<style>
+@media print {
+  .sidebar, .page-header .flex, .card:first-of-type { display:none!important }
+  body { background:#fff; color:#000 }
+  table { font-size:10px }
+}
+</style>
 
 <div class="card" style="margin-bottom:16px">
   <form method="GET" class="flex gap-12 flex-wrap items-center">
@@ -20,7 +33,7 @@
 </div>
 
 <div class="card">
-  <div style="overflow-x:auto">
+  <div>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="background:var(--surface2)">
@@ -67,8 +80,7 @@
       <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">No audit events yet.</td></tr>
       {% endif %}
       </tbody>
-    </table>
-  </div>
+  </table>
   {% if total > per_page %}
   <div class="pagination">
     {% if page > 1 %}<a href="?page={{ page-1 }}&action={{ filters.action }}">← Prev</a>{% endif %}
