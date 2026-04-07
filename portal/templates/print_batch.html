@@ -1,85 +1,61 @@
 {% extends "base.html" %}
-{% block title %}Print Batches — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}Batch {{ batch_id }} — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
-<div class="page-header"><h1>Print Batches</h1><p>Manage and print invoice batches</p></div>
+<div class="page-header page-header-row">
+  <div><h1>Batch: {{ batch_id }}</h1><p>{{ invoices|length }} invoices · {{ batch_date }}</p></div>
+  <div class="flex gap-8">
+    <button onclick="printSelected()" class="btn btn-primary btn-sm">🖨 Print Selected</button>
+    <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">← Back</a>
+  </div>
+</div>
 
-<!-- Recent Batches -->
-<div class="card" style="margin-bottom:20px">
-  <div class="card-title">Recent batches</div>
-  {% if batches %}
+<div class="card">
   <div class="table-wrap"><table>
-    <thead><tr><th>Batch ID</th><th>Date</th><th>Invoices</th><th></th></tr></thead>
+    <thead><tr>
+      <th><input type="checkbox" id="selectAll" style="width:auto"></th>
+      <th>Order #</th><th>Retailer</th><th>Date</th><th>Person By</th><th>Company</th><th>Total</th><th>Pages</th><th>Print</th>
+    </tr></thead>
     <tbody>
-    {% for b in batches %}
+    {% for r in invoices %}
     <tr>
-      <td class="mono">{{ b.print_batch_id }}</td>
-      <td>{{ b.batch_date.strftime('%b %d, %Y') if b.batch_date else '—' }}</td>
-      <td>{{ b.count }}</td>
-      <td class="flex gap-8">
-        <a href="{{ url_for('admin.batch_detail', batch_id=b.print_batch_id) }}" class="btn btn-ghost btn-sm">View / Print</a>
-        <form method="POST" action="{{ url_for('admin.unbatch') }}" style="display:inline"
-              onsubmit="return confirm('Release all invoices from batch {{ b.print_batch_id }}? They will return to the unprinted queue.')">
-          <input type="hidden" name="batch_id" value="{{ b.print_batch_id }}">
-          <button type="submit" class="btn btn-danger btn-sm">Undo Batch</button>
-        </form>
+      <td><input type="checkbox" class="row-check" value="{{ r.transaction_id }}" style="width:auto" checked></td>
+      <td class="mono" style="font-size:12px">{{ r.order_number[:24] }}</td>
+      <td>{{ r.retailer }}</td>
+      <td>{{ r.purchase_date }}</td>
+      <td>{{ r.person_name or '—' }}</td>
+      <td>{{ r.company_name or '—' }}</td>
+      <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+      <td>
+        <input type="text" id="pages-{{ r.transaction_id }}" placeholder="e.g. 1-2 or all"
+               value="all" style="width:90px;padding:4px 8px;font-size:12px">
+      </td>
+      <td>
+        {% if r.invoice_file_path %}
+        <a href="{{ url_for('admin.print_invoice', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨 Print</a>
+        {% else %}
+        <span style="color:var(--hint);font-size:12px">No PDF</span>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
     </tbody>
   </table></div>
-  {% else %}
-  <p style="color:var(--muted);font-size:13px">No batches yet.</p>
-  {% endif %}
 </div>
-
-<!-- Create New Batch -->
-<form method="POST">
-  <div class="card">
-    <div class="card-title">Create new batch</div>
-    <div class="form-group" style="max-width:300px">
-      <label>Batch ID (e.g. BATCH-2026-04)</label>
-      <input type="text" name="batch_id" placeholder="BATCH-YYYY-MM" required>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th><input type="checkbox" id="selectAll" style="width:auto"></th>
-          <th>Order #</th><th>Retailer</th><th>Date</th><th>Person By</th><th>Total</th><th>Print</th>
-        </tr></thead>
-        <tbody>
-        {% for r in unprinted %}
-        <tr>
-          <td><input type="checkbox" name="txn_ids" value="{{ r.transaction_id }}" class="row-check" style="width:auto"></td>
-          <td class="mono" style="font-size:12px">{{ r.order_number[:22] }}</td>
-          <td>{{ r.retailer }}</td>
-          <td>{{ r.purchase_date }}</td>
-          <td>{{ r.username or '—' }}</td>
-          <td class="mono">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-          <td>
-            {% if r.invoice_file_path %}
-            <a href="{{ url_for('admin.print_invoice', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨 Print</a>
-            {% else %}
-            <span style="color:var(--hint);font-size:12px">No PDF</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">All invoices have been batched.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% if unprinted %}
-    <div class="mt-16 flex gap-12">
-      <button type="submit" class="btn btn-primary">Tag Selected as Batch</button>
-    </div>
-    {% endif %}
-  </div>
-</form>
 
 <script>
 document.getElementById('selectAll').addEventListener('change', function(){
   document.querySelectorAll('.row-check').forEach(c => c.checked = this.checked);
 });
+
+function printSelected() {
+  const checked = [...document.querySelectorAll('.row-check:checked')];
+  if (!checked.length) { alert('Select at least one invoice.'); return; }
+  checked.forEach(cb => {
+    const tid = cb.value;
+    const pages = document.getElementById('pages-' + tid)?.value || 'all';
+    const url = '/admin/print-invoice/' + tid + '?pages=' + encodeURIComponent(pages);
+    window.open(url, '_blank');
+  });
+}
 </script>
 {% endblock %}
