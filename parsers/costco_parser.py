@@ -70,15 +70,22 @@ def parse_order_header(text: str, invoice: CostcoInvoice):
         invoice.parse_errors.append("order_number not found")
         invoice.needs_review = True
 
-    # Membership number — label on one line, number on next line
-    # OR same line: "Membership Number 33174-2025"
-    # Next line format: "Membership Number\n111957620835"
-    m = re.search(r'Membership\s+Number\s*\n\s*([\d][\d\-]{5,})', text, re.IGNORECASE)
-    if not m:
-        # Same line fallback
-        m = re.search(r'Membership\s+Number\s+([\d][\d\-]{5,})', text, re.IGNORECASE)
+    # Membership number — try all known Costco layouts:
+    # 1. Label + number on same line:  "Membership Number 33174-2025"
+    # 2. Label alone, number next line: "Membership Number\n111957620835"
+    # 3. Label alone, number is first token on next line (may have other text after)
+    membership = None
+    # Try same-line first (catches "Membership Number 33174-2025")
+    m = re.search(r'Membership\s+Number\s+(\d[\d\-]{5,})', text, re.IGNORECASE)
     if m:
-        invoice.membership_number = m.group(1).strip()
+        membership = m.group(1).strip()
+    else:
+        # Try next-line: label is alone, digits follow on next line
+        m = re.search(r'Membership\s+Number\s*\n\s*(\d{5,})', text, re.IGNORECASE)
+        if m:
+            membership = m.group(1).strip()
+    if membership:
+        invoice.membership_number = membership
 
     # Order date — label and value separated by address column text
     m = re.search(r'Order Date\s*\n[^\n]*\n\s*(\d{2}/\d{2}/\d{4})', text)
