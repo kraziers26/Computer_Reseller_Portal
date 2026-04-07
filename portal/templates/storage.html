@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Storage — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Storage Monitor</h1><p>Database usage and capacity</p></div>
+
+{% set pct = ((db_bytes / db_limit) * 100)|round(1) %}
+{% set pct_safe = [pct, 100]|min %}
+
+<!-- Main DB usage bar -->
+<div class="card" style="margin-bottom:20px">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+    <div style="font-size:15px;font-weight:500">PostgreSQL Database</div>
+    <div style="font-size:13px;color:var(--muted)">
+      <span style="font-size:20px;font-weight:600;color:{{ 'var(--danger)' if pct > 80 else 'var(--warning)' if pct > 60 else 'var(--accent2)' }}">
+        {{ (db_bytes / 1048576)|round(1) }} MB
+      </span>
+      &nbsp;/&nbsp;{{ (db_limit / 1073741824)|round(1) }} GB limit
+    </div>
+  </div>
+  <div style="background:var(--surface2);border-radius:999px;height:12px;overflow:hidden">
+    <div style="height:100%;border-radius:999px;width:{{ pct_safe }}%;
+         background:{{ '#ef4444' if pct > 80 else '#f59e0b' if pct > 60 else '#4f6ef7' }};
+         transition:width .5s"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--muted)">
+    <span>{{ pct }}% used</span>
+    <span>{{ ((db_limit - db_bytes) / 1048576)|round(1) }} MB remaining</span>
+  </div>
+  {% if pct > 80 %}
+  <div style="margin-top:12px;padding:10px 14px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;font-size:13px;color:#f87171">
+    ⚠️ Storage is over 80% — consider upgrading your Railway PostgreSQL plan or archiving old data.
+  </div>
+  {% elif pct > 60 %}
+  <div style="margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:6px;font-size:13px;color:#fbbf24">
+    ⚠️ Storage is over 60% — keep an eye on this as you load historical data.
+  </div>
+  {% endif %}
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+  <!-- PDF storage -->
+  <div class="card">
+    <div class="card-title">PDF Storage (in DB)</div>
+    <div style="font-size:24px;font-weight:600;color:var(--accent2);margin-bottom:4px">
+      {{ (pdf_stats.pdf_bytes / 1048576)|round(2) }} MB
+    </div>
+    <div style="font-size:13px;color:var(--muted)">{{ pdf_stats.pdf_count }} PDFs stored in PostgreSQL</div>
+    <div style="margin-top:8px;font-size:12px;color:var(--hint)">
+      Historical invoices use Google Drive links (free, not counted here)
+    </div>
+  </div>
+
+  <!-- Table breakdown -->
+  <div class="card">
+    <div class="card-title">By table</div>
+    {% for t in tables %}
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:13px;border-bottom:1px solid var(--border)">
+      <span class="mono" style="font-size:12px">{{ t.tablename }}</span>
+      <span style="color:var(--muted)">{{ t.size }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Monthly growth -->
+<div class="card">
+  <div class="card-title">Monthly transaction volume (last 12 months)</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Month</th><th>Orders</th><th>GMV</th><th>Est. PDF size added</th></tr></thead>
+    <tbody>
+    {% for r in monthly %}
+    <tr>
+      <td class="mono">{{ r.purchase_year_month }}</td>
+      <td>{{ r.orders }}</td>
+      <td class="mono">${{ "{:,.2f}".format(r.gmv or 0) }}</td>
+      <td style="color:var(--muted);font-size:12px">~{{ (r.orders * 0.3)|round(1) }} MB</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div style="margin-top:12px;font-size:12px;color:var(--hint)">
+    Est. PDF size based on ~300KB average per invoice. Actual size depends on PDF complexity.
+  </div>
+</div>
+{% endblock %}
