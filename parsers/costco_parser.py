@@ -70,9 +70,13 @@ def parse_order_header(text: str, invoice: CostcoInvoice):
         invoice.parse_errors.append("order_number not found")
         invoice.needs_review = True
 
-    # Membership number — can be on same line OR next line after label
-    # Formats: "Membership Number 33174-2025" or "Membership Number\n111957620835"
-    m = re.search(r'Membership\s+Number[:\s]*\n?\s*([\d][\d\-]{4,})', text, re.IGNORECASE)
+    # Membership number — label on one line, number on next line
+    # OR same line: "Membership Number 33174-2025"
+    # Next line format: "Membership Number\n111957620835"
+    m = re.search(r'Membership\s+Number\s*\n\s*([\d][\d\-]{5,})', text, re.IGNORECASE)
+    if not m:
+        # Same line fallback
+        m = re.search(r'Membership\s+Number\s+([\d][\d\-]{5,})', text, re.IGNORECASE)
     if m:
         invoice.membership_number = m.group(1).strip()
 
