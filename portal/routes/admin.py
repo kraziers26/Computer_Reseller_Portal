@@ -433,12 +433,13 @@ def print_batch():
         cur.execute("""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.print_date,
-                   t.print_batch_id, u.username, c.company_name
+                   t.print_batch_id, t.invoice_file_path,
+                   u.username, c.company_name
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
             WHERE t.print_date IS NULL AND t.review_status != 'Flagged' AND t.is_active=TRUE
-            ORDER BY t.purchase_date DESC
+            ORDER BY t.submitted_at DESC
         """)
         unprinted = cur.fetchall()
         cur.execute("""
@@ -451,7 +452,7 @@ def print_batch():
     return render_template('print_batch.html', unprinted=unprinted, batches=batches)
 
 
-@admin_bp.route('/admin/batch/<batch_id>')
+@admin_bp.route('/batch/<batch_id>')
 @login_required
 @require_role('admin')
 def batch_detail(batch_id):
@@ -472,7 +473,7 @@ def batch_detail(batch_id):
                            invoices=invoices, batch_date=batch_date)
 
 
-@admin_bp.route('/admin/unbatch', methods=['POST'])
+@admin_bp.route('/batch/unbatch', methods=['POST'])
 @login_required
 @require_role('admin')
 def unbatch():
@@ -487,7 +488,7 @@ def unbatch():
     return redirect(url_for('admin.print_batch'))
 
 
-@admin_bp.route('/admin/print-invoice/<uuid:tid>')
+@admin_bp.route('/print-invoice/<uuid:tid>')
 @login_required
 @require_role('admin')
 def print_invoice(tid):
