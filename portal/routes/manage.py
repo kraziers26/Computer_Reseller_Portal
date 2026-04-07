@@ -15,7 +15,9 @@ manage_bp = Blueprint('manage', __name__, url_prefix='/manage')
 def users():
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT u.*, ARRAY_AGG(c.company_name) FILTER (WHERE c.company_name IS NOT NULL) AS companies
+            SELECT u.*,
+                   ARRAY_AGG(c.company_name) FILTER (WHERE c.company_name IS NOT NULL) AS companies,
+                   ARRAY_AGG(uc.company_id)  FILTER (WHERE uc.company_id  IS NOT NULL) AS company_ids
             FROM dim_users u
             LEFT JOIN user_companies uc ON u.user_id = uc.user_id
             LEFT JOIN dim_companies  c  ON uc.company_id = c.company_id
@@ -83,6 +85,7 @@ def new_user():
     username  = request.form.get('username', '').strip()
     full_name = request.form.get('full_name', '').strip()
     email     = request.form.get('email', '').strip()
+    phone     = request.form.get('phone', '').strip()
     role      = request.form.get('portal_role', 'none')
     password  = request.form.get('password', '')
 
@@ -90,20 +93,33 @@ def new_user():
         flash('Username and email are required.', 'error')
         return redirect(url_for('manage.users'))
 
+    if role != 'none' and len(password) < 8:
+        flash('Password must be at least 8 characters for portal users.', 'error')
+        return redirect(url_for('manage.users'))
+
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode() if password else None
 
     with db_cursor() as (cur, conn):
-        cur.execute("""
-            INSERT INTO dim_users (username, full_name, email, portal_role, portal_password_hash)
-            VALUES (%s,%s,%s,%s,%s) RETURNING user_id
-        """, (username, full_name or None, email, role, hashed))
-        new_id = cur.fetchone()['user_id']
+        try:
+            cur.execute("""
+                INSERT INTO dim_users
+                    (username, full_name, email, phone, portal_role, portal_password_hash)
+                VALUES (%s,%s,%s,%s,%s,%s) RETURNING user_id
+            """, (username, full_name or None, email, phone or None, role, hashed))
+            new_id = cur.fetchone()['user_id']
 
-        company_ids = request.form.getlist('company_ids', type=int)
-        for cid in company_ids:
-            cur.execute("INSERT INTO user_companies (user_id, company_id) VALUES (%s,%s)", (new_id, cid))
+            company_ids = request.form.getlist('company_ids', type=int)
+            for cid in company_ids:
+                cur.execute(
+                    "INSERT INTO user_companies (user_id, company_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (new_id, cid))
+            flash(f'User {username} created successfully.', 'success')
+        except Exception as e:
+            if 'unique' in str(e).lower():
+                flash(f'A user with email {email} already exists.', 'error')
+            else:
+                flash(f'Error creating user: {str(e)}', 'error')
 
-    flash(f'User {username} created.', 'success')
     return redirect(url_for('manage.users'))
 
 
