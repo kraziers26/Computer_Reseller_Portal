@@ -49,6 +49,7 @@
   <div class="metric"><div class="metric-label">Gross Paid Out</div><div class="metric-value success">${{ "{:,.2f}".format(metrics.total_gross_paid or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Net Paid Out</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_net_paid or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Tax Withheld</div><div class="metric-value warning">${{ "{:,.2f}".format(metrics.total_tax or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Costco Taxes</div><div class="metric-value danger">${{ "{:,.2f}".format(metrics.total_costco_taxes or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_cashback or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Pending Review</div><div class="metric-value {{ 'warning' if metrics.pending_count else '' }}">{{ metrics.pending_count or 0 }}</div></div>
   <div class="metric"><div class="metric-label">Duplicates</div><div class="metric-value {{ 'danger' if metrics.dup_count else '' }}">{{ metrics.dup_count or 0 }}</div></div>
