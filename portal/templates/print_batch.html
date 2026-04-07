@@ -68,7 +68,7 @@
           <td style="padding:8px 12px">
             {% if r.invoice_file_path and r.invoice_file_path.startswith('http') %}
               <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 Open</a>
-            {% elif r.invoice_file_path %}
+            {% elif r.has_pdf %}
               <a href="{{ url_for('admin.print_invoice', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨 Print</a>
             {% else %}
               <span style="color:var(--hint);font-size:12px">No PDF</span>
