@@ -81,6 +81,9 @@ def upload():
             return render_template('upload.html', companies=companies)
         invoice_data = invoice_to_dict(invoice)
         invoice_data['_tmp_path'] = tmp_path
+        # Read PDF bytes for DB storage (persists across redeploys)
+        with open(tmp_path, 'rb') as pdf_f:
+            invoice_data['_pdf_bytes'] = pdf_f.read().hex()  # hex encode for JSON
         session['pending_invoice'] = json.dumps(invoice_data)
         return redirect(url_for('upload.confirm'))
 
@@ -156,6 +159,10 @@ def confirm():
         net_biz      = round((gross_biz or 0) - (net_paid or 0), 2) if gross_biz else None
         needs_review = invoice_data.get('needs_review', False) or not card_last4
 
+        # Decode stored PDF bytes
+        pdf_hex = invoice_data.get('_pdf_bytes', '')
+        pdf_bytes = bytes.fromhex(pdf_hex) if pdf_hex else None
+
         tid = str(uuid.uuid4())
         with db_cursor() as (cur, conn):
             cur.execute("""
@@ -165,15 +172,16 @@ def confirm():
                     cashback_rate, cashback_value, commission_type, commission_amount, order_type,
                     invoice_file_path, review_status, is_duplicate, submitted_by_email,
                     gross_paid_amount, net_paid_amount, gross_business_commission,
-                    net_business_commission, sales_payroll_tax_withheld, notes, submitted_at
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,%s,FALSE,%s,%s,%s,%s,%s,%s,%s,NOW())
+                    net_business_commission, sales_payroll_tax_withheld, notes, invoice_pdf, submitted_at
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,%s,FALSE,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
             """, (tid, order_number, invoice_data['retailer'],
                   invoice_data['purchase_date'], invoice_data['purchase_year_month'],
                   form_user_id, company_id, card_last4, price_total,
                   invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
                   gross_paid, order_type, invoice_data.get('_tmp_path'),
                   'Pending' if needs_review else 'Auto-approved',
-                  current_user.email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld, notes))
+                  current_user.email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld, notes,
+                  pdf_bytes))
 
             items = invoice_data.get('items', [])
             if items:
