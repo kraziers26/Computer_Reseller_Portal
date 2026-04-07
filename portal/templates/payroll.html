@@ -1,7 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Payroll — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
-<div class="page-header"><h1>Payroll Report</h1><p>Commission by person, separated by company</p></div>
+<div class="page-header page-header-row">
+  <div><h1>Payroll Report</h1><p>Commission by person, separated by company</p></div>
+  <div class="flex gap-8">
+    <a href="{{ url_for('admin.export_payroll', month=selected_month, company=selected_company or '') }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
+    <button onclick="window.print()" class="btn btn-ghost btn-sm">🖨 Print PDF</button>
+  </div>
+</div>
+
+<style>
+@media print {
+  .sidebar, .page-header .flex, .card:first-child { display:none!important }
+  body { background:#fff; color:#000 }
+  .card { border:1px solid #ccc; margin-bottom:16px }
+  table { font-size:11px }
+}
+</style>
+
 <div class="card" style="margin-bottom:16px">
   <form method="GET" class="flex gap-12 items-center flex-wrap">
     <select name="month" style="width:160px" onchange="this.form.submit()">
@@ -22,13 +38,13 @@
   <div class="card-title">{{ company_name }}</div>
   <div class="table-wrap"><table>
     <thead><tr>
-      <th><a href="?month={{ selected_month }}&sort=username&dir={{ 'asc' if sort_by=='username' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Person {{ '↑' if sort_by=='username' and sort_dir=='asc' else '↓' if sort_by=='username' else '' }}</a></th>
+      <th><a href="?month={{ selected_month }}&sort=username&dir={{ 'asc' if sort_by=='username' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Person {{ '↑' if sort_by=='username' and sort_dir=='asc' else '↓' if sort_by=='username' else '↕' }}</a></th>
       <th>Month</th>
-      <th><a href="?month={{ selected_month }}&sort=order_count&dir={{ 'asc' if sort_by=='order_count' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Orders {{ '↑' if sort_by=='order_count' and sort_dir=='asc' else '↓' if sort_by=='order_count' else '' }}</a></th>
-      <th><a href="?month={{ selected_month }}&sort=total_purchases&dir={{ 'asc' if sort_by=='total_purchases' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Purchases {{ '↑' if sort_by=='total_purchases' and sort_dir=='asc' else '↓' if sort_by=='total_purchases' else '' }}</a></th>
-      <th><a href="?month={{ selected_month }}&sort=gross_paid&dir={{ 'asc' if sort_by=='gross_paid' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Gross Paid {{ '↑' if sort_by=='gross_paid' and sort_dir=='asc' else '↓' if sort_by=='gross_paid' else '' }}</a></th>
-      <th><a href="?month={{ selected_month }}&sort=net_paid&dir={{ 'asc' if sort_by=='net_paid' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Net Paid {{ '↑' if sort_by=='net_paid' and sort_dir=='asc' else '↓' if sort_by=='net_paid' else '' }}</a></th>
-      <th><a href="?month={{ selected_month }}&sort=tax_withheld&dir={{ 'asc' if sort_by=='tax_withheld' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Tax Withheld {{ '↑' if sort_by=='tax_withheld' and sort_dir=='asc' else '↓' if sort_by=='tax_withheld' else '' }}</a></th>
+      <th><a href="?month={{ selected_month }}&sort=order_count&dir={{ 'asc' if sort_by=='order_count' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Orders {{ '↑' if sort_by=='order_count' and sort_dir=='asc' else '↓' if sort_by=='order_count' else '↕' }}</a></th>
+      <th><a href="?month={{ selected_month }}&sort=total_purchases&dir={{ 'asc' if sort_by=='total_purchases' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Purchases {{ '↑' if sort_by=='total_purchases' and sort_dir=='asc' else '↓' if sort_by=='total_purchases' else '↕' }}</a></th>
+      <th><a href="?month={{ selected_month }}&sort=gross_paid&dir={{ 'asc' if sort_by=='gross_paid' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Gross Paid {{ '↑' if sort_by=='gross_paid' and sort_dir=='asc' else '↓' if sort_by=='gross_paid' else '↕' }}</a></th>
+      <th><a href="?month={{ selected_month }}&sort=net_paid&dir={{ 'asc' if sort_by=='net_paid' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Net Paid {{ '↑' if sort_by=='net_paid' and sort_dir=='asc' else '↓' if sort_by=='net_paid' else '↕' }}</a></th>
+      <th><a href="?month={{ selected_month }}&sort=tax_withheld&dir={{ 'asc' if sort_by=='tax_withheld' and sort_dir=='desc' else 'desc' }}" style="color:inherit;text-decoration:none">Tax Withheld {{ '↑' if sort_by=='tax_withheld' and sort_dir=='asc' else '↓' if sort_by=='tax_withheld' else '↕' }}</a></th>
     </tr></thead>
     <tbody>
     {% set ns = namespace(tp=0, tg=0, tn=0, tt=0) %}
