@@ -28,6 +28,16 @@
           <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required>
         </div>
       </div>
+      {% if invoice.membership_number %}
+      <div class="form-row">
+        <div class="form-group">
+          <label>Membership #</label>
+          <input type="text" value="{{ invoice.membership_number }}" readonly
+                 style="opacity:.7;font-family:monospace;letter-spacing:.5px">
+        </div>
+        <div class="form-group"></div>
+      </div>
+      {% endif %}
       <div class="form-row">
         <div class="form-group">
           <label>Purchase Date</label>
