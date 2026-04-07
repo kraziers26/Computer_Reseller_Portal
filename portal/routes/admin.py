@@ -48,7 +48,8 @@ def dashboard():
                 ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS total_tax,
                 ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2)    AS total_cashback,
                 COUNT(*) FILTER (WHERE t.review_status='Pending')      AS pending_count,
-                COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)            AS dup_count
+                COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)            AS dup_count,
+                ROUND(SUM(COALESCE(t.costco_taxes_paid,0))::numeric,2) AS total_costco_taxes
             FROM transactions t {where}
         """, params)
         metrics = cur.fetchone()
@@ -56,7 +57,7 @@ def dashboard():
         # Recent submissions
         cur.execute(f"""
             SELECT t.order_number, t.retailer, t.purchase_date,
-                   t.price_total, t.review_status, t.submitted_at,
+                   t.price_total, t.costco_taxes_paid, t.review_status, t.submitted_at,
                    sub.username AS submitter_name,
                    per.username AS person_name,
                    c.company_name, t.card_id,
@@ -224,22 +225,28 @@ def review_submission(tid):
     if request.method == 'POST':
         action = request.form.get('action')
         with db_cursor() as (cur, conn):
+            from ..security import audit
             if action == 'approve':
                 cur.execute("UPDATE transactions SET review_status='Reviewed', review_date=NOW() WHERE transaction_id=%s", (str(tid),))
+                audit('transaction_approved', 'transaction', str(tid))
                 flash('Transaction approved.', 'success')
             elif action == 'flag':
                 cur.execute("UPDATE transactions SET review_status='Flagged' WHERE transaction_id=%s", (str(tid),))
+                audit('transaction_flagged', 'transaction', str(tid))
                 flash('Transaction flagged.', 'warning')
             elif action == 'mark_duplicate':
                 cur.execute("UPDATE transactions SET is_duplicate=TRUE, review_status='Flagged' WHERE transaction_id=%s", (str(tid),))
+                audit('transaction_marked_duplicate', 'transaction', str(tid))
                 flash('Marked as duplicate.', 'warning')
             elif action == 'inactivate':
                 cur.execute("UPDATE transactions SET is_active=FALSE WHERE transaction_id=%s", (str(tid),))
+                audit('transaction_inactivated', 'transaction', str(tid))
                 flash('Transaction inactivated. It will no longer appear in reports.', 'warning')
                 return redirect(url_for('admin.all_submissions'))
             elif action == 'delete':
                 cur.execute("DELETE FROM transaction_items WHERE transaction_id=%s", (str(tid),))
                 cur.execute("DELETE FROM transactions WHERE transaction_id=%s", (str(tid),))
+                audit('transaction_deleted', 'transaction', str(tid))
                 flash('Transaction permanently deleted.', 'danger')
                 return redirect(url_for('admin.all_submissions'))
             elif action == 'edit':
@@ -671,3 +678,120 @@ def serve_transaction_pdf(tid):
     return send_file(io.BytesIO(bytes(row['invoice_pdf'])),
                      mimetype='application/pdf',
                      download_name=f'invoice-{tid[:8]}.pdf')
+
+@admin_bp.route('/costco-taxes')
+@login_required
+@require_role('admin')
+def costco_taxes():
+    f_month      = request.args.get('month', '')
+    f_year       = request.args.get('year', '')
+    f_company    = request.args.get('company', type=int)
+    f_person     = request.args.get('person_by', type=int)
+    f_membership = request.args.get('membership', '')
+
+    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
+    params = []
+    if f_month:
+        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
+    if f_year:
+        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); params.append(f_year)
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_person:
+        conditions.append("t.user_id = %s"); params.append(f_person)
+    if f_membership:
+        conditions.append("t.membership_number = %s"); params.append(f_membership)
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        # KPIs
+        cur.execute(f"""
+            SELECT
+                COUNT(*)                                                        AS total_orders,
+                ROUND(SUM(t.price_total)::numeric, 2)                          AS total_gmv,
+                ROUND(SUM(COALESCE(t.costco_taxes_paid,0))::numeric, 2)        AS total_taxes,
+                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric, 2)        AS total_gross_paid,
+                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric, 2)           AS total_cashback,
+                COUNT(DISTINCT t.membership_number) FILTER
+                    (WHERE t.membership_number IS NOT NULL)                     AS unique_memberships
+            FROM transactions t {where}
+        """, params)
+        metrics = cur.fetchone()
+
+        # Transactions table
+        cur.execute(f"""
+            SELECT t.transaction_id, t.order_number, t.purchase_date,
+                   t.price_total, t.costco_taxes_paid,
+                   t.membership_number, t.card_id, d.cashback_rate,
+                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2)     AS gross_paid,
+                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)       AS net_paid,
+                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2) AS tax_withheld,
+                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)        AS cashback,
+                   (t.invoice_pdf IS NOT NULL)                           AS has_pdf,
+                   t.invoice_file_path,
+                   per.username AS person_name, c.company_name,
+                   t.review_status
+            FROM transactions t
+            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
+            {where}
+            ORDER BY t.purchase_date DESC
+            LIMIT 200
+        """, params)
+        transactions = cur.fetchall()
+
+        # Filter options
+        cur.execute("SELECT DISTINCT TO_CHAR(purchase_date,'YYYY') AS yr FROM transactions WHERE purchase_date IS NOT NULL ORDER BY yr DESC")
+        years = [r['yr'] for r in cur.fetchall()]
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
+        cur.execute("SELECT DISTINCT membership_number FROM transactions WHERE membership_number IS NOT NULL ORDER BY membership_number")
+        memberships = [r['membership_number'] for r in cur.fetchall()]
+
+    return render_template('costco_taxes.html',
+                           metrics=metrics, transactions=transactions,
+                           years=years, companies=companies, users=users, memberships=memberships,
+                           filters={'month':f_month,'year':f_year,'company':f_company,
+                                    'person_by':f_person,'membership':f_membership})
+
+
+@admin_bp.route('/audit-log')
+@login_required
+@require_role('admin')
+def audit_log():
+    page     = request.args.get('page', 1, type=int)
+    per_page = 50
+    offset   = (page - 1) * per_page
+    f_action = request.args.get('action', '')
+    f_user   = request.args.get('user', '')
+
+    conditions, params = [], []
+    if f_action:
+        conditions.append("a.action = %s"); params.append(f_action)
+    if f_user:
+        conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
+    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT a.log_id, a.action, a.target_type, a.target_id,
+                   a.detail, a.ip_address, a.created_at,
+                   a.user_email, u.username
+            FROM audit_log a
+            LEFT JOIN dim_users u ON a.user_id = u.user_id
+            {where}
+            ORDER BY a.created_at DESC LIMIT %s OFFSET %s
+        """, params + [per_page, offset])
+        logs = cur.fetchall()
+        cur.execute(f"SELECT COUNT(*) AS n FROM audit_log a {where}", params)
+        total = cur.fetchone()['n']
+        cur.execute("SELECT DISTINCT action FROM audit_log ORDER BY action")
+        actions = [r['action'] for r in cur.fetchall()]
+
+    return render_template('audit_log.html', logs=logs, total=total,
+                           page=page, per_page=per_page, actions=actions,
+                           filters={'action': f_action, 'user': f_user})
