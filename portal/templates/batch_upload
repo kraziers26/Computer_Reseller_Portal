@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Batch Upload — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Batch Upload</h1><p>Select multiple PDFs to process together</p></div>
+  <a href="{{ url_for('upload.upload') }}" class="btn btn-ghost btn-sm">← Back</a>
+</div>
+
+{% if existing_draft %}
+<div class="card" style="margin-bottom:20px;border-color:var(--color-border-warning)">
+  <div class="card-title" style="color:var(--warning)">⚠️ Active draft exists</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+    You have an unfinished batch from {{ existing_draft.created_at.strftime('%b %d, %Y') }} —
+    {{ existing_draft.completed_count }}/{{ existing_draft.total_files }} submitted.
+  </p>
+  <div class="flex gap-12">
+    <a href="{{ url_for('upload.batch_review', draft_id=existing_draft.draft_id) }}" class="btn btn-primary">Continue Draft</a>
+    <form method="POST">
+      <input type="hidden" name="action" value="discard_draft">
+      <button type="submit" class="btn btn-danger" onclick="return confirm('Discard this draft? All unsubmitted invoices will be lost.')">Discard & Start New</button>
+    </form>
+  </div>
+</div>
+{% else %}
+<div class="card" style="max-width:600px">
+  <form method="POST" enctype="multipart/form-data" id="batchForm">
+    <input type="hidden" name="action" value="upload">
+    <div class="form-group">
+      <label>Select PDFs <span style="color:var(--muted);font-size:12px">(hold Ctrl/Cmd to select multiple)</span></label>
+      <div id="dropzone" style="border:2px dashed var(--border);border-radius:8px;padding:40px;text-align:center;cursor:pointer;transition:border-color .2s"
+           onclick="document.getElementById('batchPdfs').click()">
+        <div style="font-size:40px;margin-bottom:8px;opacity:.4">📦</div>
+        <div id="dz-text" style="color:var(--muted);font-size:13px">Drop PDFs here or <span style="color:var(--accent2)">click to browse</span></div>
+        <div id="dz-files" style="margin-top:10px;font-size:13px;color:var(--text)"></div>
+      </div>
+      <input type="file" id="batchPdfs" name="pdfs" accept=".pdf" multiple style="display:none" required>
+    </div>
+    <div style="background:var(--surface2);border-radius:6px;padding:12px;font-size:12px;color:var(--muted);margin-bottom:16px">
+      💡 Each PDF will be parsed automatically. You'll review and confirm each one individually. Failed parses can be skipped and re-uploaded later.
+    </div>
+    <button type="submit" class="btn btn-primary w-full" id="submitBtn">Parse & Create Batch</button>
+  </form>
+</div>
+{% endif %}
+
+<script>
+const input = document.getElementById('batchPdfs');
+const dz = document.getElementById('dropzone');
+const dzFiles = document.getElementById('dz-files');
+const dzText = document.getElementById('dz-text');
+
+function showFiles(files) {
+  if (!files.length) return;
+  dzText.style.display = 'none';
+  dzFiles.innerHTML = [...files].map(f =>
+    `<div style="padding:2px 0">📄 ${f.name}</div>`
+  ).join('');
+  dz.style.borderColor = 'var(--accent)';
+}
+
+input.addEventListener('change', e => showFiles(e.target.files));
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor='var(--accent)' });
+dz.addEventListener('dragleave', () => dz.style.borderColor='var(--border)');
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  const dt = new DataTransfer();
+  [...e.dataTransfer.files].filter(f => f.type==='application/pdf').forEach(f => dt.items.add(f));
+  input.files = dt.files;
+  showFiles(dt.files);
+});
+
+document.getElementById('batchForm').addEventListener('submit', function() {
+  const btn = document.getElementById('submitBtn');
+  const count = input.files.length;
+  btn.textContent = `Parsing ${count} file${count>1?'s':''}... please wait`;
+  btn.disabled = true;
+});
+</script>
+{% endblock %}
