@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Batch Review — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Batch Review</h1>
+  <p>{{ draft.completed_count }}/{{ draft.total_files }} submitted · {{ items|selectattr('parse_status','eq','parsed')|list|length }} remaining</p></div>
+  <div class="flex gap-8">
+    {% if next_item %}
+    <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=next_item.item_id) }}" class="btn btn-primary">Review Next →</a>
+    {% endif %}
+    {% if draft.status == 'active' and items|selectattr('parse_status','eq','parsed')|list|length == 0 %}
+    <a href="{{ url_for('upload.batch_summary', draft_id=draft.draft_id) }}" class="btn btn-success">View Summary</a>
+    {% endif %}
+    <form method="POST" action="{{ url_for('upload.batch_discard', draft_id=draft.draft_id) }}"
+          onsubmit="return confirm('Discard this entire batch?')">
+      <button type="submit" class="btn btn-ghost btn-sm">Discard Batch</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>File</th><th>Retailer</th><th>Order #</th><th>Total</th><th>Card</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for item in items %}
+    <tr style="{{ 'opacity:.5' if item.parse_status in ('submitted','skipped','failed') }}">
+      <td class="mono" style="font-size:12px">{{ item.position + 1 }}</td>
+      <td style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.filename }}</td>
+      <td>
+        {% if item.parse_status == 'parsed' and item.invoice_data %}
+          {{ item.invoice_data.retailer if item.invoice_data is mapping else (item.invoice_data|tojson|fromjson).retailer }}
+        {% else %}—{% endif %}
+      </td>
+      <td class="mono" style="font-size:12px">
+        {% if item.parse_status == 'parsed' and item.invoice_data %}
+          {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
+          {{ inv.get('order_number','—')[:20] if inv else '—' }}
+        {% else %}—{% endif %}
+      </td>
+      <td class="mono">
+        {% if item.parse_status == 'parsed' and item.invoice_data %}
+          {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
+          {% if inv.get('price_total') %} ${{ "%.2f"|format(inv.get('price_total',0)|float) }}{% else %}—{% endif %}
+        {% else %}—{% endif %}
+      </td>
+      <td class="mono" style="font-size:12px">
+        {% if item.parse_status == 'parsed' and item.invoice_data %}
+          {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
+          {{ inv.get('card_last4') or '⚠ missing' }}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if item.parse_status == 'parsed' %}
+          <span class="badge badge-info">Ready</span>
+        {% elif item.parse_status == 'submitted' %}
+          <span class="badge badge-success">Submitted</span>
+        {% elif item.parse_status == 'skipped' %}
+          <span class="badge badge-muted">Skipped</span>
+        {% elif item.parse_status == 'failed' %}
+          <span class="badge badge-danger">Failed</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if item.parse_status == 'parsed' %}
+        <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=item.item_id) }}" class="btn btn-ghost btn-sm">Review</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}
