@@ -251,12 +251,13 @@ def review_submission(tid):
                 flash('Transaction permanently deleted.', 'danger')
                 return redirect(url_for('admin.all_submissions'))
             elif action == 'edit':
-                card_id    = request.form.get('card_id') or None
-                company_id = request.form.get('company_id', type=int)
-                user_id    = request.form.get('user_id', type=int)
-                order_type = request.form.get('order_type')
-                price      = request.form.get('price_total', type=float)
-                notes      = request.form.get('notes', '').strip()[:140] or None
+                card_id           = request.form.get('card_id') or None
+                company_id        = request.form.get('company_id', type=int)
+                user_id           = request.form.get('user_id', type=int)
+                order_type        = request.form.get('order_type')
+                price             = request.form.get('price_total', type=float)
+                notes             = request.form.get('notes', '').strip()[:140] or None
+                membership_number = request.form.get('membership_number', '').strip() or None
 
                 cashback_rate = cashback_value = None
                 if card_id and price:
@@ -278,13 +279,13 @@ def review_submission(tid):
                         cashback_rate=%s, cashback_value=%s,
                         gross_paid_amount=%s, net_paid_amount=%s,
                         gross_business_commission=%s, net_business_commission=%s,
-                        sales_payroll_tax_withheld=%s, notes=%s,
+                        sales_payroll_tax_withheld=%s, notes=%s, membership_number=%s,
                         review_status='Reviewed', review_date=NOW()
                     WHERE transaction_id=%s
                 """, (card_id, company_id, user_id, order_type, price,
                       cashback_rate, cashback_value,
-                      gross_paid, net_paid, gross_biz, net_biz, tax_withheld, notes,
-                      str(tid)))
+                      gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
+                      notes, membership_number, str(tid)))
                 flash('Transaction updated.', 'success')
         return redirect(url_for('admin.review_submission', tid=tid))
 
