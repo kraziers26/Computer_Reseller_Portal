@@ -81,9 +81,8 @@ def upload():
             return render_template('upload.html', companies=companies)
         invoice_data = invoice_to_dict(invoice)
         invoice_data['_tmp_path'] = tmp_path
-        # Read PDF bytes for DB storage (persists across redeploys)
-        with open(tmp_path, 'rb') as pdf_f:
-            invoice_data['_pdf_bytes'] = pdf_f.read().hex()  # hex encode for JSON
+        # NOTE: PDF bytes are NOT stored in session (cookie size limit)
+        # They are read directly from tmp_path at confirm time
         session['pending_invoice'] = json.dumps(invoice_data)
         return redirect(url_for('upload.confirm'))
 
@@ -159,9 +158,12 @@ def confirm():
         net_biz      = round((gross_biz or 0) - (net_paid or 0), 2) if gross_biz else None
         needs_review = invoice_data.get('needs_review', False) or not card_last4
 
-        # Decode stored PDF bytes
-        pdf_hex = invoice_data.get('_pdf_bytes', '')
-        pdf_bytes = bytes.fromhex(pdf_hex) if pdf_hex else None
+        # Read PDF bytes directly from temp file (not from session)
+        tmp_path_for_pdf = invoice_data.get('_tmp_path', '')
+        pdf_bytes = None
+        if tmp_path_for_pdf and os.path.exists(tmp_path_for_pdf):
+            with open(tmp_path_for_pdf, 'rb') as pf:
+                pdf_bytes = pf.read()
 
         tid = str(uuid.uuid4())
         with db_cursor() as (cur, conn):
