@@ -19,8 +19,8 @@ class User(UserMixin):
         return self.portal_role == 'admin'
 
     @property
-    def is_submitter(self):
-        return self.portal_role in ('admin', 'submitter')
+    def is_contributor(self):
+        return self.portal_role in ('admin', 'contributor')
 
     @property
     def is_active(self):
