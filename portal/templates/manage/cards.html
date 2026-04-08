@@ -65,7 +65,7 @@
 
 <div class="card">
   <div class="table-wrap"><table>
-    <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th><th>Created</th><th>Updated</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
     <tbody>
     {% set first_incomplete_shown = namespace(v=false) %}
     {% for c in cards %}
@@ -85,6 +85,8 @@
       <td class="mono">${{ "{:,.0f}".format(c.credit_limit or 0) }}</td>
       <td><span class="badge badge-accent">{{ "{:.1%}".format(c.cashback_rate) }}</span></td>
       <td>{% if c.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap">{{ c.created_at.strftime('%b %d, %Y') if c.created_at else '—' }}</td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap">{{ c.updated_at.strftime('%b %d, %Y') if c.updated_at else '—' }}</td>
       {% if is_admin %}
       <td>
         <button onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='block'"
@@ -97,7 +99,7 @@
     </tr>
     {% if is_admin %}
     <tr id="edit-card-{{ c.card_id }}" style="display:none;background:var(--surface2)">
-      <td colspan="9" style="padding:16px">
+      <td colspan="11" style="padding:16px">
         <form method="POST" action="{{ url_for('manage.edit_card', card_id=c.card_id) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="update">
