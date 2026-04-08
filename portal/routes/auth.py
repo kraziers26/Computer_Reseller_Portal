@@ -61,9 +61,13 @@ def forgot_password():
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
         if email:
-            _send_reset_email(email)
-        # Always show same message — don't reveal if email exists
-        flash('If that email is registered, a reset link has been sent.', 'info')
+            result = _send_reset_email(email)
+            if result == 'no_key':
+                flash('Email service not configured. Contact your administrator.', 'error')
+            elif result == 'send_failed':
+                flash('Failed to send email. Check Resend API key and sender address.', 'error')
+            else:
+                flash('If that email is registered, a reset link has been sent.', 'info')
         return redirect(url_for('auth.login'))
     return render_template('forgot_password.html')
 
@@ -113,7 +117,7 @@ def reset_password(token):
 
 
 def _send_reset_email(email: str):
-    """Generate token and send reset email via Resend. Silent on failure."""
+    """Generate token and send reset email via Resend. Returns status string."""
     import os, secrets, hashlib
     from ..db import db_cursor
     try:
@@ -144,7 +148,7 @@ def _send_reset_email(email: str):
         import resend
         resend.api_key = os.environ.get('RESEND_API_KEY', '')
         if not resend.api_key:
-            return
+            return 'no_key'
 
         resend.Emails.send({
             'from':    os.environ.get('RESEND_FROM_EMAIL', 'noreply@igamercorp.com'),
@@ -171,8 +175,11 @@ def _send_reset_email(email: str):
                 </div>
             """
         })
-    except Exception:
-        pass  # Never crash the app on email failure
+        return 'ok'
+    except Exception as e:
+        import logging
+        logging.error(f'Resend error: {e}')
+        return 'send_failed'
 
 @auth_bp.route('/setup-db-igamer-2024')
 def setup_db():
