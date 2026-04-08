@@ -53,19 +53,17 @@ class User(UserMixin):
             row = cur.fetchone()
         return User(row) if row else None
 
-    @staticmethod
-    def check_password(email, password):
+    def check_password(self, password):
+        """Instance method — check password against stored hash."""
         with db_cursor() as (cur, _):
             cur.execute(
-                "SELECT portal_password_hash, failed_login_count FROM dim_users "
-                "WHERE LOWER(email) = LOWER(%s) AND is_active = TRUE AND portal_role != 'none'",
-                (email,)
+                "SELECT portal_password_hash FROM dim_users WHERE user_id = %s",
+                (self.id,)
             )
             row = cur.fetchone()
         if not row or not row['portal_password_hash']:
             return False
-        ok = bcrypt.checkpw(password.encode(), row['portal_password_hash'].encode())
-        return ok
+        return bcrypt.checkpw(password.encode(), row['portal_password_hash'].encode())
 
     @staticmethod
     def set_password(user_id, password):
