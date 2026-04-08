@@ -75,19 +75,34 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
     cashback_rate = cashback_value = None
     if card_last4:
         with db_cursor() as (cur, _):
-            cur.execute("SELECT cashback_rate FROM dim_cards WHERE card_id=%s AND is_active=TRUE",
+            # Check if card exists at all (active or not)
+            cur.execute("SELECT card_id, cashback_rate, is_active FROM dim_cards WHERE card_id=%s",
                         (card_last4,))
             row = cur.fetchone()
             if row:
                 cashback_rate  = float(row['cashback_rate'])
                 cashback_value = round(price_total * cashback_rate, 2) if price_total else None
+            else:
+                # Card not in DB — auto-create as unknown so submission doesn't crash
+                # Admin will be alerted via needs_review flag
+                with db_cursor() as (cur2, conn2):
+                    cur2.execute("""
+                        INSERT INTO dim_cards
+                            (card_id, card_name, card_brand, company_id, credit_limit,
+                             cashback_rate, is_active)
+                        VALUES (%s, 'Unknown Card', 'Unknown', 1, 0, 0.01, TRUE)
+                        ON CONFLICT (card_id) DO NOTHING
+                    """, (card_last4,))
+                cashback_rate  = 0.01
+                cashback_value = round(price_total * 0.01, 2) if price_total else None
+                needs_review   = True  # flag for admin to update card details
 
     gross_paid   = round(price_total * 0.01, 2) if price_total else None
     net_paid     = round(gross_paid * 0.8, 2) if gross_paid else None
     tax_withheld = round(gross_paid * 0.2, 2) if gross_paid else None
     gross_biz    = round((gross_paid or 0)+(cashback_value or 0), 2) if gross_paid else None
     net_biz      = round((gross_biz or 0)-(net_paid or 0), 2) if gross_biz else None
-    needs_review = invoice_data.get('needs_review', False) or not card_last4
+    needs_review = invoice_data.get('needs_review', False) or not card_last4 or locals().get('needs_review', False)
 
     tid = str(uuid.uuid4())
     with db_cursor() as (cur, conn):
@@ -224,6 +239,12 @@ def confirm():
         companies = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
+        # Check if parsed card exists
+        card_last4_parsed = invoice_data.get('card_last4')
+        card_missing = False
+        if card_last4_parsed:
+            cur.execute("SELECT card_id FROM dim_cards WHERE card_id=%s", (card_last4_parsed,))
+            card_missing = cur.fetchone() is None
 
     if request.method == 'POST':
         if request.form.get('action') == 'cancel':
@@ -254,7 +275,8 @@ def confirm():
         return redirect(url_for('upload.my_submissions'))
 
     return render_template('confirm.html', invoice=invoice_data, companies=companies,
-                           users=users, current_user_id=current_user.id)
+                           users=users, current_user_id=current_user.id,
+                           card_missing=card_missing)
 
 
 # ── Batch Upload ──────────────────────────────────────────────────────────────
