@@ -504,28 +504,57 @@ def unbatch():
 @login_required
 @require_role('admin')
 def print_invoice(tid):
-    from flask import send_file, abort, redirect as redir
+    from flask import send_file, abort, redirect as redir, make_response
     import io, os
+    from datetime import datetime
+
+    # Optional batch context passed as query params for watermark
+    batch_id     = request.args.get('batch_id', '')
+    company_name = request.args.get('company', '')
+
     with db_cursor() as (cur, _):
-        cur.execute("SELECT invoice_file_path, invoice_pdf FROM transactions WHERE transaction_id=%s", (str(tid),))
+        cur.execute("""
+            SELECT t.invoice_file_path, t.invoice_pdf, t.print_batch_id,
+                   c.company_name, t.order_number
+            FROM transactions t
+            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            WHERE t.transaction_id = %s
+        """, (str(tid),))
         row = cur.fetchone()
     if not row:
         abort(404)
-    # Priority 1: PDF stored in DB (survives redeploys)
+
+    # Use batch_id from query param or from DB
+    batch  = batch_id or row['print_batch_id'] or ''
+    comp   = company_name or row['company_name'] or ''
+    today  = datetime.now().strftime('%b %d, %Y')
+
+    # Priority 1: PDF stored in DB — stamp watermark if batch context
     if row['invoice_pdf']:
-        return send_file(io.BytesIO(bytes(row['invoice_pdf'])),
-                         mimetype='application/pdf',
-                         download_name=f'invoice-{tid[:8]}.pdf')
-    # Priority 2: Google Drive / HTTP link
+        pdf_bytes = bytes(row['invoice_pdf'])
+        if batch:
+            try:
+                from ..watermark import stamp_pdf
+                pdf_bytes = stamp_pdf(pdf_bytes, batch_id=batch,
+                                      company_name=comp, print_date=today)
+            except Exception:
+                pass  # serve unstamped if watermark fails
+        fname = f"invoice-{row['order_number'] or tid[:8]}.pdf"
+        return send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf',
+                         download_name=fname)
+
+    # Priority 2: Google Drive / HTTP link (can't stamp, just redirect)
     path = row['invoice_file_path'] or ''
     if path.startswith('http'):
         return redir(path)
-    # Priority 3: Local file still exists
+
+    # Priority 3: Local file
     if path and os.path.exists(path):
         return send_file(path, mimetype='application/pdf')
-    # Nothing available
-    from flask import make_response
-    return make_response("<h2>Invoice PDF unavailable</h2><p>This invoice was submitted before PDF storage was enabled. Re-upload the invoice to attach the PDF.</p><a href='javascript:history.back()'>← Go back</a>", 404)
+
+    return make_response(
+        "<h2>Invoice PDF unavailable</h2><p>This invoice was submitted before PDF "
+        "storage was enabled.</p><a href='javascript:history.back()'>← Go back</a>", 404)
 
 
 @admin_bp.route('/payroll/export')
