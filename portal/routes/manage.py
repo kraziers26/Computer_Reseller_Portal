@@ -215,7 +215,8 @@ def edit_card(card_id):
 
             cur.execute("""
                 UPDATE dim_cards SET card_name=%s, card_brand=%s, user_id=%s,
-                    company_id=%s, credit_limit=%s, cashback_rate=%s, is_active=%s
+                    company_id=%s, credit_limit=%s, cashback_rate=%s, is_active=%s,
+                    updated_at=NOW()
                 WHERE card_id=%s
             """, (card_name, card_brand, user_id, company_id,
                   credit_limit, cashback_rate, is_active, card_id))
@@ -250,8 +251,8 @@ def new_card():
     with db_cursor() as (cur, conn):
         cur.execute("""
             INSERT INTO dim_cards (card_id, card_name, card_brand, user_id, company_id,
-                credit_limit, cashback_rate)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
+                credit_limit, cashback_rate, created_at, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
             ON CONFLICT (card_id) DO NOTHING
         """, (card_id, card_name, card_brand, user_id, company_id, credit_limit, cashback_rate))
 
