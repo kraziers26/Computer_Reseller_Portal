@@ -14,27 +14,35 @@ def index():
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
+    from ..security import check_login_lockout, record_failed_login, record_successful_login
     if current_user.is_authenticated:
-        return redirect(url_for('auth.index'))
+        if current_user.portal_role == 'admin':
+            return redirect(url_for('admin.dashboard'))
+        return redirect(url_for('upload.upload'))
 
     if request.method == 'POST':
-        email    = request.form.get('email', '').strip()
+        email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
 
-        if not email or not password:
-            flash('Email and password are required.', 'error')
+        # Check lockout
+        locked, mins_left = check_login_lockout(email)
+        if locked:
+            flash(f'Too many failed attempts. Try again in {mins_left} minute(s).', 'error')
             return render_template('login.html')
 
-        if User.check_password(email, password):
-            user = User.get_by_email(email)
-            if user:
-                login_user(user, remember=True)
-                User.record_login(user.id)
-                if user.is_admin:
-                    return redirect(url_for('admin.dashboard'))
-                return redirect(url_for('upload.upload'))
+        user = User.get_by_email(email)
+        if user and user.check_password(password):
+            login_user(user)
+            record_successful_login(email)
+            if user.portal_role == 'admin':
+                return redirect(url_for('admin.dashboard'))
+            return redirect(url_for('upload.upload'))
+
+        record_failed_login(email)
+        locked, mins_left = check_login_lockout(email)
+        if locked:
+            flash(f'Too many failed attempts. Account locked for {mins_left} minute(s).', 'error')
         else:
-            User.record_failed_login(email)
             flash('Invalid email or password.', 'error')
 
     return render_template('login.html')
