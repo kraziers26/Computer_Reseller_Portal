@@ -1,6 +1,6 @@
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-from flask_login import login_required
+from flask_login import login_required, current_user
 from ..auth_utils import require_role
 from ..db import db_cursor
 
