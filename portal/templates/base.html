@@ -202,13 +202,13 @@ select option{background:var(--surface2)}
         Users
       </a>
       <a href="{{ url_for('manage.cards') }}" class="{{ 'active' if 'manage.cards' in request.endpoint }}"
-         style="{{ 'color:#fbbf24' if incomplete_cards > 0 else '' }}">
+         style="{{ 'color:#fbbf24' if incomplete_cards|default(0) > 0 else '' }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             style="{{ 'stroke:#fbbf24' if incomplete_cards > 0 else '' }}">
+             style="{{ 'stroke:#fbbf24' if incomplete_cards|default(0) > 0 else '' }}">
           <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
         </svg>
         Cards
-        {% if incomplete_cards > 0 %}
+        {% if incomplete_cards|default(0) > 0 %}
         <span style="margin-left:auto;background:#fbbf24;color:#1a1d27;font-size:10px;
                      font-weight:700;padding:1px 6px;border-radius:10px;line-height:1.6">
           {{ incomplete_cards }}
