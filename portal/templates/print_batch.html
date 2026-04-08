@@ -33,6 +33,27 @@
   {% endif %}
 </div>
 
+<!-- Filters -->
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 flex-wrap items-center">
+    <select name="retailer" style="width:130px" onchange="this.form.submit()">
+      <option value="">All retailers</option>
+      {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
+    </select>
+    <select name="person_by" style="width:140px" onchange="this.form.submit()">
+      <option value="">All persons</option>
+      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
+    </select>
+    <select name="company" style="width:150px" onchange="this.form.submit()">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+    </select>
+    {% if filters.retailer or filters.person_by or filters.company %}
+    <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
 <!-- Create New Batch -->
 <form method="POST">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
