@@ -71,7 +71,7 @@
             {% if r.invoice_file_path and r.invoice_file_path.startswith('http') %}
               <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 Open</a>
             {% elif r.has_pdf %}
-              <a href="{{ url_for('admin.print_invoice', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨 Print</a>
+              <a href="{{ url_for('admin.print_invoice', tid=r.transaction_id, batch_id=request.form.get('batch_id',''), company=r.company_name or '') }}" target="_blank" class="btn btn-ghost btn-sm">🖨 Print</a>
             {% else %}
               <span style="color:var(--hint);font-size:12px">No PDF</span>
             {% endif %}
