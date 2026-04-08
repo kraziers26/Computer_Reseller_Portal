@@ -12,6 +12,62 @@
 </div>
 {% endif %}
 
+{% if card_missing %}
+<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;
+            padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:gap">
+  <div>
+    <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:4px">
+      ⚠️ Card {{ invoice.card_last4 }} is not in the system
+    </div>
+    <div style="font-size:12px;color:var(--muted)">
+      This card will be auto-created as "Unknown Card" and flagged for review.
+      Add it properly in <a href="{{ url_for('manage.cards') }}" target="_blank" style="color:var(--accent2)">Manage → Cards</a>
+      or fill in below to add it now.
+    </div>
+  </div>
+  <button type="button" onclick="toggleSection('quick-add-card')"
+          class="btn btn-ghost btn-sm" style="margin-left:16px;white-space:nowrap">+ Add Card</button>
+</div>
+
+<div id="quick-add-card" style="display:none;background:var(--surface2);border:1px solid var(--border);
+     border-radius:8px;padding:16px;margin-bottom:16px">
+  <div style="font-size:13px;font-weight:600;margin-bottom:12px">Quick-add Card {{ invoice.card_last4 }}</div>
+  <form method="POST" action="{{ url_for('manage.new_card') }}" target="_blank">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="card_id" value="{{ invoice.card_last4 }}">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+      <div class="form-group" style="margin-bottom:0">
+        <label>Card Name *</label>
+        <input name="card_name" required placeholder="e.g. Ink Unlimited">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Brand *</label>
+        <input name="card_brand" required placeholder="e.g. Chase">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Cash Back % *</label>
+        <input name="cashback_rate" type="number" step="0.01" required placeholder="1.5">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div class="form-group" style="margin-bottom:0">
+        <label>Company *</label>
+        <select name="company_id" required>
+          <option value="">Select...</option>
+          {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Credit Limit</label>
+        <input name="credit_limit" type="number" placeholder="25000">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">Add Card & Continue</button>
+    <span style="font-size:11px;color:var(--muted);margin-left:8px">Opens in new tab — then submit your invoice below</span>
+  </form>
+</div>
+{% endif %}
+
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
 
   <form method="POST" id="confirmForm">
