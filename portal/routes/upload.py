@@ -128,7 +128,7 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
 
 @upload_bp.route('/upload', methods=['GET', 'POST'])
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def upload():
     # Check for active batch draft
     active_draft = None
@@ -200,7 +200,7 @@ def upload():
 
 @upload_bp.route('/upload/preview-pdf')
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def serve_pdf():
     if 'pending_invoice' not in session:
         return 'No pending invoice', 404
@@ -213,7 +213,7 @@ def serve_pdf():
 
 @upload_bp.route('/upload/confirm', methods=['GET', 'POST'])
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def confirm():
     if 'pending_invoice' not in session:
         return redirect(url_for('upload.upload'))
@@ -261,7 +261,7 @@ def confirm():
 
 @upload_bp.route('/upload/batch', methods=['GET', 'POST'])
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def batch_upload():
     # Check for existing active draft
     with db_cursor() as (cur, _):
@@ -329,7 +329,7 @@ def batch_upload():
 
 @upload_bp.route('/upload/batch/<draft_id>')
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def batch_review(draft_id):
     with db_cursor() as (cur, _):
         cur.execute("""
@@ -358,7 +358,7 @@ def batch_review(draft_id):
 
 @upload_bp.route('/upload/batch/<draft_id>/item/<item_id>', methods=['GET', 'POST'])
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def batch_item_confirm(draft_id, item_id):
     with db_cursor() as (cur, _):
         cur.execute("SELECT * FROM batch_drafts WHERE draft_id=%s AND user_id=%s",
@@ -451,7 +451,7 @@ def batch_item_confirm(draft_id, item_id):
 
 @upload_bp.route('/upload/batch/<draft_id>/preview/<item_id>')
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def batch_item_pdf(draft_id, item_id):
     import io
     with db_cursor() as (cur, _):
@@ -468,7 +468,7 @@ def batch_item_pdf(draft_id, item_id):
 
 @upload_bp.route('/upload/batch/<draft_id>/summary')
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def batch_summary(draft_id):
     with db_cursor() as (cur, _):
         cur.execute("SELECT * FROM batch_drafts WHERE draft_id=%s AND user_id=%s",
@@ -486,7 +486,7 @@ def batch_summary(draft_id):
 
 @upload_bp.route('/upload/batch/<draft_id>/discard', methods=['POST'])
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def batch_discard(draft_id):
     with db_cursor() as (cur, conn):
         cur.execute("""
@@ -501,7 +501,7 @@ def batch_discard(draft_id):
 
 @upload_bp.route('/upload/manual', methods=['GET', 'POST'])
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def manual_upload():
     with db_cursor() as (cur, _):
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
@@ -557,7 +557,7 @@ def manual_upload():
 
 @upload_bp.route('/submissions/mine')
 @login_required
-@require_role('submitter')
+@require_role('contributor')
 def my_submissions():
     page     = request.args.get('page', 1, type=int)
     per_page = 20
@@ -570,8 +570,10 @@ def my_submissions():
     f_notes    = request.args.get('notes', '')
     f_order    = request.args.get('order_number', '')
 
-    conditions = ["t.submitted_by_email = %s"]
-    params = [current_user.email]
+    # Filter by Person By (user_id) — shows all invoices belonging to this person
+    # regardless of who submitted them
+    conditions = ["t.user_id = %s", "t.is_active = TRUE"]
+    params = [current_user.id]
     if f_retailer: conditions.append("t.retailer=%s"); params.append(f_retailer)
     if f_company:  conditions.append("t.company_id=%s"); params.append(f_company)
     if f_type:     conditions.append("t.order_type=%s"); params.append(f_type)
@@ -588,10 +590,12 @@ def my_submissions():
                    t.review_status, t.submitted_at, c.company_name,
                    t.card_id, t.is_duplicate, u.username AS person_name,
                    t.notes, t.invoice_file_path,
-                   (t.invoice_pdf IS NOT NULL) AS has_pdf
+                   (t.invoice_pdf IS NOT NULL) AS has_pdf,
+                   sub.username AS submitted_by_name
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id=c.company_id
             LEFT JOIN dim_users u     ON t.user_id=u.user_id
+            LEFT JOIN dim_users sub   ON t.submitted_by_email=sub.email
             {where}
             ORDER BY t.submitted_at DESC LIMIT %s OFFSET %s
         """, params + [per_page, offset])
@@ -600,8 +604,8 @@ def my_submissions():
         cur.execute(f"SELECT COUNT(*) AS n FROM transactions t {where}", params)
         total = cur.fetchone()['n']
 
-        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE submitted_by_email=%s ORDER BY retailer",
-                    (current_user.email,))
+        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE user_id=%s ORDER BY retailer",
+                    (current_user.id,))
         retailers = [r['retailer'] for r in cur.fetchall()]
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
         companies = cur.fetchall()
@@ -612,3 +616,66 @@ def my_submissions():
                            filters={'retailer':f_retailer,'company':f_company,
                                     'order_type':f_type,'status':f_status,
                                     'notes':f_notes,'order_number':f_order})
+
+
+@upload_bp.route('/my-payroll')
+@login_required
+@require_role('contributor')
+def my_payroll():
+    f_month   = request.args.get('month', '')
+    f_company = request.args.get('company', type=int)
+
+    conditions = ["t.user_id = %s", "t.is_active = TRUE",
+                  "t.review_status != 'Flagged'", "t.is_duplicate = FALSE",
+                  "t.price_total > 0"]
+    params = [current_user.id]
+    if f_month:
+        conditions.append("t.purchase_year_month = %s"); params.append(f_month)
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT
+                t.purchase_year_month,
+                c.company_name,
+                COUNT(t.transaction_id)                                         AS order_count,
+                ROUND(SUM(t.price_total)::numeric, 2)                           AS total_purchases,
+                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric, 2)         AS gross_paid,
+                ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric, 2)           AS net_paid,
+                ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS tax_withheld
+            FROM transactions t
+            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            {where}
+            GROUP BY t.purchase_year_month, c.company_name
+            ORDER BY t.purchase_year_month DESC, c.company_name
+        """, params)
+        rows = cur.fetchall()
+
+        # Totals
+        cur.execute(f"""
+            SELECT
+                ROUND(SUM(t.price_total)::numeric,2)                            AS total_gmv,
+                COUNT(t.transaction_id)                                         AS total_orders,
+                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2)          AS total_gross,
+                ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)            AS total_net,
+                ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS total_tax
+            FROM transactions t {where}
+        """, params)
+        totals = cur.fetchone()
+
+        cur.execute("""
+            SELECT DISTINCT purchase_year_month FROM transactions
+            WHERE user_id=%s AND price_total>0 AND is_active=TRUE
+            ORDER BY purchase_year_month DESC
+        """, (current_user.id,))
+        months = [r['purchase_year_month'] for r in cur.fetchall()]
+
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
+        companies = cur.fetchall()
+
+    return render_template('my_payroll.html', rows=rows, totals=totals,
+                           months=months, companies=companies,
+                           selected_month=f_month, selected_company=f_company)
