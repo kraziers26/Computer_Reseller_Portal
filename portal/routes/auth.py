@@ -487,3 +487,22 @@ def setup_audit_log():
         return "<h1>✅ All tables created!</h1><p>audit_log, password_reset_tokens, membership_number column. <b>Remove this route now.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+
+@auth_bp.route('/setup-contributor-role-igamer-2024')
+def setup_contributor_role():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE dim_users DROP CONSTRAINT IF EXISTS dim_users_portal_role_check")
+            cur.execute("""
+                ALTER TABLE dim_users ADD CONSTRAINT dim_users_portal_role_check
+                CHECK (portal_role IN ('none','contributor','admin'))
+            """)
+            cur.execute("UPDATE dim_users SET portal_role='contributor' WHERE portal_role='submitter'")
+            cur.execute("SELECT portal_role, COUNT(*) AS n FROM dim_users GROUP BY portal_role")
+            rows = cur.fetchall()
+        result = ', '.join(f"{r['portal_role']}: {r['n']}" for r in rows)
+        return f"<h1>✅ Roles updated!</h1><p>{result}</p><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
