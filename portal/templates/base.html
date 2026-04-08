@@ -161,6 +161,12 @@ select option{background:var(--surface2)}
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
         My Payroll
       </a>
+      {% if current_user.portal_role == 'contributor' %}
+      <a href="{{ url_for('manage.cards') }}" class="{{ 'active' if 'manage.cards' in request.endpoint }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        My Cards
+      </a>
+      {% endif %}
       {% endif %}
       {% if current_user.is_admin %}
       <div class="nav-section">Dashboard</div>
@@ -195,9 +201,19 @@ select option{background:var(--surface2)}
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
         Users
       </a>
-      <a href="{{ url_for('manage.cards') }}" class="{{ 'active' if 'manage.cards' in request.endpoint }}">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+      <a href="{{ url_for('manage.cards') }}" class="{{ 'active' if 'manage.cards' in request.endpoint }}"
+         style="{{ 'color:#fbbf24' if incomplete_cards > 0 else '' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             style="{{ 'stroke:#fbbf24' if incomplete_cards > 0 else '' }}">
+          <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+        </svg>
         Cards
+        {% if incomplete_cards > 0 %}
+        <span style="margin-left:auto;background:#fbbf24;color:#1a1d27;font-size:10px;
+                     font-weight:700;padding:1px 6px;border-radius:10px;line-height:1.6">
+          {{ incomplete_cards }}
+        </span>
+        {% endif %}
       </a>
       <a href="{{ url_for('manage.companies') }}" class="{{ 'active' if 'manage.companies' in request.endpoint }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
