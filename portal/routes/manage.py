@@ -141,33 +141,57 @@ def _cards_incomplete_count(cur):
 @login_required
 @require_role('contributor')
 def cards():
+    f_card_id  = request.args.get('card_id', '').strip()
+    f_name     = request.args.get('card_name', '').strip()
+    f_brand    = request.args.get('card_brand', '').strip()
+    f_holder   = request.args.get('cardholder', type=int)
+    f_company  = request.args.get('company', type=int)
+    f_active   = request.args.get('active', '')
+
+    conditions = []
+    params = []
+
+    if current_user.portal_role != 'admin':
+        conditions.append("d.user_id = %s"); params.append(current_user.id)
+    if f_card_id:
+        conditions.append("d.card_id ILIKE %s"); params.append(f'%{f_card_id}%')
+    if f_name:
+        conditions.append("d.card_name ILIKE %s"); params.append(f'%{f_name}%')
+    if f_brand:
+        conditions.append("d.card_brand ILIKE %s"); params.append(f'%{f_brand}%')
+    if f_holder:
+        conditions.append("d.user_id = %s"); params.append(f_holder)
+    if f_company:
+        conditions.append("d.company_id = %s"); params.append(f_company)
+    if f_active == 'active':
+        conditions.append("d.is_active = TRUE")
+    elif f_active == 'inactive':
+        conditions.append("d.is_active = FALSE")
+
+    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
     with db_cursor() as (cur, _):
-        if current_user.portal_role == 'admin':
-            cur.execute("""
-                SELECT d.*, u.username AS cardholder_name, c.company_name
-                FROM dim_cards d
-                LEFT JOIN dim_users u     ON d.user_id    = u.user_id
-                LEFT JOIN dim_companies c ON d.company_id = c.company_id
-                ORDER BY d.is_active DESC, c.company_name, d.card_id
-            """)
-        else:
-            cur.execute("""
-                SELECT d.*, u.username AS cardholder_name, c.company_name
-                FROM dim_cards d
-                LEFT JOIN dim_users u     ON d.user_id    = u.user_id
-                LEFT JOIN dim_companies c ON d.company_id = c.company_id
-                WHERE d.user_id = %s
-                ORDER BY d.is_active DESC, c.company_name, d.card_id
-            """, (current_user.id,))
+        cur.execute(f"""
+            SELECT d.*, u.username AS cardholder_name, c.company_name
+            FROM dim_cards d
+            LEFT JOIN dim_users u     ON d.user_id    = u.user_id
+            LEFT JOIN dim_companies c ON d.company_id = c.company_id
+            {where}
+            ORDER BY d.is_active DESC, c.company_name, d.card_id
+        """, params)
         cards = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
         companies = cur.fetchall()
         incomplete_count = _cards_incomplete_count(cur) if current_user.portal_role == 'admin' else 0
+
     return render_template('manage/cards.html', cards=cards, users=users,
                            companies=companies, incomplete_count=incomplete_count,
-                           is_admin=current_user.portal_role == 'admin')
+                           is_admin=current_user.portal_role == 'admin',
+                           filters={'card_id':f_card_id,'card_name':f_name,
+                                    'card_brand':f_brand,'cardholder':f_holder,
+                                    'company':f_company,'active':f_active})
 
 
 @manage_bp.route('/cards/<string:card_id>', methods=['POST'])
