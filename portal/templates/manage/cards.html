@@ -14,6 +14,55 @@
   {% endif %}
 </div>
 
+<div class="card" style="margin-bottom:16px">
+  <form method="GET">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;align-items:end">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Last 4</div>
+        <input type="text" name="card_id" value="{{ filters.card_id if filters else '' }}"
+               placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Name</div>
+        <input type="text" name="card_name" value="{{ filters.card_name if filters else '' }}"
+               placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Brand</div>
+        <input type="text" name="card_brand" value="{{ filters.card_brand if filters else '' }}"
+               placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Cardholder</div>
+        <select name="cardholder" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters and filters.cardholder==u.user_id }}>{{ u.username }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+        <select name="company" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters and filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Active</div>
+        <select name="active" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          <option value="active" {{ 'selected' if filters and filters.active=='active' }}>Active only</option>
+          <option value="inactive" {{ 'selected' if filters and filters.active=='inactive' }}>Inactive only</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:flex-end;padding-bottom:2px">
+        {% if filters and (filters.card_id or filters.card_name or filters.card_brand or filters.cardholder or filters.company or filters.active) %}
+        <a href="{{ url_for('manage.cards') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+</div>
+
 <div class="card">
   <div class="table-wrap"><table>
     <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
