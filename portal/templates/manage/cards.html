@@ -1,35 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Manage Cards — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}Cards — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
   <div>
     <h1>{% if is_admin %}Cards{% else %}My Cards{% endif %}</h1>
     <p>{{ cards|length }} card{{ 's' if cards|length != 1 else '' }} on file</p>
   </div>
-  {% if incomplete_count > 0 %}
-  <a href="#incomplete" class="btn btn-sm"
+  {% if is_admin and incomplete_count > 0 %}
+  <a href="#first-incomplete" class="btn btn-sm"
      style="background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);color:#fbbf24;font-weight:600">
     ⚠️ {{ incomplete_count }} card{{ 's' if incomplete_count != 1 else '' }} need{{ '' if incomplete_count != 1 else 's' }} attention
   </a>
   {% endif %}
 </div>
+
 <div class="card">
-  <div><table>
-    <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th><th></th></tr></thead>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
     <tbody>
-    {% set is_incomplete = c.is_active and (
-        c.card_name == 'Unknown Card' or c.card_brand == 'Unknown' or
-        not c.card_name or not c.card_brand or not c.user_id or
-        not c.credit_limit or c.credit_limit == 0
-    ) %}
+    {% set first_incomplete_shown = namespace(v=false) %}
     {% for c in cards %}
     {% set is_incomplete = c.is_active and (
         c.card_name == 'Unknown Card' or c.card_brand == 'Unknown' or
         not c.card_name or not c.card_brand or not c.user_id or
         not c.credit_limit or c.credit_limit == 0
     ) %}
-    <tr id="{{ 'incomplete' if loop.first and incomplete_count > 0 else '' }}"
+    <tr id="{{ 'first-incomplete' if is_incomplete and not first_incomplete_shown.v else '' }}"
         style="{{ 'opacity:.5' if not c.is_active else 'background:rgba(251,191,36,.05);border-left:3px solid #fbbf24' if is_incomplete else '' }}">
+      {% if is_incomplete %}{% set first_incomplete_shown.v = true %}{% endif %}
       <td class="mono">{{ c.card_id }}</td>
       <td>{{ c.card_name }}</td>
       <td>{{ c.card_brand }}</td>
@@ -38,12 +36,21 @@
       <td class="mono">${{ "{:,.0f}".format(c.credit_limit or 0) }}</td>
       <td><span class="badge badge-accent">{{ "{:.1%}".format(c.cashback_rate) }}</span></td>
       <td>{% if c.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
-      <td>{% if is_admin %}<button onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='block'" class="btn btn-ghost btn-sm" {% if is_incomplete %}style="background:rgba(251,191,36,.2);border-color:#fbbf24;color:#fbbf24"{% endif %}>{% if is_incomplete %}⚠️ {% endif %}Edit</button>{% endif %}</td>
+      {% if is_admin %}
+      <td>
+        <button onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='block'"
+                class="btn btn-ghost btn-sm"
+                {% if is_incomplete %}style="background:rgba(251,191,36,.2);border-color:#fbbf24;color:#fbbf24"{% endif %}>
+          {% if is_incomplete %}⚠️ {% endif %}Edit
+        </button>
+      </td>
+      {% endif %}
     </tr>
+    {% if is_admin %}
     <tr id="edit-card-{{ c.card_id }}" style="display:none;background:var(--surface2)">
       <td colspan="9" style="padding:16px">
         <form method="POST" action="{{ url_for('manage.edit_card', card_id=c.card_id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="update">
           <div class="form-row-3">
             <div class="form-group"><label>Card Name</label><input name="card_name" value="{{ c.card_name }}"></div>
@@ -73,6 +80,7 @@
         </form>
       </td>
     </tr>
+    {% endif %}
     {% endfor %}
     </tbody>
   </table></div>
@@ -82,7 +90,7 @@
 <div class="card mt-16">
   <div class="card-title">Add new card</div>
   <form method="POST" action="{{ url_for('manage.new_card') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-row">
       <div class="form-group"><label>Last 4 digits *</label><input name="card_id" maxlength="4" required placeholder="e.g. 1234"></div>
       <div class="form-group"><label>Card name *</label><input name="card_name" required placeholder="Ink Unlimited"></div>
