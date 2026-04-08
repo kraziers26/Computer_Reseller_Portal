@@ -521,3 +521,13 @@ def setup_contributor_role():
         return f"<h1>✅ Roles updated!</h1><p>{result}</p><p><b>Remove this route now.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-cards-dates-igamer-2024')
+def setup_cards_dates():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE dim_cards ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+        return "<h1>✅ updated_at column added to dim_cards!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
