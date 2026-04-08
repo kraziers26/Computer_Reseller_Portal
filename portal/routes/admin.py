@@ -117,6 +117,7 @@ def all_submissions():
     f_submitter  = request.args.get('submitter', type=int)
     f_card       = request.args.get('card', '')
     f_person     = request.args.get('person_by', type=int)
+    f_order      = request.args.get('order_number', '')
 
     conditions = ["t.is_active = TRUE"]
     params = []
@@ -136,6 +137,8 @@ def all_submissions():
         conditions.append("t.card_id = %s"); params.append(f_card)
     if f_person:
         conditions.append("t.user_id = %s"); params.append(f_person)
+    if f_order:
+        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -191,7 +194,7 @@ def all_submissions():
                            retailers=retailers, companies=companies, users=users, cards=cards, months=months,
                            filters={'retailer':f_retailer,'company':f_company,'status':f_status,
                                     'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
-                                    'card':f_card,'person_by':f_person})
+                                    'card':f_card,'person_by':f_person,'order_number':f_order})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
@@ -439,8 +442,19 @@ def print_batch():
                 """, (batch_id, txn_ids))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
 
+    f_retailer = request.args.get('retailer', '')
+    f_person   = request.args.get('person_by', type=int)
+    f_company  = request.args.get('company', type=int)
+
+    conditions = ["t.print_date IS NULL", "t.review_status != 'Flagged'", "t.is_active=TRUE"]
+    params = []
+    if f_retailer: conditions.append("t.retailer=%s"); params.append(f_retailer)
+    if f_person:   conditions.append("t.user_id=%s"); params.append(f_person)
+    if f_company:  conditions.append("t.company_id=%s"); params.append(f_company)
+    where = 'WHERE ' + ' AND '.join(conditions)
+
     with db_cursor() as (cur, _):
-        cur.execute("""
+        cur.execute(f"""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.print_date,
                    t.print_batch_id, t.invoice_file_path,
@@ -449,9 +463,9 @@ def print_batch():
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            WHERE t.print_date IS NULL AND t.review_status != 'Flagged' AND t.is_active=TRUE
+            {where}
             ORDER BY t.submitted_at DESC
-        """)
+        """, params)
         unprinted = cur.fetchall()
         cur.execute("""
             SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS count
@@ -459,8 +473,16 @@ def print_batch():
             GROUP BY print_batch_id ORDER BY batch_date DESC LIMIT 20
         """)
         batches = cur.fetchall()
+        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
+        retailers = [r['retailer'] for r in cur.fetchall()]
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
 
-    return render_template('print_batch.html', unprinted=unprinted, batches=batches)
+    return render_template('print_batch.html', unprinted=unprinted, batches=batches,
+                           retailers=retailers, users=users, companies=companies,
+                           filters={'retailer':f_retailer,'person_by':f_person,'company':f_company})
 
 
 @admin_bp.route('/batch/<batch_id>')
