@@ -9,6 +9,11 @@
   <form method="GET">
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-items:end">
       <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
+        <input type="text" name="order_number" value="{{ filters.order_number }}"
+               placeholder="Search order #..." style="width:100%" oninput="this.form.submit()">
+      </div>
+      <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
         <select name="retailer" style="width:100%" onchange="this.form.submit()">
           <option value="">All retailers</option>
@@ -59,7 +64,7 @@
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0;white-space:nowrap">
           <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Dups only
         </label>
-        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by %}
+        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number %}
         <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
         {% endif %}
       </div>
@@ -68,8 +73,8 @@
 </div>
 
 <div class="card">
-  <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:900px">
+  <div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="background:var(--surface2)">
           <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Order #</th>
