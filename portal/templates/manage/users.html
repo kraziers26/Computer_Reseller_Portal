@@ -35,7 +35,7 @@
           <label>Portal Role *</label>
           <select name="portal_role" required>
             <option value="none">none — Telegram only</option>
-            <option value="submitter">submitter — Can upload invoices</option>
+            <option value="contributor">submitter — Can upload invoices</option>
             <option value="admin">admin — Full access</option>
           </select>
         </div>
@@ -71,7 +71,7 @@
       <td class="mono">{{ u.user_id }}</td>
       <td>{{ u.username }}</td>
       <td style="color:var(--muted);font-size:12px">{{ u.email or '—' }}</td>
-      <td><span class="badge {{ 'badge-accent' if u.portal_role=='admin' else 'badge-info' if u.portal_role=='submitter' else 'badge-muted' }}">{{ u.portal_role }}</span></td>
+      <td><span class="badge {{ 'badge-accent' if u.portal_role=='admin' else 'badge-info' if u.portal_role=='contributor' else 'badge-muted' }}">{{ u.portal_role }}</span></td>
       <td style="font-size:12px;color:var(--muted)">{{ (u.companies or [])|join(', ') or '—' }}</td>
       <td>{% if u.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
       <td class="flex gap-8">
@@ -95,7 +95,7 @@
             <div class="form-group"><label>Telegram ID</label><input name="telegram_id" value="{{ u.telegram_id or '' }}"></div>
             <div class="form-group"><label>Portal Role</label>
               <select name="portal_role">
-                {% for r in ['none','submitter','admin'] %}<option value="{{ r }}" {{ 'selected' if u.portal_role==r }}>{{ r }}</option>{% endfor %}
+                {% for r in ['none','contributor','admin'] %}<option value="{{ r }}" {{ 'selected' if u.portal_role==r }}>{{ r }}</option>{% endfor %}
               </select>
             </div>
           </div>
