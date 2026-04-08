@@ -125,24 +125,49 @@ def new_user():
 
 # ── Cards ─────────────────────────────────────────────────────────────────────
 
+def _cards_incomplete_count(cur):
+    cur.execute("""
+        SELECT COUNT(*) AS n FROM dim_cards
+        WHERE is_active=TRUE AND (
+            card_name='Unknown Card' OR card_brand='Unknown' OR
+            card_name IS NULL OR card_brand IS NULL OR
+            user_id IS NULL OR credit_limit=0 OR credit_limit IS NULL
+        )
+    """)
+    return cur.fetchone()['n']
+
+
 @manage_bp.route('/cards')
 @login_required
-@require_role('admin')
+@require_role('contributor')
 def cards():
     with db_cursor() as (cur, _):
-        cur.execute("""
-            SELECT d.*, u.username AS cardholder_name, c.company_name
-            FROM dim_cards d
-            LEFT JOIN dim_users u     ON d.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON d.company_id = c.company_id
-            ORDER BY d.is_active DESC, c.company_name, d.card_id
-        """)
+        if current_user.portal_role == 'admin':
+            cur.execute("""
+                SELECT d.*, u.username AS cardholder_name, c.company_name
+                FROM dim_cards d
+                LEFT JOIN dim_users u     ON d.user_id    = u.user_id
+                LEFT JOIN dim_companies c ON d.company_id = c.company_id
+                ORDER BY d.is_active DESC, c.company_name, d.card_id
+            """)
+        else:
+            cur.execute("""
+                SELECT d.*, u.username AS cardholder_name, c.company_name
+                FROM dim_cards d
+                LEFT JOIN dim_users u     ON d.user_id    = u.user_id
+                LEFT JOIN dim_companies c ON d.company_id = c.company_id
+                WHERE d.user_id = %s
+                ORDER BY d.is_active DESC, c.company_name, d.card_id
+            """, (current_user.id,))
         cards = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
         companies = cur.fetchall()
-    return render_template('manage/cards.html', cards=cards, users=users, companies=companies)
+        incomplete_count = _cards_incomplete_count(cur) if current_user.portal_role == 'admin' else 0
+    return render_template('manage/cards.html', cards=cards, users=users,
+                           companies=companies, incomplete_count=incomplete_count,
+                           is_admin=current_user.portal_role == 'admin')
 
 
 @manage_bp.route('/cards/<string:card_id>', methods=['POST'])
