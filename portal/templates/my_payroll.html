@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}My Payroll — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header"><h1>My Payroll</h1><p>Your commission summary</p></div>
+
+<!-- KPI cards -->
+<div class="metrics" style="margin-bottom:20px">
+  <div class="metric"><div class="metric-label">Total Orders</div><div class="metric-value">{{ totals.total_orders or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Total Purchases</div><div class="metric-value accent">${{ "{:,.2f}".format(totals.total_gmv or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Gross Paid (1%)</div><div class="metric-value success">${{ "{:,.2f}".format(totals.total_gross or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Net Paid (0.8%)</div><div class="metric-value">${{ "{:,.2f}".format(totals.total_net or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Tax Withheld (0.2%)</div><div class="metric-value warning">${{ "{:,.2f}".format(totals.total_tax or 0) }}</div></div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" class="flex gap-12 items-center flex-wrap">
+    <select name="month" style="width:180px" onchange="this.form.submit()">
+      <option value="">All months</option>
+      {% for m in months %}<option value="{{ m }}" {{ 'selected' if selected_month==m }}>{{ m }}</option>{% endfor %}
+    </select>
+    <select name="company" style="width:160px" onchange="this.form.submit()">
+      <option value="">All companies</option>
+      {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if selected_company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+    </select>
+    {% if selected_month or selected_company %}
+    <a href="{{ url_for('upload.my_payroll') }}" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="background:var(--surface2)">
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Month</th>
+        <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Orders</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total Purchases</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Gross Paid (1%)</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Net Paid (0.8%)</th>
+        <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Tax Withheld (0.2%)</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% set ns = namespace(tp=0,tg=0,tn=0,tt=0) %}
+    {% for r in rows %}
+    {% set ns.tp = ns.tp + (r.total_purchases or 0)|float %}
+    {% set ns.tg = ns.tg + (r.gross_paid or 0)|float %}
+    {% set ns.tn = ns.tn + (r.net_paid or 0)|float %}
+    {% set ns.tt = ns.tt + (r.tax_withheld or 0)|float %}
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px 14px;font-family:var(--mono)">{{ r.purchase_year_month }}</td>
+      <td style="padding:10px 14px">{{ r.company_name or '—' }}</td>
+      <td style="padding:10px 14px;text-align:right">{{ r.order_count }}</td>
+      <td style="padding:10px 14px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.total_purchases or 0) }}</td>
+      <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
+      <td style="padding:10px 14px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
+      <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
+    </tr>
+    {% endfor %}
+    {% if not rows %}
+    <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">No payroll data yet.</td></tr>
+    {% endif %}
+    </tbody>
+    {% if rows %}
+    <tfoot>
+      <tr style="border-top:2px solid var(--border2);font-weight:600;background:var(--surface2)">
+        <td colspan="3" style="padding:10px 14px;color:var(--muted)">Total</td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(ns.tp) }}</td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:#4ade80">${{ "{:,.2f}".format(ns.tg) }}</td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(ns.tn) }}</td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:#fbbf24">${{ "{:,.2f}".format(ns.tt) }}</td>
+      </tr>
+    </tfoot>
+    {% endif %}
+  </table>
+</div>
+{% endblock %}
