@@ -2,14 +2,34 @@
 {% block title %}Manage Cards — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <h1>Cards</h1><p>{{ cards|length }} cards on file</p>
+  <div>
+    <h1>{% if is_admin %}Cards{% else %}My Cards{% endif %}</h1>
+    <p>{{ cards|length }} card{{ 's' if cards|length != 1 else '' }} on file</p>
+  </div>
+  {% if incomplete_count > 0 %}
+  <a href="#incomplete" class="btn btn-sm"
+     style="background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);color:#fbbf24;font-weight:600">
+    ⚠️ {{ incomplete_count }} card{{ 's' if incomplete_count != 1 else '' }} need{{ '' if incomplete_count != 1 else 's' }} attention
+  </a>
+  {% endif %}
 </div>
 <div class="card">
   <div><table>
     <thead><tr><th>Last 4</th><th>Name</th><th>Brand</th><th>Cardholder</th><th>Company</th><th>Limit</th><th>Cash Back</th><th>Active</th><th></th></tr></thead>
     <tbody>
+    {% set is_incomplete = c.is_active and (
+        c.card_name == 'Unknown Card' or c.card_brand == 'Unknown' or
+        not c.card_name or not c.card_brand or not c.user_id or
+        not c.credit_limit or c.credit_limit == 0
+    ) %}
     {% for c in cards %}
-    <tr style="{{ 'opacity:.5' if not c.is_active }}">
+    {% set is_incomplete = c.is_active and (
+        c.card_name == 'Unknown Card' or c.card_brand == 'Unknown' or
+        not c.card_name or not c.card_brand or not c.user_id or
+        not c.credit_limit or c.credit_limit == 0
+    ) %}
+    <tr id="{{ 'incomplete' if loop.first and incomplete_count > 0 else '' }}"
+        style="{{ 'opacity:.5' if not c.is_active else 'background:rgba(251,191,36,.05);border-left:3px solid #fbbf24' if is_incomplete else '' }}">
       <td class="mono">{{ c.card_id }}</td>
       <td>{{ c.card_name }}</td>
       <td>{{ c.card_brand }}</td>
@@ -18,7 +38,7 @@
       <td class="mono">${{ "{:,.0f}".format(c.credit_limit or 0) }}</td>
       <td><span class="badge badge-accent">{{ "{:.1%}".format(c.cashback_rate) }}</span></td>
       <td>{% if c.is_active %}<span class="badge badge-success">Active</span>{% else %}<span class="badge badge-muted">Inactive</span>{% endif %}</td>
-      <td><button onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='block'" class="btn btn-ghost btn-sm">Edit</button></td>
+      <td>{% if is_admin %}<button onclick="document.getElementById('edit-card-{{ c.card_id }}').style.display='block'" class="btn btn-ghost btn-sm" {% if is_incomplete %}style="background:rgba(251,191,36,.2);border-color:#fbbf24;color:#fbbf24"{% endif %}>{% if is_incomplete %}⚠️ {% endif %}Edit</button>{% endif %}</td>
     </tr>
     <tr id="edit-card-{{ c.card_id }}" style="display:none;background:var(--surface2)">
       <td colspan="9" style="padding:16px">
@@ -58,6 +78,7 @@
   </table></div>
 </div>
 
+{% if is_admin %}
 <div class="card mt-16">
   <div class="card-title">Add new card</div>
   <form method="POST" action="{{ url_for('manage.new_card') }}">
@@ -83,3 +104,4 @@
   </form>
 </div>
 {% endblock %}
+{% endif %}
