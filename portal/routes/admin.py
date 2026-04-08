@@ -976,3 +976,85 @@ def export_audit_log():
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     return sf(buf, as_attachment=True, download_name='audit_log.xlsx',
               mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@admin_bp.route('/batch/<batch_id>/print-all', methods=['POST'])
+@login_required
+@require_role('admin')
+def batch_print_all(batch_id):
+    """Merge all selected PDFs in a batch into one combined PDF with watermarks."""
+    from flask import send_file, abort
+    import io
+    from datetime import datetime
+    from pypdf import PdfReader, PdfWriter
+
+    selected_tids = request.form.getlist('tids')
+    if not selected_tids:
+        abort(400)
+
+    today = datetime.now().strftime('%b %d, %Y')
+
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT t.transaction_id, t.order_number, t.invoice_pdf,
+                   t.invoice_file_path, c.company_name
+            FROM transactions t
+            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            WHERE t.transaction_id = ANY(%s::uuid[])
+              AND t.print_batch_id = %s
+            ORDER BY t.purchase_date
+        """, (selected_tids, batch_id))
+        rows = cur.fetchall()
+
+    if not rows:
+        abort(404)
+
+    writer = PdfWriter()
+    included = 0
+
+    for row in rows:
+        pdf_bytes = None
+
+        if row['invoice_pdf']:
+            pdf_bytes = bytes(row['invoice_pdf'])
+        elif row['invoice_file_path'] and not row['invoice_file_path'].startswith('http'):
+            import os
+            if os.path.exists(row['invoice_file_path']):
+                with open(row['invoice_file_path'], 'rb') as f:
+                    pdf_bytes = f.read()
+
+        if not pdf_bytes:
+            continue  # skip Drive links and missing PDFs
+
+        # Stamp watermark on first page of each invoice
+        try:
+            from ..watermark import stamp_pdf
+            company = row['company_name'] or ''
+            pdf_bytes = stamp_pdf(pdf_bytes, batch_id=batch_id,
+                                  company_name=company, print_date=today)
+        except Exception:
+            pass  # use unstamped if watermark fails
+
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            for page in reader.pages:
+                writer.add_page(page)
+            included += 1
+        except Exception:
+            continue
+
+    if included == 0:
+        from flask import make_response
+        return make_response(
+            "<h2>No printable PDFs</h2><p>None of the selected invoices have PDFs stored in the database. "
+            "Historical invoices with Google Drive links cannot be merged — open them individually with 🔗 Open.</p>"
+            "<a href='javascript:history.back()'>← Go back</a>", 404)
+
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+
+    fname = f"batch-{batch_id}-{datetime.now().strftime('%Y%m%d')}.pdf"
+    return send_file(out, mimetype='application/pdf',
+                     as_attachment=False,
+                     download_name=fname)
