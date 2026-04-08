@@ -2,112 +2,101 @@
 {% block title %}Batch {{ batch_id }} — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>Batch: {{ batch_id }}</h1>
-  <p>{{ invoices|length }} invoices · {{ batch_date.strftime('%b %d, %Y') if batch_date else '' }}</p></div>
+  <div>
+    <h1>Batch: {{ batch_id }}</h1>
+    <p>{{ invoices|length }} invoices · {{ batch_date.strftime('%b %d, %Y') if batch_date else '' }}</p>
+  </div>
   <div class="flex gap-8">
-    <button onclick="printSelected()" class="btn btn-primary btn-sm">🖨 Print Selected</button>
+    <button onclick="printCombined()" class="btn btn-primary btn-sm">🖨 Print Combined PDF</button>
     <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">← Back</a>
   </div>
 </div>
 
-<div class="card">
-  <div style="margin-bottom:12px;font-size:13px;color:var(--muted)">
-    Select invoices to print. Each PDF will open with the batch watermark stamped automatically.
-    Use the Pages field to specify pages (e.g. <code>1</code>, <code>1-2</code>, or <code>all</code>).
-  </div>
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
-    <thead>
-      <tr style="background:var(--surface2)">
-        <th style="padding:8px 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">
-          <input type="checkbox" id="selectAll" style="width:auto" checked>
-        </th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Pages</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoice</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for r in invoices %}
-    <tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:8px 12px">
-        <input type="checkbox" class="row-check"
-               data-tid="{{ r.transaction_id }}"
-               data-company="{{ r.company_name or '' }}"
-               data-has-pdf="{{ 'true' if r.has_pdf else 'false' }}"
-               data-drive="{{ r.invoice_file_path if r.invoice_file_path and r.invoice_file_path.startswith('http') else '' }}"
-               style="width:auto" checked>
-      </td>
-      <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ r.order_number[:24] }}</td>
-      <td style="padding:8px 12px">{{ r.retailer }}</td>
-      <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-      <td style="padding:8px 12px">{{ r.person_name or '—' }}</td>
-      <td style="padding:8px 12px;font-size:12px">{{ r.company_name or '—' }}</td>
-      <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-      <td style="padding:8px 12px">
-        <input type="text" class="pages-input" data-tid="{{ r.transaction_id }}"
-               placeholder="all" value="all"
-               style="width:80px;padding:4px 8px;font-size:12px;background:var(--surface2);
-                      border:1px solid var(--border);border-radius:4px;color:var(--text)">
-      </td>
-      <td style="padding:8px 12px">
-        {% if r.has_pdf %}
-          <a href="{{ url_for('admin.print_invoice', tid=r.transaction_id, batch_id=batch_id, company=r.company_name or '') }}"
-             target="_blank" class="btn btn-ghost btn-sm">🖨 Print</a>
-        {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
-          <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 Open</a>
-        {% else %}
-          <span style="color:var(--hint);font-size:12px">No PDF</span>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-    {% if not invoices %}
-    <tr><td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">No invoices in this batch.</td></tr>
-    {% endif %}
-    </tbody>
-  </table>
+<div class="card" style="margin-bottom:12px;padding:12px 16px;font-size:13px;color:var(--muted)">
+  Select invoices to include in the combined PDF. Each invoice will be stamped with the batch watermark.
+  Google Drive invoices (🔗) must be opened individually.
 </div>
 
-<script>
-const BATCH_ID = "{{ batch_id }}";
+<form id="batchPrintForm" method="POST"
+      action="{{ url_for('admin.batch_print_all', batch_id=batch_id) }}"
+      target="_blank">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
+  <div class="card">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:8px 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">
+            <input type="checkbox" id="selectAll" style="width:auto" checked>
+          </th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoice</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in invoices %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px">
+          {% if r.has_pdf %}
+          <input type="checkbox" name="tids" value="{{ r.transaction_id }}"
+                 class="row-check" style="width:auto" checked>
+          {% else %}
+          <input type="checkbox" style="width:auto;opacity:.3" disabled
+                 title="No DB PDF — cannot include in combined print">
+          {% endif %}
+        </td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ r.order_number[:24] }}</td>
+        <td style="padding:8px 12px">{{ r.retailer }}</td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
+        <td style="padding:8px 12px">{{ r.person_name or '—' }}</td>
+        <td style="padding:8px 12px;font-size:12px">{{ r.company_name or '—' }}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td style="padding:8px 12px">
+          {% if r.has_pdf %}
+            <span style="font-size:11px;color:#4ade80">✓ In DB</span>
+          {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
+            <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 Open</a>
+          {% else %}
+            <span style="color:var(--hint);font-size:11px">No PDF</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not invoices %}
+      <tr><td colspan="8" style="padding:32px;text-align:center;color:var(--muted)">No invoices in this batch.</td></tr>
+      {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Hidden submit trigger -->
+  <button type="submit" id="combinedSubmitBtn" style="display:none"></button>
+</form>
+
+<script>
 document.getElementById('selectAll').addEventListener('change', function(){
   document.querySelectorAll('.row-check').forEach(c => c.checked = this.checked);
 });
 
-function printSelected() {
+function printCombined() {
   const checked = [...document.querySelectorAll('.row-check:checked')];
-  if (!checked.length) { alert('Select at least one invoice to print.'); return; }
-
-  let opened = 0;
-  checked.forEach(cb => {
-    const tid     = cb.dataset.tid;
-    const company = encodeURIComponent(cb.dataset.company || '');
-    const hasPdf  = cb.dataset.hasPdf === 'true';
-    const drive   = cb.dataset.drive;
-
-    if (hasPdf) {
-      // Serve from DB with watermark
-      const url = `/print-invoice/${tid}?batch_id=${encodeURIComponent(BATCH_ID)}&company=${company}`;
-      window.open(url, '_blank');
-      opened++;
-    } else if (drive) {
-      // Google Drive link — open directly (can't watermark server-side)
-      window.open(drive, '_blank');
-      opened++;
-    } else {
-      // No PDF available — skip silently
-    }
-  });
-
-  if (opened === 0) {
-    alert('None of the selected invoices have PDFs available yet.\n\nHistorical invoices use Google Drive links — click 🔗 Open on individual rows to access them.');
+  if (!checked.length) {
+    alert('Select at least one invoice with a stored PDF (✓ In DB).');
+    return;
   }
+  const btn = document.querySelector('.btn-primary');
+  btn.textContent = '⏳ Generating PDF...';
+  btn.disabled = true;
+  document.getElementById('combinedSubmitBtn').click();
+  setTimeout(() => {
+    btn.textContent = '🖨 Print Combined PDF';
+    btn.disabled = false;
+  }, 4000);
 }
 </script>
 {% endblock %}
