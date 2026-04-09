@@ -115,21 +115,19 @@ def parse_date(text: str, invoice: AmazonInvoice):
             invoice.purchase_year_month = f"{year}-{month:02d}"
             return
 
-    # English Format A: "Order placed March 5, 2026"
-    m = re.search(r'Order placed\s+(\w+ \d{1,2},\s*\d{4})', text, re.IGNORECASE)
+    # English — handles all variants:
+    # "Order placed March 5, 2026" (Order Summary format)
+    # "Order Placed: February 9, 2026" (Final Details format)
+    # "Order placed\nDecember 19, 2025" (two-column layout)
+    m = re.search(r'Order [Pp]laced:?\s*\n?\s*(\w+ \d{1,2},\s*\d{4})', text, re.IGNORECASE)
     if m:
-        dt = datetime.strptime(m.group(1).strip(), "%B %d, %Y")
-        invoice.purchase_date = dt.strftime("%Y-%m-%d")
-        invoice.purchase_year_month = dt.strftime("%Y-%m")
-        return
-
-    # English Format B: "Order Placed: February 9, 2026"
-    m = re.search(r'Order Placed:\s*(\w+ \d{1,2},\s*\d{4})', text, re.IGNORECASE)
-    if m:
-        dt = datetime.strptime(m.group(1).strip(), "%B %d, %Y")
-        invoice.purchase_date = dt.strftime("%Y-%m-%d")
-        invoice.purchase_year_month = dt.strftime("%Y-%m")
-        return
+        try:
+            dt = datetime.strptime(m.group(1).strip(), "%B %d, %Y")
+            invoice.purchase_date = dt.strftime("%Y-%m-%d")
+            invoice.purchase_year_month = dt.strftime("%Y-%m")
+            return
+        except ValueError:
+            pass
 
     invoice.parse_errors.append("purchase_date not found")
     invoice.needs_review = True
