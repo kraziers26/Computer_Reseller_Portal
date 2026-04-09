@@ -98,8 +98,13 @@
       {% endif %}
       <div class="form-row">
         <div class="form-group">
-          <label>Purchase Date</label>
-          <input type="text" value="{{ invoice.purchase_date or '' }}" readonly style="opacity:.6">
+          <label>Purchase Date *</label>
+          <input type="date" name="purchase_date" value="{{ invoice.purchase_date or '' }}"
+                 required style="{{ 'border-color:#f87171' if not invoice.purchase_date else '' }}"
+                 title="Parser could not detect date — please enter manually">
+          {% if not invoice.purchase_date %}
+          <div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Date not found — please enter manually</div>
+          {% endif %}
         </div>
         <div class="form-group">
           <label>Order Type *</label>
