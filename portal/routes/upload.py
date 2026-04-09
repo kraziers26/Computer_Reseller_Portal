@@ -104,6 +104,14 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
     net_biz      = round((gross_biz or 0)-(net_paid or 0), 2) if gross_biz else None
     needs_review = invoice_data.get('needs_review', False) or not card_last4 or locals().get('needs_review', False)
 
+    # Form value takes priority (user may have corrected it); fall back to parser; default to today
+    from datetime import date as _date
+    purchase_date = (form.get('purchase_date', '').strip()
+                     or invoice_data.get('purchase_date')
+                     or _date.today().isoformat())
+    purchase_year_month = purchase_date[:7] if purchase_date else _date.today().strftime('%Y-%m')
+    retailer = (form.get('retailer', '').strip() or invoice_data.get('retailer', ''))
+
     tid = str(uuid.uuid4())
     with db_cursor() as (cur, conn):
         cur.execute("""
@@ -117,8 +125,8 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
                 membership_number, invoice_pdf, submitted_at
             ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,FALSE,%s,
                       %s,%s,%s,%s,%s,%s,%s,%s,NOW())
-        """, (tid, order_number, invoice_data['retailer'],
-              invoice_data['purchase_date'], invoice_data['purchase_year_month'],
+        """, (tid, order_number, retailer,
+              purchase_date, purchase_year_month,
               form_user_id, company_id, card_last4, price_total,
               invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
               gross_paid, order_type,
