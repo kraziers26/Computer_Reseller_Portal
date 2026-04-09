@@ -20,55 +20,54 @@
 </div>
 
 <div class="card">
-  <div><table>
-    <thead><tr><th>#</th><th>File</th><th>Retailer</th><th>Order #</th><th>Total</th><th>Card</th><th>Status</th><th></th></tr></thead>
-    <tbody>
-    {% for item in items %}
-    <tr style="{{ 'opacity:.5' if item.parse_status in ('submitted','skipped','failed') }}">
-      <td class="mono" style="font-size:12px">{{ item.position + 1 }}</td>
-      <td style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.filename }}</td>
-      <td>
-        {% if item.parse_status == 'parsed' and item.invoice_data %}
-          {{ item.invoice_data.retailer if item.invoice_data is mapping else (item.invoice_data|tojson|fromjson).retailer }}
-        {% else %}—{% endif %}
-      </td>
-      <td class="mono" style="font-size:12px">
-        {% if item.parse_status == 'parsed' and item.invoice_data %}
-          {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
-          {{ inv.get('order_number','—')[:20] if inv else '—' }}
-        {% else %}—{% endif %}
-      </td>
-      <td class="mono">
-        {% if item.parse_status == 'parsed' and item.invoice_data %}
-          {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
-          {% if inv.get('price_total') %} ${{ "%.2f"|format(inv.get('price_total',0)|float) }}{% else %}—{% endif %}
-        {% else %}—{% endif %}
-      </td>
-      <td class="mono" style="font-size:12px">
-        {% if item.parse_status == 'parsed' and item.invoice_data %}
-          {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
-          {{ inv.get('card_last4') or '⚠ missing' }}
-        {% else %}—{% endif %}
-      </td>
-      <td>
-        {% if item.parse_status == 'parsed' %}
-          <span class="badge badge-info">Ready</span>
-        {% elif item.parse_status == 'submitted' %}
-          <span class="badge badge-success">Submitted</span>
-        {% elif item.parse_status == 'skipped' %}
-          <span class="badge badge-muted">Skipped</span>
-        {% elif item.parse_status == 'failed' %}
-          <span class="badge badge-danger">Failed</span>
-        {% endif %}
-      </td>
-      <td>
-        {% if item.parse_status == 'parsed' %}
-        <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=item.item_id) }}" class="btn btn-ghost btn-sm">Review</a>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">#</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">File</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Card</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
+          <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in items %}
+      {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
+      <tr style="border-bottom:1px solid var(--border);{{ 'opacity:.5' if item.parse_status in ('submitted','skipped','failed') else '' }}">
+        <td style="padding:8px 12px;color:var(--muted);font-size:12px">{{ item.position + 1 }}</td>
+        <td style="padding:8px 12px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">{{ item.filename }}</td>
+        <td style="padding:8px 12px">{{ inv.get('retailer', '—') if inv else '—' }}</td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:11px">
+          {% if inv and inv.get('order_number') %}{{ inv.get('order_number')[:20] }}{% else %}—{% endif %}
+        </td>
+        <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">
+          {% if inv and inv.get('price_total') %}${{ "%.2f"|format(inv.get('price_total')|float) }}{% else %}—{% endif %}
+        </td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">
+          {% if inv and inv.get('card_last4') %}{{ inv.get('card_last4') }}{% elif item.parse_status == 'parsed' %}<span style="color:var(--warning);font-size:11px">⚠ missing</span>{% else %}—{% endif %}
+        </td>
+        <td style="padding:8px 12px">
+          {% if item.parse_status == 'parsed' %}<span class="badge badge-info">Ready</span>
+          {% elif item.parse_status == 'submitted' %}<span class="badge badge-success">Submitted</span>
+          {% elif item.parse_status == 'skipped' %}<span class="badge badge-muted">Skipped</span>
+          {% elif item.parse_status == 'failed' %}<span class="badge badge-danger">Failed</span>
+          {% endif %}
+        </td>
+        <td style="padding:8px 12px">
+          {% if item.parse_status == 'parsed' %}
+          <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=item.item_id) }}" class="btn btn-ghost btn-sm">Review</a>
+          {% elif item.parse_status == 'failed' %}
+          <a href="{{ url_for('upload.manual_upload') }}" class="btn btn-ghost btn-sm" style="font-size:11px">Manual</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}
