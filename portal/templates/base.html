@@ -196,7 +196,20 @@ select option{background:var(--surface2)}
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
         Cash Back
       </a>
-      <div class="nav-section">Manage</div>
+      {% set has_manage_alert = incomplete_cards|default(0) > 0 %}
+      <div class="nav-section" onclick="toggleManage()" id="manage-section-hdr"
+           style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;
+                  {{ 'color:#fb923c' if has_manage_alert else '' }}">
+        <span>
+          Manage
+          {% if has_manage_alert %}
+          <span style="background:#fb923c;color:#1a1d27;font-size:9px;font-weight:700;
+                       padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">!</span>
+          {% endif %}
+        </span>
+        <span id="manage-chevron" style="font-size:9px;opacity:.6;transition:transform .2s">▼</span>
+      </div>
+      <div id="manage-links">
       <a href="{{ url_for('manage.users') }}" class="{{ 'active' if 'manage.users' in request.endpoint }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
         Users
@@ -227,6 +240,7 @@ select option{background:var(--surface2)}
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         Audit Log
       </a>
+      </div>
       {% endif %}
     </nav>
     <div class="sidebar-footer">
@@ -240,6 +254,29 @@ select option{background:var(--surface2)}
       <a href="{{ url_for('auth.logout') }}">Sign out</a>
     </div>
   </aside>
+  <script>
+  function toggleManage(){
+    var l=document.getElementById('manage-links');
+    var c=document.getElementById('manage-chevron');
+    if(!l)return;
+    var collapsed=l.style.display==='none';
+    l.style.display=collapsed?'block':'none';
+    if(c)c.style.transform=collapsed?'rotate(0deg)':'rotate(-90deg)';
+    try{localStorage.setItem('igamer_manage_collapsed',collapsed?'0':'1');}catch(e){}
+  }
+  (function(){
+    var l=document.getElementById('manage-links');
+    var c=document.getElementById('manage-chevron');
+    if(!l)return;
+    var onManage=window.location.pathname.indexOf('/manage/')!==-1;
+    var stored;
+    try{stored=localStorage.getItem('igamer_manage_collapsed');}catch(e){}
+    if(!onManage&&stored==='1'){
+      l.style.display='none';
+      if(c)c.style.transform='rotate(-90deg)';
+    }
+  })();
+  </script>
   {% endif %}
   <main class="main">
     {% with messages = get_flashed_messages(with_categories=true) %}
