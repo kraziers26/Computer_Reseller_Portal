@@ -104,16 +104,19 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
     net_biz      = round((gross_biz or 0)-(net_paid or 0), 2) if gross_biz else None
     needs_review = invoice_data.get('needs_review', False) or not card_last4 or locals().get('needs_review', False)
 
-    # Duplicate detection
+    # Duplicate detection - use separate connection to avoid nested cursor issues
     is_return = order_type and 'return' in order_type.lower()
     is_dup = False
     if order_number and not is_return:
-        with db_cursor() as (cur, _):
-            cur.execute(
-                "SELECT transaction_id FROM transactions WHERE order_number=%s AND is_active=TRUE LIMIT 1",
-                (order_number,))
-            if cur.fetchone():
-                is_dup = True
+        try:
+            with db_cursor() as (_dcur, _):
+                _dcur.execute(
+                    "SELECT transaction_id FROM transactions WHERE order_number=%s AND is_active=TRUE LIMIT 1",
+                    (order_number,))
+                if _dcur.fetchone():
+                    is_dup = True
+        except Exception:
+            pass  # never block submission over dup check failure
 
     # Contributor submissions always need admin review
     from flask_login import current_user as _cu
