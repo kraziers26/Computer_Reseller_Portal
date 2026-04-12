@@ -545,3 +545,24 @@ def setup_receiving():
         return "<h1>✅ skip_print column + review_status constraint updated!</h1><p><b>Remove this route.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-pending-view-igamer-2024')
+def setup_pending_view():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_pending_review AS
+                SELECT t.transaction_id, t.submitted_at, t.retailer, t.order_number,
+                       t.purchase_date, u.username AS submitted_by, c.company_name,
+                       t.price_total, t.card_id, t.review_status, t.is_duplicate
+                FROM transactions t
+                LEFT JOIN dim_users u     ON t.user_id    = u.user_id
+                LEFT JOIN dim_companies c ON t.company_id = c.company_id
+                WHERE t.review_status IN ('Pending','Flagged','Needs Review','Duplicate')
+                   OR t.is_duplicate = TRUE
+                ORDER BY t.submitted_at DESC
+            """)
+        return "<h1>✅ v_pending_review updated!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
