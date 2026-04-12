@@ -183,6 +183,10 @@ select option{background:var(--surface2)}
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
         Print Batches
       </a>
+      <a href="{{ url_for('admin.batch_history') }}" class="{{ 'active' if request.endpoint == 'admin.batch_history' }}" style="padding-left:32px;font-size:12px">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Batch History
+      </a>
       <div class="nav-section">Financials</div>
       <a href="{{ url_for('admin.payroll') }}" class="{{ 'active' if request.endpoint == 'admin.payroll' }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
