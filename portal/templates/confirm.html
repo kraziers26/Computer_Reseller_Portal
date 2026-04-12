@@ -12,6 +12,25 @@
 </div>
 {% endif %}
 
+{% if dup_transaction %}
+<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);border-radius:8px;
+            padding:14px 16px;margin-bottom:16px">
+  <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:6px">
+    ⛔ Duplicate order detected
+  </div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+    Order <strong style="color:var(--text)">{{ invoice.order_number }}</strong>
+    was already submitted by <strong style="color:var(--text)">{{ dup_transaction.person_name or 'someone' }}</strong>
+    on {{ dup_transaction.submitted_at.strftime('%b %d, %Y') if dup_transaction.submitted_at else '—' }}.
+    Submitting again will flag this as a <strong style="color:var(--text)">Duplicate</strong> for admin review.
+  </div>
+  <div style="font-size:12px;color:var(--muted)">
+    If this is a <strong style="color:var(--text)">return</strong>, change Order Type to
+    <em>Return (Full Order)</em> or <em>Return (Partial Order)</em> and the duplicate flag will be lifted.
+  </div>
+</div>
+{% endif %}
+
 {% if card_missing %}
 <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;
             padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:gap">
