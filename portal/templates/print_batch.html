@@ -5,7 +5,9 @@
 
 <!-- Recent Batches -->
 <div class="card" style="margin-bottom:20px">
-  <div class="card-title">Recent batches</div>
+  <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+    Recent batches <a href="{{ url_for('admin.batch_history') }}" style="font-size:12px;font-weight:400;color:var(--accent2)">See all →</a>
+  </div>
   {% if batches %}
   <div><table>
     <thead><tr><th>Batch ID</th><th>Date</th><th>Invoices</th><th></th></tr></thead>
@@ -48,7 +50,14 @@
       <option value="">All companies</option>
       {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
     </select>
-    {% if filters.retailer or filters.person_by or filters.company %}
+    <select name="role" style="width:130px" onchange="this.form.submit()">
+      <option value="">All roles</option>
+      <option value="admin" {{ 'selected' if filters.get('role')=='admin' }}>Admin</option>
+      <option value="contributor" {{ 'selected' if filters.get('role')=='contributor' }}>Contributor</option>
+    </select>
+    <input type="date" name="date_from" value="{{ filters.get('date_from','') }}" style="width:130px" onchange="this.form.submit()" title="From date">
+    <input type="date" name="date_to"   value="{{ filters.get('date_to','') }}"   style="width:130px" onchange="this.form.submit()" title="To date">
+    {% if filters.retailer or filters.person_by or filters.company or filters.get('role') or filters.get('date_from') or filters.get('date_to') %}
     <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">Clear</a>
     {% endif %}
   </form>
@@ -89,6 +98,10 @@
           <td style="padding:8px 12px">{{ r.username or '—' }}</td>
           <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
           <td style="padding:8px 12px">
+            <input type="checkbox" name="skip_tids" value="{{ r.transaction_id }}"
+                   title="Skip for later — move to review pile"
+                   style="width:auto;margin-right:4px"
+                   {{ 'checked' if r.skip_print }}>
             {% if r.invoice_file_path and r.invoice_file_path.startswith('http') %}
               <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 Open</a>
             {% elif r.has_pdf %}
