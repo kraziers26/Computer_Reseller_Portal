@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Batch History — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Batch History</h1><p>All print batches</p></div>
+  <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">← Print Batches</a>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-items:end">
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Batch Name</div>
+      <input type="text" name="batch_id" value="{{ filters.batch_id }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+      <select name="company" style="width:100%" onchange="this.form.submit()">
+        <option value="">All companies</option>
+        {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">From</div>
+      <input type="date" name="date_from" value="{{ filters.date_from }}" style="width:100%" onchange="this.form.submit()">
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">To</div>
+      <input type="date" name="date_to" value="{{ filters.date_to }}" style="width:100%" onchange="this.form.submit()">
+    </div>
+    <div style="display:flex;align-items:flex-end">
+      {% if filters.batch_id or filters.company or filters.date_from or filters.date_to %}
+      <a href="{{ url_for('admin.batch_history') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="background:var(--surface2)">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch ID</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date Created</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Created By</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Companies</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoices</th>
+        <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for b in batches %}
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:9px 12px;font-family:var(--mono);font-size:12px;font-weight:500">{{ b.print_batch_id }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ b.batch_date.strftime('%b %d, %Y') if b.batch_date else '—' }}</td>
+      <td style="padding:9px 12px">{{ b.created_by or '—' }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ b.companies or '—' }}</td>
+      <td style="padding:9px 12px;text-align:right">{{ b.cnt }}</td>
+      <td style="padding:9px 12px">
+        <a href="{{ url_for('admin.batch_detail', batch_id=b.print_batch_id) }}" class="btn btn-ghost btn-sm">View</a>
+      </td>
+    </tr>
+    {% endfor %}
+    {% if not batches %}
+    <tr><td colspan="6" style="padding:32px;text-align:center;color:var(--muted)">No batches found.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
