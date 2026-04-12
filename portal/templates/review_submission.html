@@ -4,7 +4,9 @@
 <div class="page-header page-header-row">
   <div>
     <h1>{{ txn.retailer }} — {{ txn.order_number }}</h1>
-    <p>Submitted by {{ txn.submitter_name or txn.submitted_by_email }} · {{ txn.submitted_at.strftime('%b %d, %Y') if txn.submitted_at else '' }}</p>
+    <p>Submitted by {{ txn.submitter_name or txn.submitted_by_email }}
+       {% if txn.submitter_role == 'contributor' %}<span style="background:rgba(251,146,60,.15);color:#fb923c;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:4px">contributor</span>{% endif %}
+       · {{ txn.submitted_at.strftime('%b %d, %Y at %I:%M %p') if txn.submitted_at else '' }}</p>
   </div>
   <div class="flex gap-8 flex-wrap">
     <form method="POST" style="display:inline">
@@ -78,7 +80,7 @@
     <!-- Edit form -->
     <div class="card" style="grid-column:1/3">
       <div class="card-title">Edit transaction</div>
-      <form method="POST">
+      <form method="POST" action="{{ url_for('admin.review_submission', tid=txn.transaction_id, back=back_url) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-row">
           <div class="form-group"><label>Person By</label>
