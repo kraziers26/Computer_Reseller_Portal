@@ -52,12 +52,21 @@
   <div class="metric"><div class="metric-label">Costco Taxes</div><div class="metric-value danger">${{ "{:,.2f}".format(metrics.total_costco_taxes or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_cashback or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Pending Review</div><div class="metric-value {{ 'warning' if metrics.pending_count else '' }}">{{ metrics.pending_count or 0 }}</div></div>
-  <div class="metric"><div class="metric-label">Duplicates</div><div class="metric-value {{ 'danger' if metrics.dup_count else '' }}">{{ metrics.dup_count or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Duplicates</div>
+    <div class="metric-value {{ 'danger' if metrics.dup_count else '' }}">
+      <a href="{{ url_for('admin.all_submissions', duplicates='1') }}" style="color:inherit;text-decoration:none">{{ metrics.dup_count or 0 }}</a>
+    </div>
+  </div>
+  <div class="metric"><div class="metric-label">Needs Review</div>
+    <div class="metric-value" style="{{ 'color:#fb923c' if metrics.needs_review_count else '' }}">
+      <a href="{{ url_for('admin.all_submissions', status='Needs Review') }}" style="color:inherit;text-decoration:none">{{ metrics.needs_review_count|default(0) }}</a>
+    </div>
+  </div>
 </div>
 
 <div class="card">
   <div class="card-title">Recent submissions</div>
-  <div class="table-wrap">
+  <div>
     <table>
       <thead><tr><th>Order #</th><th>Retailer</th><th>Date</th><th>Submitter</th><th>Person By</th><th>Card</th><th>Company</th><th>Total</th><th>Status</th></tr></thead>
       <tbody>
@@ -75,6 +84,8 @@
           {% if r.review_status == 'Auto-approved' %}<span class="badge badge-success">Approved</span>
           {% elif r.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
           {% elif r.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
+              {% elif r.review_status == 'Needs Review' %}<span style="background:rgba(251,146,60,.15);color:#fb923c;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">Needs Review</span>
+              {% elif r.review_status == 'Duplicate' %}<span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">Duplicate</span>
           {% else %}<span class="badge badge-muted">{{ r.review_status }}</span>{% endif %}
         </td>
       </tr>
