@@ -476,6 +476,7 @@ def print_batch():
 
     f_retailer  = request.args.get('retailer', '')
     f_person    = request.args.get('person_by', type=int)
+    f_submitter = request.args.get('submitter', type=int)
     f_company   = request.args.get('company', type=int)
     f_role      = request.args.get('role', '')
     f_date_from = request.args.get('date_from', '')
@@ -486,6 +487,7 @@ def print_batch():
     params = []
     if f_retailer:  conditions.append("t.retailer=%s"); params.append(f_retailer)
     if f_person:    conditions.append("t.user_id=%s"); params.append(f_person)
+    if f_submitter: conditions.append("sub.user_id=%s"); params.append(f_submitter)
     if f_company:   conditions.append("t.company_id=%s"); params.append(f_company)
     if f_role == 'contributor': conditions.append("sub.portal_role='contributor'")
     elif f_role == 'admin':     conditions.append("sub.portal_role='admin'")
@@ -527,15 +529,17 @@ def print_batch():
     return render_template('print_batch.html', unprinted=unprinted, batches=batches,
                            retailers=retailers, users=users, companies=companies,
                            filters={'retailer':f_retailer,'person_by':f_person,'company':f_company,
-                                    'role':f_role,'date_from':f_date_from,'date_to':f_date_to})
+                                    'submitter':f_submitter,'role':f_role,
+                                    'date_from':f_date_from,'date_to':f_date_to})
 
 
 @admin_bp.route('/batch-history')
 @login_required
 @require_role('admin')
 def batch_history():
-    f_batch    = request.args.get('batch_id', '').strip()
-    f_company  = request.args.get('company', type=int)
+    f_batch     = request.args.get('batch_id', '').strip()
+    f_company   = request.args.get('company', type=int)
+    f_submitter = request.args.get('submitter', type=int)
     f_date_from = request.args.get('date_from', '')
     f_date_to   = request.args.get('date_to', '')
 
@@ -545,6 +549,8 @@ def batch_history():
         conditions.append("t.print_batch_id ILIKE %s"); params.append(f'%{f_batch}%')
     if f_company:
         conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_submitter:
+        conditions.append("u.user_id = %s"); params.append(f_submitter)
     if f_date_from:
         conditions.append("t.print_date::date >= %s"); params.append(f_date_from)
     if f_date_to:
@@ -569,9 +575,13 @@ def batch_history():
         batches = cur.fetchall()
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
         companies = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
 
     return render_template('batch_history.html', batches=batches, companies=companies,
+                           users=users,
                            filters={'batch_id':f_batch,'company':f_company,
+                                    'submitter':f_submitter,
                                     'date_from':f_date_from,'date_to':f_date_to})
 
 
