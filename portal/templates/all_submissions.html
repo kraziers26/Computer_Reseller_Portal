@@ -14,6 +14,14 @@
                placeholder="Search order #..." style="width:100%" oninput="this.form.submit()">
       </div>
       <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Submitter Role</div>
+        <select name="role" style="width:100%" onchange="this.form.submit()">
+          <option value="">All roles</option>
+          <option value="admin" {{ 'selected' if filters.role=='admin' }}>Admin</option>
+          <option value="contributor" {{ 'selected' if filters.role=='contributor' }}>Contributor</option>
+        </select>
+      </div>
+      <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
         <select name="retailer" style="width:100%" onchange="this.form.submit()">
           <option value="">All retailers</option>
@@ -64,7 +72,7 @@
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0;white-space:nowrap">
           <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Dups only
         </label>
-        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number %}
+        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.role %}
         <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
         {% endif %}
       </div>
@@ -116,7 +124,7 @@
           {% elif r.review_status == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:11px;padding:2px 8px;border-radius:20px">Flagged</span>
           {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:20px">{{ r.review_status }}</span>{% endif %}
         </td>
-        <td style="padding:9px 12px"><a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}" class="btn btn-ghost btn-sm">Review</a></td>
+        <td style="padding:9px 12px"><a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}" class="btn btn-ghost btn-sm">Review</a></td>
       </tr>
       {% endfor %}
       {% if not submissions %}
