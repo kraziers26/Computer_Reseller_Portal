@@ -11,16 +11,24 @@ admin_bp = Blueprint('admin', __name__)
 @require_role('admin')
 def dashboard():
     # Filters
-    f_month     = request.args.get('month', '')
-    f_year      = request.args.get('year', '')
-    f_company   = request.args.get('company', type=int)
-    f_retailer  = request.args.get('retailer', '')
-    f_submitter = request.args.get('submitter', type=int)
-    f_person    = request.args.get('person_by', type=int)
-    f_card      = request.args.get('card', '')
+    f_month       = request.args.get('month', '')
+    f_year        = request.args.get('year', '')
+    f_company     = request.args.get('company', type=int)
+    f_retailer    = request.args.get('retailer', '')
+    f_submitter   = request.args.get('submitter', type=int)
+    f_person      = request.args.get('person_by', type=int)
+    f_card        = request.args.get('card', '')
+    f_duplicates  = request.args.get('duplicates', '')
+    f_order       = request.args.get('order_number', '')
+    f_role        = request.args.get('role', '')
+    f_needs_review = request.args.get('needs_review', '')
 
-    conditions = ["t.price_total > 0", "t.is_duplicate = FALSE", "t.is_active = TRUE"]
+    conditions = ["t.price_total > 0", "t.is_active = TRUE"]
     params = []
+    if not f_duplicates:
+        conditions.append("t.is_duplicate = FALSE")
+    else:
+        conditions.append("t.is_duplicate = TRUE")
     if f_month:
         conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
     if f_year:
@@ -35,6 +43,14 @@ def dashboard():
         conditions.append("t.user_id = %s"); params.append(f_person)
     if f_card:
         conditions.append("t.card_id = %s"); params.append(f_card)
+    if f_order:
+        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+    if f_role == 'contributor':
+        conditions.append("sub.portal_role = 'contributor'")
+    elif f_role == 'admin':
+        conditions.append("sub.portal_role = 'admin'")
+    if f_needs_review:
+        conditions.append("t.review_status = 'Needs Review'")
 
     where = 'WHERE ' + ' AND '.join(conditions)
 
@@ -47,18 +63,19 @@ def dashboard():
                 ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)   AS total_net_paid,
                 ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS total_tax,
                 ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2)    AS total_cashback,
-                COUNT(*) FILTER (WHERE t.review_status='Pending')      AS pending_count,
-                COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)            AS dup_count,
+                COUNT(*) FILTER (WHERE t.review_status='Pending')        AS pending_count,
+                COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)              AS dup_count,
+                COUNT(*) FILTER (WHERE t.review_status='Needs Review')   AS needs_review_count,
                 ROUND(SUM(COALESCE(t.costco_taxes_paid,0))::numeric,2) AS total_costco_taxes
             FROM transactions t {where}
         """, params)
         metrics = cur.fetchone()
 
-        # Recent submissions
+        # Recent submissions — join sub for role filter
         cur.execute(f"""
             SELECT t.order_number, t.retailer, t.purchase_date,
                    t.price_total, t.costco_taxes_paid, t.review_status, t.submitted_at,
-                   sub.username AS submitter_name,
+                   t.is_duplicate, sub.username AS submitter_name, sub.portal_role AS submitter_role,
                    per.username AS person_name,
                    c.company_name, t.card_id,
                    d.cashback_rate
@@ -68,7 +85,7 @@ def dashboard():
             LEFT JOIN dim_companies c  ON t.company_id = c.company_id
             LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
             {where}
-            ORDER BY t.submitted_at DESC LIMIT 10
+            ORDER BY t.submitted_at DESC LIMIT 25
         """, params)
         recent = cur.fetchall()
 
@@ -98,7 +115,9 @@ def dashboard():
                            retailers=retailers, companies=companies, users=users, cards=cards, years=years,
                            filters={'month':f_month,'year':f_year,'company':f_company,
                                     'retailer':f_retailer,'submitter':f_submitter,
-                                    'person_by':f_person,'card':f_card})
+                                    'person_by':f_person,'card':f_card,
+                                    'duplicates':f_duplicates,'order_number':f_order,
+                                    'role':f_role,'needs_review':f_needs_review})
 
 
 @admin_bp.route('/submissions/all')
@@ -118,6 +137,7 @@ def all_submissions():
     f_card       = request.args.get('card', '')
     f_person     = request.args.get('person_by', type=int)
     f_order      = request.args.get('order_number', '')
+    f_role       = request.args.get('role', '')
 
     conditions = ["t.is_active = TRUE"]
     params = []
@@ -127,6 +147,10 @@ def all_submissions():
         conditions.append("t.company_id = %s"); params.append(f_company)
     if f_status:
         conditions.append("t.review_status = %s"); params.append(f_status)
+    if f_role == 'contributor':
+        conditions.append("sub.portal_role = 'contributor'")
+    elif f_role == 'admin':
+        conditions.append("sub.portal_role = 'admin'")
     if f_month:
         conditions.append("t.purchase_year_month = %s"); params.append(f_month)
     if f_duplicates:
@@ -194,7 +218,8 @@ def all_submissions():
                            retailers=retailers, companies=companies, users=users, cards=cards, months=months,
                            filters={'retailer':f_retailer,'company':f_company,'status':f_status,
                                     'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
-                                    'card':f_card,'person_by':f_person,'order_number':f_order})
+                                    'card':f_card,'person_by':f_person,'order_number':f_order,
+                                    'role':f_role})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
@@ -434,6 +459,13 @@ def print_batch():
     if request.method == 'POST':
         txn_ids  = request.form.getlist('txn_ids')
         batch_id = request.form.get('batch_id', '').strip()
+        skip_tids = request.form.getlist('skip_tids')
+        if skip_tids:
+            with db_cursor() as (cur, conn):
+                cur.execute(
+                    "UPDATE transactions SET skip_print=TRUE WHERE transaction_id = ANY(%s::uuid[])",
+                    (skip_tids,))
+            flash(f'{len(skip_tids)} invoice(s) moved to review pile.', 'info')
         if txn_ids and batch_id:
             with db_cursor() as (cur, conn):
                 cur.execute("""
@@ -442,15 +474,23 @@ def print_batch():
                 """, (batch_id, txn_ids))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
 
-    f_retailer = request.args.get('retailer', '')
-    f_person   = request.args.get('person_by', type=int)
-    f_company  = request.args.get('company', type=int)
+    f_retailer  = request.args.get('retailer', '')
+    f_person    = request.args.get('person_by', type=int)
+    f_company   = request.args.get('company', type=int)
+    f_role      = request.args.get('role', '')
+    f_date_from = request.args.get('date_from', '')
+    f_date_to   = request.args.get('date_to', '')
 
-    conditions = ["t.print_date IS NULL", "t.review_status != 'Flagged'", "t.is_active=TRUE"]
+    conditions = ["t.print_date IS NULL", "t.review_status != 'Flagged'",
+                  "t.is_active=TRUE", "COALESCE(t.skip_print,FALSE)=FALSE"]
     params = []
-    if f_retailer: conditions.append("t.retailer=%s"); params.append(f_retailer)
-    if f_person:   conditions.append("t.user_id=%s"); params.append(f_person)
-    if f_company:  conditions.append("t.company_id=%s"); params.append(f_company)
+    if f_retailer:  conditions.append("t.retailer=%s"); params.append(f_retailer)
+    if f_person:    conditions.append("t.user_id=%s"); params.append(f_person)
+    if f_company:   conditions.append("t.company_id=%s"); params.append(f_company)
+    if f_role == 'contributor': conditions.append("sub.portal_role='contributor'")
+    elif f_role == 'admin':     conditions.append("sub.portal_role='admin'")
+    if f_date_from: conditions.append("t.purchase_date::date >= %s"); params.append(f_date_from)
+    if f_date_to:   conditions.append("t.purchase_date::date <= %s"); params.append(f_date_to)
     where = 'WHERE ' + ' AND '.join(conditions)
 
     with db_cursor() as (cur, _):
@@ -459,18 +499,22 @@ def print_batch():
                    t.purchase_date, t.price_total, t.print_date,
                    t.print_batch_id, t.invoice_file_path,
                    (t.invoice_pdf IS NOT NULL) AS has_pdf,
-                   u.username, c.company_name
+                   t.skip_print,
+                   u.username, c.company_name,
+                   sub.portal_role AS submitter_role
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN dim_users sub   ON t.submitted_by_email = sub.email
             {where}
             ORDER BY t.submitted_at DESC
         """, params)
         unprinted = cur.fetchall()
         cur.execute("""
-            SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS count
+            SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS cnt,
+                   MIN(submitted_by_email) AS created_by_email
             FROM transactions WHERE print_batch_id IS NOT NULL
-            GROUP BY print_batch_id ORDER BY batch_date DESC LIMIT 20
+            GROUP BY print_batch_id ORDER BY batch_date DESC LIMIT 3
         """)
         batches = cur.fetchall()
         cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
@@ -482,7 +526,53 @@ def print_batch():
 
     return render_template('print_batch.html', unprinted=unprinted, batches=batches,
                            retailers=retailers, users=users, companies=companies,
-                           filters={'retailer':f_retailer,'person_by':f_person,'company':f_company})
+                           filters={'retailer':f_retailer,'person_by':f_person,'company':f_company,
+                                    'role':f_role,'date_from':f_date_from,'date_to':f_date_to})
+
+
+@admin_bp.route('/batch-history')
+@login_required
+@require_role('admin')
+def batch_history():
+    f_batch    = request.args.get('batch_id', '').strip()
+    f_company  = request.args.get('company', type=int)
+    f_date_from = request.args.get('date_from', '')
+    f_date_to   = request.args.get('date_to', '')
+
+    conditions = ["t.print_batch_id IS NOT NULL"]
+    params = []
+    if f_batch:
+        conditions.append("t.print_batch_id ILIKE %s"); params.append(f'%{f_batch}%')
+    if f_company:
+        conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_date_from:
+        conditions.append("t.print_date::date >= %s"); params.append(f_date_from)
+    if f_date_to:
+        conditions.append("t.print_date::date <= %s"); params.append(f_date_to)
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT t.print_batch_id,
+                   MIN(t.print_date)         AS batch_date,
+                   COUNT(*)                  AS cnt,
+                   MIN(u.username)           AS created_by,
+                   STRING_AGG(DISTINCT c.company_name, ', ') AS companies
+            FROM transactions t
+            LEFT JOIN dim_users u     ON t.submitted_by_email = u.email
+            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            {where}
+            GROUP BY t.print_batch_id
+            ORDER BY batch_date DESC
+        """, params)
+        batches = cur.fetchall()
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+
+    return render_template('batch_history.html', batches=batches, companies=companies,
+                           filters={'batch_id':f_batch,'company':f_company,
+                                    'date_from':f_date_from,'date_to':f_date_to})
 
 
 @admin_bp.route('/batch/<batch_id>')
