@@ -104,6 +104,29 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
     net_biz      = round((gross_biz or 0)-(net_paid or 0), 2) if gross_biz else None
     needs_review = invoice_data.get('needs_review', False) or not card_last4 or locals().get('needs_review', False)
 
+    # Duplicate detection
+    is_return = order_type and 'return' in order_type.lower()
+    is_dup = False
+    if order_number and not is_return:
+        with db_cursor() as (cur, _):
+            cur.execute(
+                "SELECT transaction_id FROM transactions WHERE order_number=%s AND is_active=TRUE LIMIT 1",
+                (order_number,))
+            if cur.fetchone():
+                is_dup = True
+
+    # Contributor submissions always need admin review
+    from flask_login import current_user as _cu
+    submitted_by_role = getattr(_cu, 'portal_role', 'admin')
+    if submitted_by_role == 'contributor':
+        review_status = 'Needs Review'
+    elif is_dup:
+        review_status = 'Duplicate'
+    elif needs_review:
+        review_status = 'Pending'
+    else:
+        review_status = 'Auto-approved'
+
     # Form value takes priority (user may have corrected it); fall back to parser; default to today
     from datetime import date as _date
     purchase_date = (form.get('purchase_date', '').strip()
@@ -130,7 +153,7 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
               form_user_id, company_id, card_last4, price_total,
               invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
               gross_paid, order_type,
-              'Pending' if needs_review else 'Auto-approved',
+              review_status,
               current_email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
               notes, invoice_data.get('membership_number'), pdf_bytes))
 
@@ -253,6 +276,16 @@ def confirm():
         if card_last4_parsed:
             cur.execute("SELECT card_id FROM dim_cards WHERE card_id=%s", (card_last4_parsed,))
             card_missing = cur.fetchone() is None
+        order_number_parsed = invoice_data.get('order_number', '')
+        is_return_chk = 'return' in (invoice_data.get('order_type') or '').lower()
+        dup_transaction = None
+        if order_number_parsed and not is_return_chk:
+            cur.execute(
+                "SELECT t.transaction_id, t.submitted_at, u.username AS person_name "
+                "FROM transactions t LEFT JOIN dim_users u ON t.user_id=u.user_id "
+                "WHERE t.order_number=%s AND t.is_active=TRUE LIMIT 1",
+                (order_number_parsed,))
+            dup_transaction = cur.fetchone()
 
     if request.method == 'POST':
         if request.form.get('action') == 'cancel':
