@@ -13,6 +13,13 @@
       <input type="text" name="batch_id" value="{{ filters.batch_id }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
     </div>
     <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Submitter</div>
+      <select name="submitter" style="width:100%" onchange="this.form.submit()">
+        <option value="">All submitters</option>
+        {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.submitter==u.user_id }}>{{ u.username }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
       <select name="company" style="width:100%" onchange="this.form.submit()">
         <option value="">All companies</option>
@@ -28,7 +35,7 @@
       <input type="date" name="date_to" value="{{ filters.date_to }}" style="width:100%" onchange="this.form.submit()">
     </div>
     <div style="display:flex;align-items:flex-end">
-      {% if filters.batch_id or filters.company or filters.date_from or filters.date_to %}
+      {% if filters.batch_id or filters.company or filters.submitter or filters.date_from or filters.date_to %}
       <a href="{{ url_for('admin.batch_history') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
       {% endif %}
     </div>
