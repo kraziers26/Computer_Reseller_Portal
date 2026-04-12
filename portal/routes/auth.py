@@ -531,3 +531,17 @@ def setup_cards_dates():
         return "<h1>✅ updated_at column added to dim_cards!</h1><p><b>Remove this route now.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-receiving-igamer-2024')
+def setup_receiving():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS skip_print BOOLEAN DEFAULT FALSE")
+            cur.execute("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_review_status_check")
+            cur.execute("""ALTER TABLE transactions ADD CONSTRAINT transactions_review_status_check
+                CHECK (review_status IN ('Pending','Auto-approved','Approved','Flagged',
+                                         'Duplicate','Reviewed','Needs Review'))""")
+        return "<h1>✅ skip_print column + review_status constraint updated!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
