@@ -16,7 +16,7 @@
     <tr>
       <td class="mono">{{ b.print_batch_id }}</td>
       <td>{{ b.batch_date.strftime('%b %d, %Y') if b.batch_date else '—' }}</td>
-      <td>{{ b.count }}</td>
+      <td>{{ b.cnt }}</td>
       <td class="flex gap-8">
         <a href="{{ url_for('admin.batch_detail', batch_id=b.print_batch_id) }}" class="btn btn-ghost btn-sm">View / Print</a>
         <form method="POST" action="{{ url_for('admin.unbatch') }}" style="display:inline"
