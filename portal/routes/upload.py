@@ -148,9 +148,11 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
                 review_status, is_duplicate, submitted_by_email,
                 gross_paid_amount, net_paid_amount, gross_business_commission,
                 net_business_commission, sales_payroll_tax_withheld, notes,
-                membership_number, invoice_pdf, submitted_at
+                membership_number, invoice_pdf, submitted_at,
+                fulfillment_status, fulfillment_status_updated_at
             ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,FALSE,%s,
-                      %s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                      %s,%s,%s,%s,%s,%s,%s,%s,NOW(),
+                      'uploaded', NOW())
         """, (tid, order_number, retailer,
               purchase_date, purchase_year_month,
               form_user_id, company_id, card_last4, price_total,
