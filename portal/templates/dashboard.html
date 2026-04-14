@@ -4,7 +4,7 @@
 <div class="page-header page-header-row">
   <div><h1>Dashboard</h1><p>Overview of all orders and financials</p></div>
   {% if pending_total > 0 %}
-  <a href="{{ url_for('admin.all_submissions') }}?status=Pending" class="btn btn-primary btn-sm">{{ pending_total }} pending review</a>
+  <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-primary btn-sm">{{ pending_total }} pending review</a>
   {% endif %}
 </div>
 
@@ -58,8 +58,8 @@
     </div>
   </div>
   <div class="metric"><div class="metric-label">Needs Review</div>
-    <div class="metric-value" style="{{ 'color:#fb923c' if metrics.needs_review_count else '' }}">
-      <a href="{{ url_for('admin.all_submissions', status='Needs Review') }}" style="color:inherit;text-decoration:none">{{ metrics.needs_review_count|default(0) }}</a>
+    <div class="metric-value" style="{{ 'color:#fb923c' if needs_review_count|default(0) > 0 else '' }}">
+      <a href="{{ url_for('admin.all_submissions', status='Needs Review') }}" style="color:inherit;text-decoration:none">{{ needs_review_count|default(0) }}</a>
     </div>
   </div>
 </div>
