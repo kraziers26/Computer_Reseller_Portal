@@ -45,6 +45,8 @@ def dashboard():
         conditions.append("t.card_id = %s"); params.append(f_card)
     if f_order:
         conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+    if f_fulfillment:
+        conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
     if f_role == 'contributor':
         conditions.append("sub.portal_role = 'contributor'")
     elif f_role == 'admin':
@@ -98,6 +100,20 @@ def dashboard():
         cur.execute("SELECT COUNT(*) AS n FROM v_pending_review")
         pending_total = cur.fetchone()['n']
 
+        # Pipeline funnel counts
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE fulfillment_status='uploaded' AND is_active=TRUE
+                                   AND is_duplicate=FALSE)                   AS uploaded,
+                COUNT(*) FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)  AS batched,
+                COUNT(*) FILTER (WHERE fulfillment_status='received' AND is_active=TRUE)  AS received,
+                COUNT(*) FILTER (WHERE fulfillment_status='invoiced' AND is_active=TRUE)  AS invoiced,
+                COUNT(*) FILTER (WHERE review_status='Needs Review'  AND is_active=TRUE)  AS needs_review_total,
+                COUNT(*) FILTER (WHERE review_status='Duplicate'     AND is_active=TRUE)  AS duplicates_total
+            FROM transactions
+        """)
+        pipeline = cur.fetchone()
+
         # Filter options
         cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
         retailers = [r['retailer'] for r in cur.fetchall()]
@@ -119,6 +135,7 @@ def dashboard():
     return render_template('dashboard.html',
                            metrics=metrics, recent=recent, pending_total=pending_total,
                            needs_review_count=needs_review_count,
+                           pipeline=pipeline,
                            retailers=retailers, companies=companies, users=users, cards=cards, years=years,
                            filters={'month':f_month,'year':f_year,'company':f_company,
                                     'retailer':f_retailer,'submitter':f_submitter,
@@ -270,7 +287,8 @@ def all_submissions():
     f_card       = request.args.get('card', '')
     f_person     = request.args.get('person_by', type=int)
     f_order      = request.args.get('order_number', '')
-    f_role       = request.args.get('role', '')
+    f_role        = request.args.get('role', '')
+    f_fulfillment = request.args.get('fulfillment', '')
 
     conditions = ["t.is_active = TRUE"]
     params = []
@@ -296,6 +314,8 @@ def all_submissions():
         conditions.append("t.user_id = %s"); params.append(f_person)
     if f_order:
         conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+    if f_fulfillment:
+        conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -352,7 +372,7 @@ def all_submissions():
                            filters={'retailer':f_retailer,'company':f_company,'status':f_status,
                                     'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
                                     'card':f_card,'person_by':f_person,'order_number':f_order,
-                                    'role':f_role})
+                                    'role':f_role,'fulfillment':f_fulfillment})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
@@ -602,7 +622,8 @@ def print_batch():
         if txn_ids and batch_id:
             with db_cursor() as (cur, conn):
                 cur.execute("""
-                    UPDATE transactions SET print_batch_id=%s, print_date=NOW()
+                    UPDATE transactions
+                    SET print_batch_id=%s, print_date=NOW(), fulfillment_status='batched'
                     WHERE transaction_id = ANY(%s::uuid[])
                 """, (batch_id, txn_ids))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
