@@ -13,22 +13,43 @@
 {% endif %}
 
 {% if dup_transaction %}
-<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);border-radius:8px;
-            padding:14px 16px;margin-bottom:16px">
+<div id="dup-warning" style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);
+     border-radius:8px;padding:14px 16px;margin-bottom:16px">
   <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:6px">
-    ⛔ Duplicate order detected
+    ⛔ Duplicate order — submission blocked
   </div>
-  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+  <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
     Order <strong style="color:var(--text)">{{ invoice.order_number }}</strong>
     was already submitted by <strong style="color:var(--text)">{{ dup_transaction.person_name or 'someone' }}</strong>
     on {{ dup_transaction.submitted_at.strftime('%b %d, %Y') if dup_transaction.submitted_at else '—' }}.
-    Submitting again will flag this as a <strong style="color:var(--text)">Duplicate</strong> for admin review.
+    This order <strong style="color:#f87171">will not be saved</strong>.
   </div>
   <div style="font-size:12px;color:var(--muted)">
-    If this is a <strong style="color:var(--text)">return</strong>, change Order Type to
-    <em>Return (Full Order)</em> or <em>Return (Partial Order)</em> and the duplicate flag will be lifted.
+    Only exception: change Order Type below to
+    <em>Return (Full Order)</em> or <em>Return (Partial Order)</em>
+    if this is a return on the original order.
   </div>
 </div>
+<script>
+// Block submit unless order_type is a return
+(function() {
+  function checkDup() {
+    var sel = document.querySelector('[name="order_type"]');
+    var btn = document.querySelector('[type="submit"]');
+    if (!sel || !btn) return;
+    var isReturn = sel.value && sel.value.toLowerCase().includes('return');
+    btn.disabled = !isReturn;
+    btn.title = isReturn ? '' : 'Change Order Type to a Return to enable submission';
+    btn.style.opacity = isReturn ? '1' : '0.4';
+    document.getElementById('dup-warning').style.borderColor = isReturn ? 'rgba(74,222,128,.4)' : 'rgba(239,68,68,.4)';
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    checkDup();
+    var sel = document.querySelector('[name="order_type"]');
+    if (sel) sel.addEventListener('change', checkDup);
+  });
+})();
+</script>
 {% endif %}
 
 {% if card_missing %}
