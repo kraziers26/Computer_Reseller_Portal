@@ -178,6 +178,7 @@ def mark_item(session_id):
 
     if status not in ('received', 'missing', 'partial', 'pending'):
         return jsonify({'error': 'Invalid status'}), 400
+    # 'pending' = goes to pending pool when session closes
 
     with db_cursor() as (cur, conn):
         cur.execute(
@@ -235,3 +236,96 @@ def close_session(session_id):
 
     flash('Session closed. Missing and partial items remain in the receiving pool.', 'success')
     return redirect(url_for('receiving.index'))
+
+
+# ── Pending pool ──────────────────────────────────────────────────────────────
+
+@receiving_bp.route('/pending-pool')
+@login_required
+@require_role('admin')
+def pending_pool():
+    f_status     = request.args.get('status', '')
+    f_retailer   = request.args.get('retailer', '')
+    f_company    = request.args.get('company', type=int)
+    f_person     = request.args.get('person_by', type=int)
+    f_order      = request.args.get('order_number', '')
+    f_stuck_days = request.args.get('stuck_days', type=int)
+    f_batch      = request.args.get('batch_id', '')
+
+    conditions = [
+        "ri.receive_status IN ('pending', 'missing', 'partial')",
+        "rs.status = 'closed'",
+        "t.is_active = TRUE"
+    ]
+    params = []
+    if f_status:   conditions.append("ri.receive_status = %s"); params.append(f_status)
+    if f_retailer: conditions.append("t.retailer = %s"); params.append(f_retailer)
+    if f_company:  conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_person:   conditions.append("t.user_id = %s"); params.append(f_person)
+    if f_order:    conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+    if f_batch:    conditions.append("rs.batch_id ILIKE %s"); params.append(f'%{f_batch}%')
+    if f_stuck_days:
+        conditions.append(
+            "EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,t.submitted_at)))/86400 >= %s")
+        params.append(f_stuck_days)
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT ri.item_id, ri.receive_status, ri.notes,
+                   rs.batch_id, rs.session_id,
+                   t.transaction_id, t.order_number, t.retailer,
+                   t.purchase_date, t.price_total, t.order_type,
+                   t.fulfillment_status, t.fulfillment_status_updated_at,
+                   t.review_status, t.card_id,
+                   ROUND(EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,
+                         t.submitted_at)))/86400) AS days_in_status,
+                   u.username AS person_name, c.company_name,
+                   sub.username AS submitter_name
+            FROM receiving_items ri
+            JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+            JOIN transactions t        ON ri.transaction_id = t.transaction_id
+            LEFT JOIN dim_users u      ON t.user_id = u.user_id
+            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            {where}
+            ORDER BY ri.receive_status, days_in_status DESC
+        """, params)
+        items = cur.fetchall()
+
+        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
+        retailers = [r['retailer'] for r in cur.fetchall()]
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
+        users = cur.fetchall()
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+
+    return render_template('receiving/pending_pool.html', items=items,
+                           retailers=retailers, users=users, companies=companies,
+                           filters={'status':f_status,'retailer':f_retailer,'company':f_company,
+                                    'person_by':f_person,'order_number':f_order,
+                                    'stuck_days':f_stuck_days,'batch_id':f_batch})
+
+
+@receiving_bp.route('/pending-pool/move-received', methods=['POST'])
+@login_required
+@require_role('admin')
+def move_to_received():
+    item_ids = request.form.getlist('item_ids')
+    if not item_ids:
+        flash('No items selected.', 'error')
+        return redirect(url_for('receiving.pending_pool'))
+    with db_cursor() as (cur, conn):
+        cur.execute(
+            "UPDATE receiving_items SET receive_status='received', updated_at=NOW() "
+            "WHERE item_id = ANY(%s::uuid[])", (item_ids,))
+        # Update fulfillment_status on transactions
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status='received', fulfillment_status_updated_at=NOW()
+            FROM receiving_items ri
+            WHERE ri.transaction_id = t.transaction_id
+              AND ri.item_id = ANY(%s::uuid[])
+        """, (item_ids,))
+    flash(f'{len(item_ids)} order(s) moved to Received.', 'success')
+    return redirect(url_for('receiving.pending_pool'))
