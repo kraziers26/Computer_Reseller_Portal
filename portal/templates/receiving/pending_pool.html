@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Pending Pool — Receiving{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Pending Pool</h1><p>{{ items|length }} orders awaiting receipt</p></div>
+  <a href="{{ url_for('receiving.index') }}" class="btn btn-ghost btn-sm">← Receiving</a>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom:14px">
+  <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;align-items:end">
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Pool Status</div>
+      <select name="status" style="width:100%" onchange="this.form.submit()">
+        <option value="">All</option>
+        <option value="pending" {{ 'selected' if filters.status=='pending' }}>⏳ Pending</option>
+        <option value="partial" {{ 'selected' if filters.status=='partial' }}>⚠ Partial</option>
+        <option value="missing" {{ 'selected' if filters.status=='missing' }}>✕ Missing</option>
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
+      <input type="text" name="order_number" value="{{ filters.order_number }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
+      <select name="retailer" style="width:100%" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Person By</div>
+      <select name="person_by" style="width:100%" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+      <select name="company" style="width:100%" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Batch</div>
+      <input type="text" name="batch_id" value="{{ filters.batch_id }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stuck &gt; Days</div>
+      <select name="stuck_days" style="width:100%" onchange="this.form.submit()">
+        <option value="">Any</option>
+        <option value="3"  {{ 'selected' if filters.stuck_days==3  }}>3+ days</option>
+        <option value="7"  {{ 'selected' if filters.stuck_days==7  }}>7+ days</option>
+        <option value="14" {{ 'selected' if filters.stuck_days==14 }}>14+ days</option>
+        <option value="30" {{ 'selected' if filters.stuck_days==30 }}>30+ days</option>
+      </select>
+    </div>
+    <div style="display:flex;align-items:flex-end">
+      {% if filters.status or filters.retailer or filters.company or filters.person_by or filters.order_number or filters.stuck_days or filters.batch_id %}
+      <a href="{{ url_for('receiving.pending_pool') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{% if not items %}
+<div class="card" style="text-align:center;padding:48px;color:var(--muted)">
+  ✅ No orders in the pending pool.
+</div>
+{% else %}
+<form method="POST" action="{{ url_for('receiving.move_to_received') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+      <input type="checkbox" id="selectAll" style="width:auto" onchange="document.querySelectorAll('.row-check').forEach(c=>c.checked=this.checked)"> Select all
+    </label>
+    <button type="submit" class="btn btn-sm"
+            style="background:rgba(16,185,129,.15);color:#10b981;border-color:#10b981"
+            onclick="return confirm('Move selected orders to Received?')">
+      ✓ Move to Received
+    </button>
+  </div>
+
+  <div class="card" style="padding:0">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Pool Status</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Time in Pool</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in items %}
+      {% set days = r.days_in_status|int if r.days_in_status else 0 %}
+      {% set stuck = days >= 14 %}
+      <tr style="border-bottom:1px solid var(--border);
+                 border-left:3px solid {{ '#6b7280' if r.receive_status=='pending' else '#fbbf24' if r.receive_status=='partial' else '#f87171' }}">
+        <td style="padding:8px 12px">
+          <input type="checkbox" name="item_ids" value="{{ r.item_id }}" class="row-check" style="width:auto">
+        </td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">
+          <a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}" style="color:var(--accent2)">
+            {{ r.order_number[:24] }}
+          </a>
+        </td>
+        <td style="padding:8px 12px">{{ r.retailer }}</td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
+        <td style="padding:8px 12px">{{ r.person_name or '—' }}</td>
+        <td style="padding:8px 12px;font-size:12px">{{ r.company_name or '—' }}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--muted)">{{ r.batch_id }}</td>
+        <td style="padding:8px 12px">
+          {% if r.receive_status == 'pending' %}
+          <span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">⏳ Pending</span>
+          {% elif r.receive_status == 'partial' %}
+          <span style="background:rgba(251,191,36,.12);color:#fbbf24;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">⚠ Partial</span>
+          {% elif r.receive_status == 'missing' %}
+          <span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">✕ Missing</span>
+          {% endif %}
+        </td>
+        <td style="padding:8px 12px;font-size:12px;color:{{ '#f87171' if stuck else '#fbbf24' if days >= 7 else 'var(--muted)' }}">
+          {{ days }}d{% if stuck %} ⚠{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
