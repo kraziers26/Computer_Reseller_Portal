@@ -1,1447 +1,684 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-from flask_login import login_required
-from ..auth_utils import require_role
-from ..db import db_cursor
+from flask_login import login_user, logout_user, login_required, current_user
+from ..models import User
 
-admin_bp = Blueprint('admin', __name__)
+auth_bp = Blueprint('auth', __name__)
 
+@auth_bp.route('/', methods=['GET'])
+def index():
+    if current_user.is_authenticated:
+        if current_user.is_admin:
+            return redirect(url_for('admin.dashboard'))
+        return redirect(url_for('upload.upload'))
+    return redirect(url_for('auth.login'))
 
-@admin_bp.route('/dashboard')
-@login_required
-@require_role('admin')
-def dashboard():
-    # Filters
-    f_month       = request.args.get('month', '')
-    f_year        = request.args.get('year', '')
-    f_company     = request.args.get('company', type=int)
-    f_retailer    = request.args.get('retailer', '')
-    f_submitter   = request.args.get('submitter', type=int)
-    f_person      = request.args.get('person_by', type=int)
-    f_card        = request.args.get('card', '')
-    f_duplicates  = request.args.get('duplicates', '')
-    f_order       = request.args.get('order_number', '')
-    f_role        = request.args.get('role', '')
-    f_needs_review = request.args.get('needs_review', '')
-    f_fulfillment  = request.args.get('fulfillment', '')
-    f_stuck_days   = request.args.get('stuck_days', type=int)
-
-    conditions = ["t.price_total > 0", "t.is_active = TRUE"]
-    params = []
-    if not f_duplicates:
-        conditions.append("t.is_duplicate = FALSE")
-    else:
-        conditions.append("t.is_duplicate = TRUE")
-    if f_month:
-        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
-    if f_year:
-        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); params.append(f_year)
-    if f_company:
-        conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_retailer:
-        conditions.append("t.retailer = %s"); params.append(f_retailer)
-    if f_submitter:
-        conditions.append("t.submitted_by_user_id = %s"); params.append(f_submitter)
-    if f_person:
-        conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_card:
-        conditions.append("t.card_id = %s"); params.append(f_card)
-    if f_order:
-        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
-    if f_fulfillment:
-        conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
-    if f_stuck_days:
-        conditions.append(
-            "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
-            " / 86400 >= %s")
-        params.append(f_stuck_days)
-    if f_role == 'contributor':
-        conditions.append("sub.portal_role = 'contributor'")
-    elif f_role == 'admin':
-        conditions.append("sub.portal_role = 'admin'")
-    if f_needs_review:
-        conditions.append("t.review_status = 'Needs Review'")
-
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT
-                COUNT(*)                                              AS total_orders,
-                ROUND(SUM(t.price_total)::numeric, 2)                AS total_gmv,
-                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2) AS total_gross_paid,
-                ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)   AS total_net_paid,
-                ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS total_tax,
-                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2)    AS total_cashback,
-                COUNT(*) FILTER (WHERE t.review_status='Pending')        AS pending_count,
-                COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)              AS dup_count,
-                ROUND(SUM(COALESCE(t.costco_taxes_paid,0))::numeric,2) AS total_costco_taxes
-            FROM transactions t {where}
-        """, params)
-        metrics = cur.fetchone()
-        
-        # Needs Review count — query separately without is_duplicate filter
-        cur.execute("""
-            SELECT COUNT(*) AS n FROM transactions
-            WHERE is_active=TRUE AND review_status='Needs Review'
-        """)
-        needs_review_count = cur.fetchone()['n']
-
-        # Recent submissions — join sub for role filter
-        cur.execute(f"""
-            SELECT t.order_number, t.retailer, t.purchase_date,
-                   t.price_total, t.costco_taxes_paid, t.review_status, t.submitted_at,
-                   t.is_duplicate, sub.username AS submitter_name, sub.portal_role AS submitter_role,
-                   per.username AS person_name,
-                   c.company_name, t.card_id,
-                   d.cashback_rate
-            FROM transactions t
-            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
-            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
-            {where}
-            ORDER BY t.submitted_at DESC LIMIT 25
-        """, params)
-        recent = cur.fetchall()
-
-        cur.execute("SELECT COUNT(*) AS n FROM v_pending_review")
-        pending_total = cur.fetchone()['n']
-
-        # Pipeline funnel counts + timing
-        cur.execute("""
-            SELECT
-                COUNT(*) FILTER (WHERE fulfillment_status='uploaded' AND is_active=TRUE
-                                   AND is_duplicate=FALSE)                        AS uploaded,
-                COUNT(*) FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)  AS batched,
-                COUNT(*) FILTER (WHERE fulfillment_status='pending'  AND is_active=TRUE)  AS pending,
-                COUNT(*) FILTER (WHERE fulfillment_status='received' AND is_active=TRUE)  AS received,
-                COUNT(*) FILTER (WHERE fulfillment_status='invoiced' AND is_active=TRUE)  AS invoiced,
-                COUNT(*) FILTER (WHERE review_status='Needs Review'  AND is_active=TRUE)  AS needs_review_total,
-                COUNT(*) FILTER (WHERE review_status='Duplicate'     AND is_active=TRUE)  AS duplicates_total,
-                ROUND(AVG(EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400)
-                    FILTER (WHERE fulfillment_status='uploaded' AND is_active=TRUE
-                              AND is_duplicate=FALSE))                            AS avg_days_uploaded,
-                ROUND(AVG(EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400)
-                    FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)) AS avg_days_batched,
-                ROUND(MAX(EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400)
-                    FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)) AS max_days_batched,
-                COUNT(*) FILTER (WHERE fulfillment_status='batched' AND is_active=TRUE
-                    AND EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400 >= 14
-                ) AS stuck_batched
-            FROM transactions
-        """)
-        pipeline = cur.fetchone()
-
-        # Filter options
-        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
-        retailers = [r['retailer'] for r in cur.fetchall()]
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
-        cur.execute("""
-            SELECT d.card_id, d.cashback_rate FROM dim_cards d
-            WHERE d.card_id IN (SELECT DISTINCT card_id FROM transactions WHERE card_id IS NOT NULL AND is_active=TRUE)
-            ORDER BY d.card_id
-        """)
-        cards = cur.fetchall()
-
-        # Years available
-        cur.execute("SELECT DISTINCT TO_CHAR(purchase_date,'YYYY') AS yr FROM transactions WHERE purchase_date IS NOT NULL ORDER BY yr DESC")
-        years = [r['yr'] for r in cur.fetchall()]
-
-    return render_template('dashboard.html',
-                           metrics=metrics, recent=recent, pending_total=pending_total,
-                           needs_review_count=needs_review_count,
-                           pipeline=pipeline,
-                           retailers=retailers, companies=companies, users=users, cards=cards, years=years,
-                           filters={'month':f_month,'year':f_year,'company':f_company,
-                                    'retailer':f_retailer,'submitter':f_submitter,
-                                    'person_by':f_person,'card':f_card,
-                                    'duplicates':f_duplicates,'order_number':f_order,
-                                    'role':f_role,'needs_review':f_needs_review,
-                                    'fulfillment':f_fulfillment,'stuck_days':f_stuck_days})
-
-
-
-
-@admin_bp.route('/duplicate-cleanup', methods=['GET', 'POST'])
-@login_required
-@require_role('admin')
-def duplicate_cleanup():
-    from ..security import audit
+@auth_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    from ..security import check_login_lockout, record_failed_login, record_successful_login
+    if current_user.is_authenticated:
+        if current_user.portal_role == 'admin':
+            return redirect(url_for('admin.dashboard'))
+        return redirect(url_for('upload.upload'))
 
     if request.method == 'POST':
-        action = request.form.get('action')
+        email    = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
 
-        if action == 'delete_all':
-            with db_cursor() as (cur, conn):
-                # Find all duplicate tids (keep first per order_number)
-                cur.execute("""
-                    SELECT ARRAY_AGG(transaction_id ORDER BY submitted_at) AS tids
-                    FROM transactions
-                    WHERE is_active=TRUE AND order_number IS NOT NULL AND order_number != ''
-                      AND (order_type IS NULL OR order_type NOT ILIKE '%return%')
-                    GROUP BY order_number
-                    HAVING COUNT(*) > 1
-                """)
-                rows = cur.fetchall()
-                to_delete = []
-                for row in rows:
-                    to_delete.extend(str(t) for t in row['tids'][1:])
-                if to_delete:
-                    cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
-                    cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
-            flash(f'Deleted {len(to_delete)} duplicate transactions.', 'success')
-            for tid in to_delete:
-                audit('bulk_delete_duplicate', 'transaction', tid)
-            return redirect(url_for('admin.duplicate_cleanup'))
+        # Check lockout
+        locked, mins_left = check_login_lockout(email)
+        if locked:
+            flash(f'Too many failed attempts. Try again in {mins_left} minute(s).', 'error')
+            return render_template('login.html')
 
-        elif action == 'delete_selected':
-            tids = request.form.getlist('tids')
-            if tids:
-                with db_cursor() as (cur, conn):
-                    cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-                    cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-                flash(f'Deleted {len(tids)} selected duplicate transactions.', 'success')
-                for tid in tids:
-                    audit('delete_duplicate', 'transaction', tid)
-            return redirect(url_for('admin.duplicate_cleanup'))
+        user = User.get_by_email(email)
+        if user and user.check_password(password):
+            login_user(user)
+            record_successful_login(email)
+            if user.portal_role == 'admin':
+                return redirect(url_for('admin.dashboard'))
+            return redirect(url_for('upload.upload'))
 
-    # Build groups of duplicates
-    with db_cursor() as (cur, _):
-        cur.execute("""
-            SELECT
-                t.order_number,
-                MIN(t.retailer) AS retailer,
-                ARRAY_AGG(t.transaction_id ORDER BY t.submitted_at) AS tids,
-                ARRAY_AGG(COALESCE(u.username, t.submitted_by_email) ORDER BY t.submitted_at) AS submitters,
-                ARRAY_AGG(t.submitted_at::date::text ORDER BY t.submitted_at) AS dates,
-                ARRAY_AGG(t.price_total ORDER BY t.submitted_at) AS totals
-            FROM transactions t
-            LEFT JOIN dim_users u ON t.submitted_by_email = u.email
-            WHERE t.is_active=TRUE AND t.order_number IS NOT NULL AND t.order_number != ''
-              AND (t.order_type IS NULL OR t.order_type NOT ILIKE '%return%')
-            GROUP BY t.order_number
-            HAVING COUNT(*) > 1
-            ORDER BY COUNT(*) DESC, MIN(t.submitted_at) DESC
-        """)
-        rows = cur.fetchall()
-
-    groups = []
-    total_dupes = 0
-    for row in rows:
-        tids       = [str(t) for t in row['tids']]
-        submitters = row['submitters']
-        dates      = row['dates']
-        totals     = row['totals']
-        kept_tid   = tids[0]
-        dup_tids   = tids[1:]
-        total_dupes += len(dup_tids)
-        groups.append({
-            'order_number':   row['order_number'],
-            'retailer':       row['retailer'],
-            'kept_tid':       kept_tid,
-            'kept_submitter': submitters[0] if submitters else '—',
-            'kept_date':      dates[0] if dates else '—',
-            'dup_tids':       dup_tids,
-            'dup_submitters': submitters[1:],
-            'price_total':    totals[0] if totals else 0,
-        })
-
-    return render_template('duplicate_cleanup.html', groups=groups, total_dupes=total_dupes)
-
-@admin_bp.route('/submissions/export')
-@login_required
-@require_role('admin')
-def export_submissions():
-    import io
-    from openpyxl import Workbook
-    from flask import send_file
-    f_retailer   = request.args.get('retailer', '')
-    f_company    = request.args.get('company', type=int)
-    f_status     = request.args.get('status', '')
-    f_month      = request.args.get('month', '')
-    f_duplicates = request.args.get('duplicates', '')
-    f_submitter  = request.args.get('submitter', type=int)
-    f_card       = request.args.get('card', '')
-    f_person     = request.args.get('person_by', type=int)
-    f_order      = request.args.get('order_number', '')
-    f_role       = request.args.get('role', '')
-    f_fulfillment = request.args.get('fulfillment', '')
-    f_stuck_days  = request.args.get('stuck_days', type=int)
-
-    conditions = ["t.is_active = TRUE"]
-    params = []
-    if f_retailer: conditions.append("t.retailer = %s"); params.append(f_retailer)
-    if f_company:  conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_status:   conditions.append("t.review_status = %s"); params.append(f_status)
-    if f_month:    conditions.append("t.purchase_year_month = %s"); params.append(f_month)
-    if f_duplicates: conditions.append("t.is_duplicate = TRUE")
-    if f_submitter: conditions.append("sub.user_id = %s"); params.append(f_submitter)
-    if f_card:     conditions.append("t.card_id = %s"); params.append(f_card)
-    if f_person:   conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_order:    conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
-    if f_role == 'contributor': conditions.append("sub.portal_role = 'contributor'")
-    elif f_role == 'admin':     conditions.append("sub.portal_role = 'admin'")
-    if f_fulfillment: conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
-    if f_stuck_days:
-        conditions.append("EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,t.submitted_at)))/86400 >= %s")
-        params.append(f_stuck_days)
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT t.order_number, t.retailer, t.purchase_date, t.price_total,
-                   t.review_status, t.fulfillment_status, t.submitted_at,
-                   t.fulfillment_status_updated_at,
-                   ROUND(EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,
-                         t.submitted_at)))/86400) AS days_in_status,
-                   sub.username AS submitter, per.username AS person_by,
-                   c.company_name, t.card_id, t.order_type, t.is_duplicate
-            FROM transactions t
-            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
-            LEFT JOIN dim_users per    ON t.user_id = per.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            {where}
-            ORDER BY t.submitted_at DESC
-        """, params)
-        rows = cur.fetchall()
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Submissions"
-    headers = ['Order #','Retailer','Purchase Date','Total','Review Status',
-               'Fulfillment Stage','Days in Stage','Submitted At','Submitter',
-               'Person By','Company','Card','Order Type','Duplicate']
-    ws.append(headers)
-    for r in rows:
-        ws.append([
-            r['order_number'], r['retailer'],
-            r['purchase_date'].strftime('%Y-%m-%d') if r['purchase_date'] else '',
-            float(r['price_total'] or 0), r['review_status'],
-            r['fulfillment_status'], int(r['days_in_status'] or 0),
-            r['submitted_at'].strftime('%Y-%m-%d %H:%M') if r['submitted_at'] else '',
-            r['submitter'], r['person_by'], r['company_name'],
-            r['card_id'], r['order_type'], 'Yes' if r['is_duplicate'] else 'No'
-        ])
-    from openpyxl.styles import Font
-    for cell in ws[1]: cell.font = Font(bold=True)
-
-    buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
-    return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True, download_name='submissions_export.xlsx')
-
-
-@admin_bp.route('/submissions/bulk-action', methods=['POST'])
-@login_required
-@require_role('admin')
-def bulk_action():
-    from ..security import audit
-    action = request.form.get('action')
-    tids   = request.form.getlist('tids')
-    back   = request.form.get('back', url_for('admin.all_submissions'))
-    if not tids:
-        flash('No transactions selected.', 'error')
-        return redirect(back)
-    with db_cursor() as (cur, conn):
-        if action == 'approve':
-            cur.execute(
-                "UPDATE transactions SET review_status='Reviewed', review_date=NOW() "
-                "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-            flash(f'{len(tids)} transaction(s) approved.', 'success')
-        elif action == 'flag':
-            cur.execute(
-                "UPDATE transactions SET review_status='Flagged' "
-                "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-            flash(f'{len(tids)} transaction(s) flagged.', 'warning')
-        elif action == 'mark_duplicate':
-            cur.execute(
-                "UPDATE transactions SET is_duplicate=TRUE, review_status='Duplicate' "
-                "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-            flash(f'{len(tids)} transaction(s) marked as duplicate.', 'warning')
-        elif action == 'delete':
-            cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-            cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (tids,))
-            flash(f'{len(tids)} transaction(s) permanently deleted.', 'danger')
+        record_failed_login(email)
+        locked, mins_left = check_login_lockout(email)
+        if locked:
+            flash(f'Too many failed attempts. Account locked for {mins_left} minute(s).', 'error')
         else:
-            flash('Unknown action.', 'error')
-    for tid in tids:
-        audit(f'bulk_{action}', 'transaction', tid)
-    return redirect(back)
+            flash('Invalid email or password.', 'error')
 
+    return render_template('login.html')
 
-@admin_bp.route('/submissions/all')
+@auth_bp.route('/logout')
 @login_required
-@require_role('admin')
-def all_submissions():
-    page     = request.args.get('page', 1, type=int)
-    per_page = 25
-    offset   = (page - 1) * per_page
+def logout():
+    from ..security import audit
+    audit('logout')
+    logout_user()
+    return redirect(url_for('auth.login'))
 
-    f_retailer   = request.args.get('retailer', '')
-    f_company    = request.args.get('company', type=int)
-    f_status     = request.args.get('status', '')
-    f_month      = request.args.get('month', '')
-    f_duplicates = request.args.get('duplicates', '')
-    f_submitter  = request.args.get('submitter', type=int)
-    f_card       = request.args.get('card', '')
-    f_person     = request.args.get('person_by', type=int)
-    f_order      = request.args.get('order_number', '')
-    f_role        = request.args.get('role', '')
-    f_fulfillment  = request.args.get('fulfillment', '')
-    f_stuck_days   = request.args.get('stuck_days', type=int)  # filter: in status > N days
 
-    conditions = ["t.is_active = TRUE"]
-    params = []
-    if f_retailer:
-        conditions.append("t.retailer = %s"); params.append(f_retailer)
-    if f_company:
-        conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_status:
-        conditions.append("t.review_status = %s"); params.append(f_status)
-    if f_role == 'contributor':
-        conditions.append("sub.portal_role = 'contributor'")
-    elif f_role == 'admin':
-        conditions.append("sub.portal_role = 'admin'")
-    if f_month:
-        conditions.append("t.purchase_year_month = %s"); params.append(f_month)
-    if f_duplicates:
-        conditions.append("t.is_duplicate = TRUE")
-    if f_submitter:
-        conditions.append("sub.user_id = %s"); params.append(f_submitter)
-    if f_card:
-        conditions.append("t.card_id = %s"); params.append(f_card)
-    if f_person:
-        conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_order:
-        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
-    if f_fulfillment:
-        conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
-    if f_stuck_days:
-        conditions.append(
-            "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
-            " / 86400 >= %s")
-        params.append(f_stuck_days)
+@auth_bp.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        if email:
+            result = _send_reset_email(email)
+            if result == 'no_key':
+                flash('Email service not configured. Contact your administrator.', 'error')
+            elif result == 'send_failed':
+                flash('Failed to send email. Check Resend API key and sender address.', 'error')
+            else:
+                flash('If that email is registered, a reset link has been sent.', 'info')
+        return redirect(url_for('auth.login'))
+    return render_template('forgot_password.html')
 
-    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
+@auth_bp.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    import hashlib
+    from ..db import db_cursor
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
 
     with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT t.transaction_id, t.order_number, t.retailer,
-                   t.purchase_date, t.price_total, t.order_type,
-                   t.review_status, t.submitted_at, t.is_duplicate,
-                   t.card_id, d.cashback_rate,
-                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2) AS gross_paid,
-                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)   AS net_paid,
-                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2) AS tax_withheld,
-                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)    AS cashback,
-                   sub.username AS submitter_name,
-                   per.username AS person_name,
-                   c.company_name, t.notes
-            FROM transactions t
-            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
-            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
-            {where}
-            ORDER BY t.submitted_at DESC
-            LIMIT %s OFFSET %s
-        """, params + [per_page, offset])
-        submissions = cur.fetchall()
-
-        cur.execute(f"""
-            SELECT COUNT(*) AS n FROM transactions t
-            LEFT JOIN dim_users sub ON t.submitted_by_email = sub.email
-            {where}
-        """, params)
-        total = cur.fetchone()['n']
-
-        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
-        retailers = [r['retailer'] for r in cur.fetchall()]
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
-        companies = cur.fetchall()
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
         cur.execute("""
-            SELECT d.card_id, d.cashback_rate FROM dim_cards d
-            WHERE d.card_id IN (SELECT DISTINCT card_id FROM transactions WHERE card_id IS NOT NULL AND is_active=TRUE)
-            ORDER BY d.card_id
-        """)
-        cards = cur.fetchall()
-        cur.execute("SELECT DISTINCT purchase_year_month FROM transactions WHERE is_active=TRUE ORDER BY purchase_year_month DESC")
-        months = [r['purchase_year_month'] for r in cur.fetchall()]
+            SELECT r.token_id, r.user_id, r.expires_at, r.used
+            FROM password_reset_tokens r
+            WHERE r.token_hash = %s
+        """, (token_hash,))
+        row = cur.fetchone()
 
-    return render_template('all_submissions.html',
-                           submissions=submissions, total=total,
-                           page=page, per_page=per_page,
-                           retailers=retailers, companies=companies, users=users, cards=cards, months=months,
-                           filters={'retailer':f_retailer,'company':f_company,'status':f_status,
-                                    'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
-                                    'card':f_card,'person_by':f_person,'order_number':f_order,
-                                    'role':f_role,'fulfillment':f_fulfillment,
-                                    'stuck_days':f_stuck_days})
-
-
-@admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
-@login_required
-@require_role('admin')
-def review_submission(tid):
-    with db_cursor() as (cur, _):
-        cur.execute("""
-            SELECT t.*, sub.username AS submitter_name, per.username AS person_name,
-                   c.company_name,
-                   (t.invoice_pdf IS NOT NULL) AS has_pdf_in_db,
-                   t.membership_number
-            FROM transactions t
-            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
-            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            WHERE t.transaction_id = %s
-        """, (str(tid),))
-        txn = cur.fetchone()
-        if not txn:
-            flash('Transaction not found.', 'error')
-            return redirect(url_for('admin.all_submissions'))
-        cur.execute("SELECT * FROM transaction_items WHERE transaction_id=%s", (str(tid),))
-        items = cur.fetchall()
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE")
-        companies = cur.fetchall()
-        cur.execute("SELECT card_id, card_name, card_brand, cashback_rate FROM dim_cards WHERE is_active=TRUE ORDER BY card_id")
-        cards = cur.fetchall()
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
+    if not row or row['used'] or row['expires_at'] < __import__('datetime').datetime.now():
+        flash('This reset link is invalid or has expired. Request a new one.', 'error')
+        return redirect(url_for('auth.forgot_password'))
 
     if request.method == 'POST':
-        action = request.form.get('action')
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm', '')
+        if len(password) < 8:
+            flash('Password must be at least 8 characters.', 'error')
+            return render_template('reset_password.html', token=token)
+        if password != confirm:
+            flash('Passwords do not match.', 'error')
+            return render_template('reset_password.html', token=token)
+
+        import bcrypt
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         with db_cursor() as (cur, conn):
-            from ..security import audit
-            if action == 'approve':
-                cur.execute("UPDATE transactions SET review_status='Reviewed', review_date=NOW() WHERE transaction_id=%s", (str(tid),))
-                audit('transaction_approved', 'transaction', str(tid))
-                flash('Transaction approved.', 'success')
-            elif action == 'flag':
-                cur.execute("UPDATE transactions SET review_status='Flagged' WHERE transaction_id=%s", (str(tid),))
-                audit('transaction_flagged', 'transaction', str(tid))
-                flash('Transaction flagged.', 'warning')
-            elif action == 'mark_duplicate':
-                cur.execute("UPDATE transactions SET is_duplicate=TRUE, review_status='Flagged' WHERE transaction_id=%s", (str(tid),))
-                audit('transaction_marked_duplicate', 'transaction', str(tid))
-                flash('Marked as duplicate.', 'warning')
-            elif action == 'inactivate':
-                cur.execute("UPDATE transactions SET is_active=FALSE WHERE transaction_id=%s", (str(tid),))
-                audit('transaction_inactivated', 'transaction', str(tid))
-                flash('Transaction inactivated. It will no longer appear in reports.', 'warning')
-                return redirect(url_for('admin.all_submissions'))
-            elif action == 'delete':
-                cur.execute("DELETE FROM transaction_items WHERE transaction_id=%s", (str(tid),))
-                cur.execute("DELETE FROM transactions WHERE transaction_id=%s", (str(tid),))
-                audit('transaction_deleted', 'transaction', str(tid))
-                flash('Transaction permanently deleted.', 'danger')
-                return redirect(url_for('admin.all_submissions'))
-            elif action == 'edit':
-                card_id           = request.form.get('card_id') or None
-                company_id        = request.form.get('company_id', type=int)
-                user_id           = request.form.get('user_id', type=int)
-                order_type        = request.form.get('order_type')
-                price             = request.form.get('price_total', type=float)
-                notes             = request.form.get('notes', '').strip()[:140] or None
-                membership_number = request.form.get('membership_number', '').strip() or None
+            cur.execute("UPDATE dim_users SET portal_password_hash=%s WHERE user_id=%s",
+                        (hashed, row['user_id']))
+            cur.execute("UPDATE password_reset_tokens SET used=TRUE WHERE token_hash=%s",
+                        (token_hash,))
 
-                cashback_rate = cashback_value = None
-                if card_id and price:
-                    cur.execute("SELECT cashback_rate FROM dim_cards WHERE card_id=%s", (card_id,))
-                    row = cur.fetchone()
-                    if row:
-                        cashback_rate  = float(row['cashback_rate'])
-                        cashback_value = round(price * cashback_rate, 2)
+        from ..security import audit
+        audit('password_reset', 'user', str(row['user_id']))
+        flash('Password updated successfully. Please log in.', 'success')
+        return redirect(url_for('auth.login'))
 
-                gross_paid   = round(price * 0.01, 2) if price else None
-                net_paid     = round(gross_paid * 0.8, 2) if gross_paid else None
-                tax_withheld = round(gross_paid * 0.2, 2) if gross_paid else None
-                gross_biz    = round((gross_paid or 0)+(cashback_value or 0),2) if gross_paid else None
-                net_biz      = round((gross_biz or 0)-(net_paid or 0),2) if gross_biz else None
-
-                cur.execute("""
-                    UPDATE transactions SET
-                        card_id=%s, company_id=%s, user_id=%s, order_type=%s, price_total=%s,
-                        cashback_rate=%s, cashback_value=%s,
-                        gross_paid_amount=%s, net_paid_amount=%s,
-                        gross_business_commission=%s, net_business_commission=%s,
-                        sales_payroll_tax_withheld=%s, notes=%s, membership_number=%s,
-                        review_status='Reviewed', review_date=NOW()
-                    WHERE transaction_id=%s
-                """, (card_id, company_id, user_id, order_type, price,
-                      cashback_rate, cashback_value,
-                      gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
-                      notes, membership_number, str(tid)))
-                flash('Transaction updated.', 'success')
-        return redirect(url_for('admin.review_submission', tid=tid))
-
-    return render_template('review_submission.html',
-                           txn=txn, items=items, companies=companies, cards=cards, users=users)
+    return render_template('reset_password.html', token=token)
 
 
-@admin_bp.route('/payroll')
-@login_required
-@require_role('admin')
-def payroll():
-    month   = request.args.get('month', '')
-    company = request.args.get('company', type=int)
-    sort_by = request.args.get('sort', 'username')
-    sort_dir = request.args.get('dir', 'asc')
+def _send_reset_email(email: str):
+    """Generate token and send reset email via Resend. Returns status string."""
+    import os, secrets, hashlib
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, _):
+            cur.execute("SELECT user_id, username FROM dim_users WHERE email=%s AND is_active=TRUE",
+                        (email,))
+            user = cur.fetchone()
+        if not user:
+            return  # Don't reveal whether email exists
 
-    valid_sorts = {'username','order_count','total_purchases','gross_paid','net_paid','tax_withheld'}
-    if sort_by not in valid_sorts:
-        sort_by = 'username'
-    order_clause = f"{sort_by} {'DESC' if sort_dir=='desc' else 'ASC'}"
+        token      = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
 
-    conditions = ["t.review_status != 'Flagged'", "t.is_duplicate = FALSE",
-                  "t.price_total > 0", "t.is_active = TRUE"]
-    params = []
-    if month:
-        conditions.append("t.purchase_year_month = %s"); params.append(month)
+        with db_cursor() as (cur, conn):
+            # Invalidate any existing unused tokens for this user
+            cur.execute("""
+                UPDATE password_reset_tokens SET used=TRUE
+                WHERE user_id=%s AND used=FALSE
+            """, (user['user_id'],))
+            cur.execute("""
+                INSERT INTO password_reset_tokens (user_id, token_hash)
+                VALUES (%s, %s)
+            """, (user['user_id'], token_hash))
 
-    where = 'WHERE ' + ' AND '.join(conditions)
+        base_url = os.environ.get('APP_BASE_URL', 'https://computerresellerportal-production.up.railway.app')
+        reset_url = f"{base_url}/reset-password/{token}"
 
-    with db_cursor() as (cur, _):
-        # Separate queries per company
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
+        import resend
+        resend.api_key = os.environ.get('RESEND_API_KEY', '')
+        if not resend.api_key:
+            return 'no_key'
 
-        company_data = {}
-        for comp in companies:
-            if company and comp['company_id'] != company:
-                continue
-            cparams = params + [comp['company_id']]
-            cur.execute(f"""
-                SELECT
-                    u.user_id, u.username,
-                    t.purchase_year_month,
-                    COUNT(t.transaction_id)                                    AS order_count,
-                    ROUND(SUM(t.price_total)::numeric, 2)                      AS total_purchases,
-                    ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2)     AS gross_paid,
-                    ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2)       AS net_paid,
-                    ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS tax_withheld
-                FROM transactions t
-                LEFT JOIN dim_users u ON t.user_id = u.user_id
-                {where} AND t.company_id = %s
-                GROUP BY u.user_id, u.username, t.purchase_year_month
-                ORDER BY t.purchase_year_month DESC, {order_clause}
-            """, cparams)
-            company_data[comp['company_name']] = cur.fetchall()
+        resend.Emails.send({
+            'from':    os.environ.get('RESEND_FROM_EMAIL', 'noreply@igamercorp.com'),
+            'to':      [email],
+            'subject': 'Reset your iGamer Corp Portal password',
+            'html':    f"""
+                <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+                  <h2 style="color:#1a1d27">Password Reset</h2>
+                  <p>Hi {user['username']},</p>
+                  <p>Click the button below to reset your portal password.
+                     This link expires in <strong>1 hour</strong>.</p>
+                  <a href="{reset_url}"
+                     style="display:inline-block;background:#4f6ef7;color:#fff;
+                            padding:12px 24px;border-radius:6px;text-decoration:none;
+                            font-weight:600;margin:16px 0">
+                    Reset Password
+                  </a>
+                  <p style="color:#666;font-size:13px">
+                    If you didn't request this, you can safely ignore this email.
+                  </p>
+                  <p style="color:#666;font-size:12px">
+                    Link: {reset_url}
+                  </p>
+                </div>
+            """
+        })
+        return 'ok'
+    except Exception as e:
+        import logging
+        logging.error(f'Resend error: {e}')
+        return 'send_failed'
 
-        cur.execute("""
-            SELECT DISTINCT purchase_year_month FROM transactions
-            WHERE price_total > 0 AND is_active=TRUE ORDER BY purchase_year_month DESC
-        """)
-        months = [r['purchase_year_month'] for r in cur.fetchall()]
+@auth_bp.route('/setup-db-igamer-2024')
+def setup_db():
+    import bcrypt
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
 
-    return render_template('payroll.html',
-                           company_data=company_data, months=months, companies=companies,
-                           selected_month=month, selected_company=company,
-                           sort_by=sort_by, sort_dir=sort_dir)
+            cur.execute("""CREATE TABLE IF NOT EXISTS dim_companies (
+                company_id SERIAL PRIMARY KEY, company_name TEXT NOT NULL UNIQUE,
+                company_short_code TEXT NOT NULL UNIQUE, is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(), last_modified_at TIMESTAMP NOT NULL DEFAULT NOW())""")
 
+            cur.execute("""CREATE TABLE IF NOT EXISTS dim_users (
+                user_id INTEGER PRIMARY KEY, username TEXT NOT NULL, full_name TEXT,
+                email TEXT UNIQUE, phone TEXT, telegram_id TEXT UNIQUE,
+                managed_by TEXT NOT NULL DEFAULT 'Admin', is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE, portal_password_hash TEXT,
+                portal_role TEXT NOT NULL DEFAULT 'none'
+                    CHECK (portal_role IN ('admin','submitter','none')),
+                last_login_at TIMESTAMP, failed_login_count INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(), last_modified_at TIMESTAMP NOT NULL DEFAULT NOW())""")
 
-@admin_bp.route('/cashback')
-@login_required
-@require_role('admin')
-def cashback():
-    f_month   = request.args.get('month', '')
-    f_year    = request.args.get('year', '')
-    f_company = request.args.get('company', type=int)
-    f_person  = request.args.get('person_by', type=int)
+            cur.execute("CREATE SEQUENCE IF NOT EXISTS dim_users_user_id_seq START 119 INCREMENT 1")
+            cur.execute("ALTER TABLE dim_users ALTER COLUMN user_id SET DEFAULT nextval('dim_users_user_id_seq')")
 
-    conditions = ["t.is_active = TRUE"]
-    t_params = []
-    if f_month:
-        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); t_params.append(f_month)
-    if f_year:
-        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); t_params.append(f_year)
-    if f_person:
-        conditions.append("t.user_id = %s"); t_params.append(f_person)
-    if f_company:
-        conditions.append("t.company_id = %s"); t_params.append(f_company)
+            cur.execute("""CREATE TABLE IF NOT EXISTS user_companies (
+                user_id INTEGER NOT NULL REFERENCES dim_users(user_id) ON DELETE CASCADE,
+                company_id INTEGER NOT NULL REFERENCES dim_companies(company_id) ON DELETE CASCADE,
+                PRIMARY KEY (user_id, company_id))""")
 
-    t_where = ('AND ' + ' AND '.join(conditions)) if conditions else ''
+            cur.execute("""CREATE TABLE IF NOT EXISTS dim_cards (
+                card_id TEXT PRIMARY KEY, card_name TEXT NOT NULL, card_brand TEXT NOT NULL,
+                user_id INTEGER REFERENCES dim_users(user_id) ON DELETE SET NULL,
+                company_id INTEGER NOT NULL REFERENCES dim_companies(company_id),
+                credit_limit NUMERIC(12,2), cashback_rate NUMERIC(6,4) NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(), last_modified_at TIMESTAMP NOT NULL DEFAULT NOW())""")
 
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT
-                d.card_id, d.card_name, d.card_brand,
-                u.username AS cardholder,
-                c.company_name,
-                d.cashback_rate,
-                COUNT(t.transaction_id)                               AS transactions,
-                ROUND(SUM(COALESCE(t.price_total,0))::numeric, 2)    AS total_spend,
-                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric, 2) AS total_cashback
-            FROM dim_cards d
-            LEFT JOIN transactions t  ON t.card_id    = d.card_id
-                                      AND t.price_total > 0
-                                      AND t.is_duplicate = FALSE
-                                      {t_where}
-            LEFT JOIN dim_users u     ON d.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON d.company_id = c.company_id
-            WHERE d.is_active = TRUE
-            GROUP BY d.card_id, d.card_name, d.card_brand,
-                     u.username, c.company_name, d.cashback_rate
-            ORDER BY total_cashback DESC NULLS LAST
-        """, t_params)
-        cashback_data = cur.fetchall()
+            cur.execute("""CREATE TABLE IF NOT EXISTS transactions (
+                transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                order_number TEXT NOT NULL, retailer TEXT NOT NULL,
+                purchase_date DATE NOT NULL, purchase_year_month TEXT NOT NULL,
+                user_id INTEGER REFERENCES dim_users(user_id) ON DELETE SET NULL,
+                company_id INTEGER REFERENCES dim_companies(company_id) ON DELETE SET NULL,
+                card_id TEXT REFERENCES dim_cards(card_id) ON DELETE SET NULL,
+                price_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+                costco_taxes_paid NUMERIC(12,2), cashback_rate NUMERIC(6,4),
+                cashback_value NUMERIC(12,2), commission_type TEXT NOT NULL DEFAULT 'standard',
+                commission_fixed_per_unit NUMERIC(10,2), commission_amount NUMERIC(12,2),
+                order_type TEXT NOT NULL DEFAULT 'Delivery', invoice_file_path TEXT,
+                invoice_url TEXT, review_status TEXT NOT NULL DEFAULT 'Pending',
+                review_date DATE, print_date DATE, print_batch_id TEXT,
+                is_duplicate BOOLEAN NOT NULL DEFAULT FALSE, submitted_by_email TEXT,
+                submitted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                gross_paid_amount NUMERIC(12,4), net_paid_amount NUMERIC(12,4),
+                house_compensation NUMERIC(12,4), gross_business_commission NUMERIC(12,4),
+                net_business_commission NUMERIC(12,4), sales_payroll_tax_withheld NUMERIC(12,4),
+                payroll_date DATE)""")
 
-        # Total cashback by company
-        cur.execute(f"""
-            SELECT c.company_name,
-                   ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2) AS total
-            FROM transactions t
-            JOIN dim_companies c ON t.company_id = c.company_id
-            WHERE t.price_total > 0 AND t.is_duplicate = FALSE {t_where}
-            GROUP BY c.company_name ORDER BY total DESC
-        """, t_params)
-        company_cashback = cur.fetchall()
+            cur.execute("""CREATE TABLE IF NOT EXISTS transaction_items (
+                item_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                transaction_id UUID NOT NULL REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+                item_description TEXT NOT NULL, sku_model_color TEXT,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+                line_total NUMERIC(12,2) NOT NULL DEFAULT 0)""")
 
-        cur.execute("SELECT DISTINCT TO_CHAR(purchase_date,'YYYY') AS yr FROM transactions WHERE purchase_date IS NOT NULL ORDER BY yr DESC")
-        years = [r['yr'] for r in cur.fetchall()]
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
+            # Seed companies
+            cur.execute("""INSERT INTO dim_companies (company_name, company_short_code) VALUES
+                ('Sunny Enterprise','SE'),('Medara Studio','MS'),('Santech','ST')
+                ON CONFLICT DO NOTHING""")
 
-    return render_template('cashback.html',
-                           cashback_data=cashback_data, company_cashback=company_cashback,
-                           years=years, companies=companies, users=users,
-                           filters={'month':f_month,'year':f_year,'company':f_company,'person_by':f_person})
+            # Hash for Admin1234!
+            pw = bcrypt.hashpw(b'Admin1234!', bcrypt.gensalt()).decode()
 
+            users = [
+                (101,'Ronald S','Admin',True,'admin','thesunnyenterprise@gmail.com',pw),
+                (102,'Gaby V','Admin',True,'admin','medara.studio@gmail.com',pw),
+                (103,'David S','Self',False,'none',None,None),
+                (104,'Laura R','Self',False,'none',None,None),
+                (105,'Olga C','Admin',False,'none',None,None),
+                (106,'Suhail M','Admin',False,'none',None,None),
+                (107,'Javier F','Self',False,'none',None,None),
+                (108,'Judy A','Self',False,'none',None,None),
+                (109,'Blanca M','Admin',False,'none',None,None),
+                (110,'Max C','Admin',False,'none',None,None),
+                (111,'Ulises M','Admin',False,'none',None,None),
+                (112,'Alexis M','Admin',False,'none',None,None),
+                (113,'Apollo C','Admin',False,'none',None,None),
+                (114,'Isabella V','Admin',False,'none',None,None),
+                (115,'Max Sanchez','Admin',False,'none',None,None),
+                (116,'Esteban Toral L','Admin',False,'none',None,None),
+                (117,'Paula F','Admin',False,'none',None,None),
+                (118,'Jesus G','Admin',False,'none',None,None),
+            ]
+            for u in users:
+                cur.execute("""INSERT INTO dim_users
+                    (user_id,username,managed_by,is_admin,portal_role,email,portal_password_hash)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""", u)
 
-@admin_bp.route('/print-batch', methods=['GET', 'POST'])
-@login_required
-@require_role('admin')
-def print_batch():
-    if request.method == 'POST':
-        txn_ids  = request.form.getlist('txn_ids')
-        batch_id = request.form.get('batch_id', '').strip()
-        skip_tids = request.form.getlist('skip_tids')
-        if skip_tids:
-            with db_cursor() as (cur, conn):
-                cur.execute(
-                    "UPDATE transactions SET skip_print=TRUE WHERE transaction_id = ANY(%s::uuid[])",
-                    (skip_tids,))
-            flash(f'{len(skip_tids)} invoice(s) moved to review pile.', 'info')
-        if txn_ids and batch_id:
-            with db_cursor() as (cur, conn):
-                cur.execute("""
-                    UPDATE transactions
-                    SET print_batch_id=%s, print_date=NOW(),
-                        fulfillment_status='batched',
-                        fulfillment_status_updated_at=NOW()
-                    WHERE transaction_id = ANY(%s::uuid[])
-                """, (batch_id, txn_ids))
-            flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
+        return "<h1>✅ Database ready!</h1><p>All tables created. Users seeded. <b>Now remove this route from auth.py and redeploy.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-    f_retailer  = request.args.get('retailer', '')
-    f_person    = request.args.get('person_by', type=int)
-    f_submitter = request.args.get('submitter', type=int)
-    f_company   = request.args.get('company', type=int)
-    f_role      = request.args.get('role', '')
-    f_date_from = request.args.get('date_from', '')
-    f_date_to   = request.args.get('date_to', '')
-
-    conditions = ["t.print_date IS NULL", "t.review_status != 'Flagged'",
-                  "t.is_active=TRUE", "COALESCE(t.skip_print,FALSE)=FALSE"]
-    params = []
-    if f_retailer:  conditions.append("t.retailer=%s"); params.append(f_retailer)
-    if f_person:    conditions.append("t.user_id=%s"); params.append(f_person)
-    if f_submitter: conditions.append("sub.user_id=%s"); params.append(f_submitter)
-    if f_company:   conditions.append("t.company_id=%s"); params.append(f_company)
-    if f_role == 'contributor': conditions.append("sub.portal_role='contributor'")
-    elif f_role == 'admin':     conditions.append("sub.portal_role='admin'")
-    if f_date_from: conditions.append("t.purchase_date::date >= %s"); params.append(f_date_from)
-    if f_date_to:   conditions.append("t.purchase_date::date <= %s"); params.append(f_date_to)
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT t.transaction_id, t.order_number, t.retailer,
-                   t.purchase_date, t.price_total, t.print_date,
-                   t.print_batch_id, t.invoice_file_path,
-                   (t.invoice_pdf IS NOT NULL) AS has_pdf,
-                   t.skip_print,
-                   u.username, c.company_name,
-                   sub.portal_role AS submitter_role
-            FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            LEFT JOIN dim_users sub   ON t.submitted_by_email = sub.email
-            {where}
-            ORDER BY t.submitted_at DESC
-        """, params)
-        unprinted = cur.fetchall()
-        cur.execute("""
-            SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS cnt,
-                   MIN(submitted_by_email) AS created_by_email
-            FROM transactions WHERE print_batch_id IS NOT NULL
-            GROUP BY print_batch_id ORDER BY batch_date DESC LIMIT 3
-        """)
-        batches = cur.fetchall()
-        cur.execute("SELECT DISTINCT retailer FROM transactions WHERE is_active=TRUE ORDER BY retailer")
-        retailers = [r['retailer'] for r in cur.fetchall()]
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-
-    return render_template('print_batch.html', unprinted=unprinted, batches=batches,
-                           retailers=retailers, users=users, companies=companies,
-                           filters={'retailer':f_retailer,'person_by':f_person,'company':f_company,
-                                    'submitter':f_submitter,'role':f_role,
-                                    'date_from':f_date_from,'date_to':f_date_to})
-
-
-@admin_bp.route('/batch-history')
-@login_required
-@require_role('admin')
-def batch_history():
-    f_batch     = request.args.get('batch_id', '').strip()
-    f_company   = request.args.get('company', type=int)
-    f_submitter = request.args.get('submitter', type=int)
-    f_date_from = request.args.get('date_from', '')
-    f_date_to   = request.args.get('date_to', '')
-
-    conditions = ["t.print_batch_id IS NOT NULL"]
-    params = []
-    if f_batch:
-        conditions.append("t.print_batch_id ILIKE %s"); params.append(f'%{f_batch}%')
-    if f_company:
-        conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_submitter:
-        conditions.append("u.user_id = %s"); params.append(f_submitter)
-    if f_date_from:
-        conditions.append("t.print_date::date >= %s"); params.append(f_date_from)
-    if f_date_to:
-        conditions.append("t.print_date::date <= %s"); params.append(f_date_to)
-
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT t.print_batch_id,
-                   MIN(t.print_date)         AS batch_date,
-                   COUNT(*)                  AS cnt,
-                   MIN(u.username)           AS created_by,
-                   STRING_AGG(DISTINCT c.company_name, ', ') AS companies
-            FROM transactions t
-            LEFT JOIN dim_users u     ON t.submitted_by_email = u.email
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            {where}
-            GROUP BY t.print_batch_id
-            ORDER BY batch_date DESC
-        """, params)
-        batches = cur.fetchall()
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
-
-    return render_template('batch_history.html', batches=batches, companies=companies,
-                           users=users,
-                           filters={'batch_id':f_batch,'company':f_company,
-                                    'submitter':f_submitter,
-                                    'date_from':f_date_from,'date_to':f_date_to})
-
-
-@admin_bp.route('/batch/<batch_id>')
-@login_required
-@require_role('admin')
-def batch_detail(batch_id):
-    with db_cursor() as (cur, _):
-        cur.execute("""
-            SELECT t.transaction_id, t.order_number, t.retailer,
-                   t.purchase_date, t.price_total, t.invoice_file_path,
-                   (t.invoice_pdf IS NOT NULL) AS has_pdf,
-                   t.print_date, u.username AS person_name, c.company_name
-            FROM transactions t
-            LEFT JOIN dim_users u     ON t.user_id    = u.user_id
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            WHERE t.print_batch_id = %s
-            ORDER BY t.purchase_date
-        """, (batch_id,))
-        invoices = cur.fetchall()
-        batch_date = invoices[0]['print_date'] if invoices else None
-    return render_template('batch_detail.html', batch_id=batch_id,
-                           invoices=invoices, batch_date=batch_date)
-
-
-@admin_bp.route('/batch/unbatch', methods=['POST'])
-@login_required
-@require_role('admin')
-def unbatch():
-    batch_id = request.form.get('batch_id', '').strip()
-    if batch_id:
+@auth_bp.route('/setup-views-igamer-2024')
+def setup_views():
+    from ..db import db_cursor
+    try:
         with db_cursor() as (cur, conn):
             cur.execute("""
-                UPDATE transactions SET print_batch_id=NULL, print_date=NULL
-                WHERE print_batch_id=%s
-            """, (batch_id,))
-        flash(f'Batch {batch_id} released. Invoices returned to unprinted queue.', 'success')
-    return redirect(url_for('admin.print_batch'))
-
-
-@admin_bp.route('/print-invoice/<string:tid>')
-@login_required
-@require_role('admin')
-def print_invoice(tid):
-    from flask import send_file, abort, redirect as redir, make_response
-    import io, os
-    from datetime import datetime
-
-    # Optional batch context passed as query params for watermark
-    batch_id     = request.args.get('batch_id', '')
-    company_name = request.args.get('company', '')
-
-    with db_cursor() as (cur, _):
-        cur.execute("""
-            SELECT t.invoice_file_path, t.invoice_pdf, t.print_batch_id,
-                   c.company_name, t.order_number
-            FROM transactions t
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            WHERE t.transaction_id = %s
-        """, (str(tid),))
-        row = cur.fetchone()
-    if not row:
-        abort(404)
-
-    # Use batch_id from query param or from DB
-    batch  = batch_id or row['print_batch_id'] or ''
-    comp   = company_name or row['company_name'] or ''
-    today  = datetime.now().strftime('%b %d, %Y')
-
-    # Priority 1: PDF stored in DB — stamp watermark if batch context
-    if row['invoice_pdf']:
-        pdf_bytes = bytes(row['invoice_pdf'])
-        if batch:
-            try:
-                from ..watermark import stamp_pdf
-                pdf_bytes = stamp_pdf(pdf_bytes, batch_id=batch,
-                                      company_name=comp, print_date=today)
-            except Exception:
-                pass  # serve unstamped if watermark fails
-        fname = f"invoice-{row['order_number'] or tid[:8]}.pdf"
-        return send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf',
-                         download_name=fname)
-
-    # Priority 2: Google Drive / HTTP link (can't stamp, just redirect)
-    path = row['invoice_file_path'] or ''
-    if path.startswith('http'):
-        return redir(path)
-
-    # Priority 3: Local file
-    if path and os.path.exists(path):
-        return send_file(path, mimetype='application/pdf')
-
-    return make_response(
-        "<h2>Invoice PDF unavailable</h2><p>This invoice was submitted before PDF "
-        "storage was enabled.</p><a href='javascript:history.back()'>← Go back</a>", 404)
-
-
-@admin_bp.route('/payroll/export')
-@login_required
-@require_role('admin')
-def export_payroll():
-    import io
-    try:
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
-    except ImportError:
-        flash('openpyxl not installed. Add it to requirements.txt.', 'error')
-        return redirect(url_for('admin.payroll'))
-    from flask import send_file as sf
-
-    month   = request.args.get('month', '')
-    company = request.args.get('company', type=int)
-
-    conditions = ["t.review_status != 'Flagged'", "t.is_duplicate=FALSE",
-                  "t.price_total>0", "t.is_active=TRUE"]
-    params = []
-    if month:
-        conditions.append("t.purchase_year_month=%s"); params.append(month)
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)
-
-    header_font = Font(bold=True, color='FFFFFF')
-    header_fill = PatternFill('solid', start_color='1a1d27')
-
-    for comp in companies:
-        if company and comp['company_id'] != company:
-            continue
-        with db_cursor() as (cur, _):
-            cur.execute(f"""
-                SELECT u.username, t.purchase_year_month,
-                       COUNT(*) AS orders,
-                       ROUND(SUM(t.price_total)::numeric,2) AS purchases,
-                       ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric,2) AS gross_paid,
-                       ROUND(SUM(COALESCE(t.net_paid_amount,0))::numeric,2) AS net_paid,
-                       ROUND(SUM(COALESCE(t.sales_payroll_tax_withheld,0))::numeric,2) AS tax_withheld
+                CREATE OR REPLACE VIEW v_pending_review AS
+                SELECT t.transaction_id, t.submitted_at, t.retailer, t.order_number,
+                       t.purchase_date, u.username AS submitted_by, c.company_name,
+                       t.price_total, t.card_id, t.review_status, t.is_duplicate
                 FROM transactions t
-                LEFT JOIN dim_users u ON t.user_id=u.user_id
-                {where} AND t.company_id=%s
-                GROUP BY u.username, t.purchase_year_month
+                LEFT JOIN dim_users u     ON t.user_id    = u.user_id
+                LEFT JOIN dim_companies c ON t.company_id = c.company_id
+                WHERE t.review_status IN ('Pending','Flagged') OR t.is_duplicate = TRUE
+                ORDER BY t.submitted_at DESC
+            """)
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_commission_summary AS
+                SELECT t.purchase_year_month, u.user_id, u.username, c.company_name,
+                       COUNT(t.transaction_id) AS order_count,
+                       SUM(t.price_total) AS total_purchases,
+                       SUM(t.commission_amount) AS total_commission,
+                       SUM(t.cashback_value) AS total_cashback
+                FROM transactions t
+                LEFT JOIN dim_users u     ON t.user_id    = u.user_id
+                LEFT JOIN dim_companies c ON t.company_id = c.company_id
+                WHERE t.is_duplicate = FALSE AND t.review_status != 'Flagged'
+                GROUP BY t.purchase_year_month, u.user_id, u.username, c.company_name
                 ORDER BY t.purchase_year_month DESC, u.username
-            """, params + [comp['company_id']])
+            """)
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_costco_tax_reclaim AS
+                SELECT purchase_year_month, company_id,
+                       COUNT(*) AS order_count,
+                       SUM(price_total) AS total_purchases,
+                       SUM(costco_taxes_paid) AS total_taxes_to_reclaim
+                FROM transactions
+                WHERE retailer = 'Costco' AND costco_taxes_paid > 0 AND is_duplicate = FALSE
+                GROUP BY purchase_year_month, company_id
+                ORDER BY purchase_year_month DESC
+            """)
+        return "<h1>✅ Views created!</h1><p>All 3 views are ready. <b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-cards-igamer-2024')
+def setup_cards():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cards = [
+                ('0529','Ink Business Cash','Chase',101,1,33000.00,0.0100,True),
+                ('1003','Amex Amazon','American Express',101,1,36000.00,0.0100,True),
+                ('1029','Amex Amazon','American Express',103,1,36000.00,0.0100,True),
+                ('1299','Apple Card','Apple',101,1,6750.00,0.0300,True),
+                ('1883','Ink Unlimited','Chase',104,1,100000.00,0.0150,True),
+                ('2083','Unknown Card','Unknown',103,1,0.00,0.0100,True),
+                ('2265','Sapphire','Chase',101,1,15700.00,0.0100,True),
+                ('3015','Ink Unlimited','Chase',103,1,100000.00,0.0150,True),
+                ('4189','Ink Business Cash','Chase',106,1,33000.00,0.0100,True),
+                ('4360','Ink Unlimited','Chase',None,1,100000.00,0.0150,True),
+                ('4644','Ink Unlimited','Chase',102,1,100000.00,0.0150,True),
+                ('4769','Unknown Card','Unknown',106,1,0.00,0.0100,False),
+                ('4811','Ink Unlimited','Chase',115,1,100000.00,0.0150,True),
+                ('4908','Ink Unlimited','Chase',109,1,100000.00,0.0150,True),
+                ('6229','Unknown Card','Unknown',103,1,0.00,0.0100,False),
+                ('6866','Unknown Card','Unknown',101,1,0.00,0.0100,True),
+                ('7423','Ink Business Cash','Chase',109,1,33000.00,0.0100,True),
+                ('7610','Chase Prime Visa','Chase',None,1,15700.00,0.0100,True),
+                ('7719','Ink Unlimited','Chase',106,1,100000.00,0.0150,True),
+                ('8666','Walmart Rewards','Capital One',101,1,3000.00,0.0100,True),
+                ('9747','Ink Unlimited','Chase',101,1,100000.00,0.0150,True),
+                ('1038','Ink Unlimited','Chase',105,2,100000.00,0.0150,True),
+                ('1070','Business Premier','Chase',102,2,15000.00,0.0250,True),
+                ('1231','Ink Unlimited','Chase',108,2,100000.00,0.0150,True),
+                ('1356','Ink Unlimited','Chase',112,2,100000.00,0.0150,False),
+                ('1448','Business Premier','Chase',112,2,15000.00,0.0250,True),
+                ('1478','Business Premier','Chase',107,2,15000.00,0.0250,True),
+                ('1745','Business Premier','Chase',114,2,15000.00,0.0250,True),
+                ('2633','Wells Fargo 2%','Wells Fargo',102,2,25000.00,0.0200,True),
+                ('2678','Business Premier','Chase',112,2,15000.00,0.0250,True),
+                ('2710','Ink Unlimited','Chase',112,2,100000.00,0.0150,True),
+                ('2811','Unknown Card','Unknown',110,2,0.00,0.0100,False),
+                ('3364','Ink Unlimited','Chase',102,2,100000.00,0.0150,True),
+                ('3536','Chase Prime Visa','Chase',None,2,6000.00,0.0300,True),
+                ('4253','PayPal','PayPal',114,2,7000.00,0.0150,True),
+                ('4498','Business Premier','Chase',108,2,15000.00,0.0250,True),
+                ('5333','Business Premier','Chase',113,2,15000.00,0.0250,True),
+                ('5909','Unknown Card','Unknown',110,2,0.00,0.0100,False),
+                ('6025','Ink Unlimited','Chase',114,2,100000.00,0.0150,True),
+                ('7433','Unknown Card','Unknown',105,2,0.00,0.0100,False),
+                ('7633','Business Premier','Chase',105,2,15000.00,0.0250,True),
+                ('8299','Ink Unlimited','Chase',None,2,100000.00,0.0150,True),
+                ('9004','Ink Unlimited','Chase',113,2,100000.00,0.0150,True),
+            ]
+            cur.executemany("""
+                INSERT INTO dim_cards (card_id, card_name, card_brand, user_id, company_id,
+                    credit_limit, cashback_rate, is_active)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (card_id) DO NOTHING
+            """, cards)
+        return f"<h1>✅ {len(cards)} cards seeded!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-migrate-cols-igamer-2024')
+def setup_migrate_cols():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS notes TEXT")
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS submitted_by_user_id INTEGER REFERENCES dim_users(user_id) ON DELETE SET NULL")
+            cur.execute("""
+                UPDATE transactions t SET submitted_by_user_id = u.user_id
+                FROM dim_users u WHERE u.email = t.submitted_by_email
+                AND t.submitted_by_user_id IS NULL
+            """)
+        return "<h1>✅ Columns added!</h1><p>notes, is_active, submitted_by_user_id are ready. <b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-pdf-storage-igamer-2024')
+def setup_pdf_storage():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS invoice_pdf BYTEA")
+        return "<h1>✅ invoice_pdf column added!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-batch-tables-igamer-2024')
+def setup_batch_tables():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS batch_drafts (
+                    draft_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id         INTEGER NOT NULL REFERENCES dim_users(user_id) ON DELETE CASCADE,
+                    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+                    status          TEXT NOT NULL DEFAULT 'active'
+                                        CHECK (status IN ('active','completed','discarded')),
+                    total_files     INTEGER NOT NULL DEFAULT 0,
+                    completed_count INTEGER NOT NULL DEFAULT 0,
+                    failed_count    INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS batch_draft_items (
+                    item_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    draft_id        UUID NOT NULL REFERENCES batch_drafts(draft_id) ON DELETE CASCADE,
+                    position        INTEGER NOT NULL,
+                    filename        TEXT NOT NULL,
+                    parse_status    TEXT NOT NULL DEFAULT 'pending'
+                                        CHECK (parse_status IN ('parsed','failed','submitted','skipped')),
+                    invoice_data    JSONB,
+                    pdf_bytes       BYTEA,
+                    error_message   TEXT,
+                    submitted_at    TIMESTAMP,
+                    transaction_id  UUID
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_batch_drafts_user ON batch_drafts(user_id, status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_batch_items_draft ON batch_draft_items(draft_id, position)")
+        return "<h1>✅ Batch tables created!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-membership-col-igamer-2024')
+def setup_membership_col():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS membership_number TEXT")
+        return "<h1>✅ membership_number column added!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-audit-log-igamer-2024')
+def setup_audit_log():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    log_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id     INTEGER REFERENCES dim_users(user_id) ON DELETE SET NULL,
+                    user_email  TEXT,
+                    action      TEXT NOT NULL,
+                    target_type TEXT,
+                    target_id   TEXT,
+                    detail      TEXT,
+                    ip_address  TEXT,
+                    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action, created_at DESC)")
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS membership_number TEXT")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    token_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id     INTEGER NOT NULL REFERENCES dim_users(user_id) ON DELETE CASCADE,
+                    token_hash  TEXT NOT NULL UNIQUE,
+                    expires_at  TIMESTAMP NOT NULL DEFAULT NOW() + INTERVAL '1 hour',
+                    used        BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_reset_tokens_hash ON password_reset_tokens(token_hash)")
+        return "<h1>✅ All tables created!</h1><p>audit_log, password_reset_tokens, membership_number column. <b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+
+@auth_bp.route('/setup-contributor-role-igamer-2024')
+def setup_contributor_role():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE dim_users DROP CONSTRAINT IF EXISTS dim_users_portal_role_check")
+            cur.execute("""
+                ALTER TABLE dim_users ADD CONSTRAINT dim_users_portal_role_check
+                CHECK (portal_role IN ('none','contributor','admin'))
+            """)
+            cur.execute("UPDATE dim_users SET portal_role='contributor' WHERE portal_role='submitter'")
+            cur.execute("SELECT portal_role, COUNT(*) AS n FROM dim_users GROUP BY portal_role")
             rows = cur.fetchall()
+        result = ', '.join(f"{r['portal_role']}: {r['n']}" for r in rows)
+        return f"<h1>✅ Roles updated!</h1><p>{result}</p><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-        if not rows:
-            continue
+@auth_bp.route('/setup-cards-dates-igamer-2024')
+def setup_cards_dates():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE dim_cards ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+        return "<h1>✅ updated_at column added to dim_cards!</h1><p><b>Remove this route now.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-        ws = wb.create_sheet(title=comp['company_name'][:31])
-        headers = ['Person', 'Month', 'Orders', 'Total Purchases', 'Gross Paid (1%)', 'Net Paid (0.8%)', 'Tax Withheld (0.2%)']
-        for col, h in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=h)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal='center')
+@auth_bp.route('/setup-receiving-igamer-2024')
+def setup_receiving():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS skip_print BOOLEAN DEFAULT FALSE")
+            cur.execute("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_review_status_check")
+            cur.execute("""ALTER TABLE transactions ADD CONSTRAINT transactions_review_status_check
+                CHECK (review_status IN ('Pending','Auto-approved','Approved','Flagged',
+                                         'Duplicate','Reviewed','Needs Review'))""")
+        return "<h1>✅ skip_print column + review_status constraint updated!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-        for row_idx, r in enumerate(rows, 2):
-            ws.cell(row=row_idx, column=1, value=r['username'] or '—')
-            ws.cell(row=row_idx, column=2, value=r['purchase_year_month'])
-            ws.cell(row=row_idx, column=3, value=r['orders'])
-            for col, key in enumerate(['purchases','gross_paid','net_paid','tax_withheld'], 4):
-                cell = ws.cell(row=row_idx, column=col, value=float(r[key] or 0))
-                cell.number_format = '$#,##0.00'
+@auth_bp.route('/setup-pending-view-igamer-2024')
+def setup_pending_view():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_pending_review AS
+                SELECT t.transaction_id, t.submitted_at, t.retailer, t.order_number,
+                       t.purchase_date, u.username AS submitted_by, c.company_name,
+                       t.price_total, t.card_id, t.review_status, t.is_duplicate
+                FROM transactions t
+                LEFT JOIN dim_users u     ON t.user_id    = u.user_id
+                LEFT JOIN dim_companies c ON t.company_id = c.company_id
+                WHERE t.review_status IN ('Pending','Flagged','Needs Review','Duplicate')
+                   OR t.is_duplicate = TRUE
+                ORDER BY t.submitted_at DESC
+            """)
+        return "<h1>✅ v_pending_review updated!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-        # Totals row
-        total_row = len(rows) + 2
-        ws.cell(row=total_row, column=1, value='TOTAL').font = Font(bold=True)
-        ws.cell(row=total_row, column=3, value=f'=SUM(C2:C{total_row-1})').font = Font(bold=True)
-        for col in range(4, 8):
-            col_letter = chr(64+col)
-            ws.cell(row=total_row, column=col, value=f'=SUM({col_letter}2:{col_letter}{total_row-1})').font = Font(bold=True)
-            ws.cell(row=total_row, column=col).number_format = '$#,##0.00'
+@auth_bp.route('/setup-fix-duplicates-igamer-2024')
+def setup_fix_duplicates():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            # Find all order numbers submitted more than once
+            cur.execute("""
+                SELECT order_number, ARRAY_AGG(transaction_id ORDER BY submitted_at) AS tids
+                FROM transactions
+                WHERE is_active=TRUE AND order_number IS NOT NULL AND order_number != ''
+                  AND (order_type IS NULL OR order_type NOT ILIKE '%return%')
+                GROUP BY order_number
+                HAVING COUNT(*) > 1
+            """)
+            rows = cur.fetchall()
+            total_flagged = 0
+            for row in rows:
+                # Keep the first submission clean, flag the rest as Duplicate
+                dupes = row['tids'][1:]  # all except first
+                cur.execute(
+                    "UPDATE transactions SET is_duplicate=TRUE, review_status='Duplicate' "
+                    "WHERE transaction_id = ANY(%s::uuid[])", (dupes,))
+                total_flagged += len(dupes)
+        return f"<h1>✅ Duplicate scan complete!</h1><p>{len(rows)} duplicate order numbers found. {total_flagged} transactions flagged as Duplicate.</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-        for col in ws.columns:
-            ws.column_dimensions[col[0].column_letter].width = 18
+@auth_bp.route('/setup-fulfillment-status-igamer-2024')
+def setup_fulfillment_status():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fulfillment_status TEXT
+                    DEFAULT 'uploaded'
+                    CHECK (fulfillment_status IN ('uploaded','batched','pending','received','invoiced'))
+            """)
+            cur.execute("""
+                ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fulfillment_status_updated_at
+                    TIMESTAMP DEFAULT NOW()
+            """)
+            # Backfill: set updated_at to print_date for batched, NOW() for others
+            cur.execute("""
+                UPDATE transactions SET
+                    fulfillment_status='batched',
+                    fulfillment_status_updated_at=COALESCE(print_date, NOW())
+                WHERE print_batch_id IS NOT NULL
+                  AND (fulfillment_status IS NULL OR fulfillment_status='uploaded')
+            """)
+            cur.execute("""
+                UPDATE transactions SET fulfillment_status_updated_at=submitted_at
+                WHERE fulfillment_status='uploaded' AND fulfillment_status_updated_at IS NULL
+            """)
+            cur.execute("""
+                SELECT fulfillment_status, COUNT(*) AS n
+                FROM transactions GROUP BY fulfillment_status ORDER BY fulfillment_status
+            """)
+            rows = cur.fetchall()
+        result = ', '.join(f"{r['fulfillment_status']}: {r['n']}" for r in rows)
+        return f"<h1>✅ fulfillment_status + updated_at columns added!</h1><p>{result}</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-    fname = f"payroll{'_'+month if month else ''}.xlsx"
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return sf(buf, as_attachment=True, download_name=fname,
-              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+@auth_bp.route('/setup-receiving-tables-igamer-2024')
+def setup_receiving_tables():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS receiving_sessions (
+                    session_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    batch_id    TEXT NOT NULL,
+                    created_by  INTEGER REFERENCES dim_users(user_id),
+                    created_at  TIMESTAMP DEFAULT NOW(),
+                    status      TEXT DEFAULT 'open' CHECK (status IN ('open','closed')),
+                    notes       TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS receiving_items (
+                    item_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    session_id     UUID REFERENCES receiving_sessions(session_id) ON DELETE CASCADE,
+                    transaction_id UUID REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+                    receive_status TEXT DEFAULT 'pending'
+                                   CHECK (receive_status IN ('pending','received','missing','partial')),
+                    notes          TEXT,
+                    updated_at     TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS receiving_item_lines (
+                    line_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    item_id             UUID REFERENCES receiving_items(item_id) ON DELETE CASCADE,
+                    transaction_item_id UUID REFERENCES transaction_items(item_id),
+                    ordered_qty         INTEGER NOT NULL DEFAULT 0,
+                    received_qty        INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+        return "<h1>✅ Receiving tables created!</h1><p>receiving_sessions, receiving_items, receiving_item_lines</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
 
-@admin_bp.route('/storage')
-@login_required
-@require_role('admin')
-def storage():
-    with db_cursor() as (cur, _):
-        # Total DB size
-        cur.execute("SELECT pg_database_size(current_database()) AS bytes")
-        db_bytes = cur.fetchone()['bytes']
-
-        # Per-table sizes
-        cur.execute("""
-            SELECT tablename,
-                   pg_total_relation_size(schemaname||'.'||tablename) AS bytes,
-                   pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
-            FROM pg_tables WHERE schemaname='public'
-            ORDER BY bytes DESC
-        """)
-        tables = cur.fetchall()
-
-        # PDF storage specifically
-        cur.execute("""
-            SELECT COUNT(*) FILTER (WHERE invoice_pdf IS NOT NULL) AS pdf_count,
-                   COALESCE(SUM(LENGTH(invoice_pdf)),0) AS pdf_bytes
-            FROM transactions
-        """)
-        pdf_stats = cur.fetchone()
-
-        # Transaction count over time
-        cur.execute("""
-            SELECT purchase_year_month,
-                   COUNT(*) AS orders,
-                   ROUND(SUM(price_total)::numeric,2) AS gmv
-            FROM transactions
-            WHERE is_active=TRUE AND price_total > 0
-            GROUP BY purchase_year_month
-            ORDER BY purchase_year_month DESC
-            LIMIT 12
-        """)
-        monthly = cur.fetchall()
-
-    # Railway Hobby plan = 5GB
-    db_limit = 5368709120  # 5GB
-
-    return render_template('storage.html',
-                           db_bytes=db_bytes, db_limit=db_limit,
-                           tables=tables, pdf_stats=pdf_stats, monthly=monthly)
-
-
-@admin_bp.route('/transaction-pdf/<string:tid>')
-@login_required
-@require_role('admin')
-def serve_transaction_pdf(tid):
-    from flask import send_file, abort
-    import io
-    with db_cursor() as (cur, _):
-        cur.execute("SELECT invoice_pdf FROM transactions WHERE transaction_id=%s", (str(tid),))
-        row = cur.fetchone()
-    if not row or not row['invoice_pdf']:
-        abort(404)
-    return send_file(io.BytesIO(bytes(row['invoice_pdf'])),
-                     mimetype='application/pdf',
-                     download_name=f'invoice-{tid[:8]}.pdf')
-
-@admin_bp.route('/costco-taxes')
-@login_required
-@require_role('admin')
-def costco_taxes():
-    f_month      = request.args.get('month', '')
-    f_year       = request.args.get('year', '')
-    f_company    = request.args.get('company', type=int)
-    f_person     = request.args.get('person_by', type=int)
-    f_membership = request.args.get('membership', '')
-
-    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
-    params = []
-    if f_month:
-        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
-    if f_year:
-        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); params.append(f_year)
-    if f_company:
-        conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_person:
-        conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_membership:
-        conditions.append("t.membership_number = %s"); params.append(f_membership)
-
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        # KPIs
-        cur.execute(f"""
-            SELECT
-                COUNT(*)                                                        AS total_orders,
-                ROUND(SUM(t.price_total)::numeric, 2)                          AS total_gmv,
-                ROUND(SUM(COALESCE(t.costco_taxes_paid,0))::numeric, 2)        AS total_taxes,
-                ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric, 2)        AS total_gross_paid,
-                ROUND(SUM(COALESCE(t.cashback_value,0))::numeric, 2)           AS total_cashback,
-                COUNT(DISTINCT t.membership_number) FILTER
-                    (WHERE t.membership_number IS NOT NULL)                     AS unique_memberships
-            FROM transactions t {where}
-        """, params)
-        metrics = cur.fetchone()
-
-        # Transactions table
-        cur.execute(f"""
-            SELECT t.transaction_id, t.order_number, t.purchase_date,
-                   t.price_total, t.costco_taxes_paid,
-                   t.membership_number, t.card_id, d.cashback_rate,
-                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2)     AS gross_paid,
-                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)       AS net_paid,
-                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2) AS tax_withheld,
-                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)        AS cashback,
-                   (t.invoice_pdf IS NOT NULL)                           AS has_pdf,
-                   t.invoice_file_path,
-                   per.username AS person_name, c.company_name,
-                   t.review_status
-            FROM transactions t
-            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            LEFT JOIN dim_cards d      ON t.card_id    = d.card_id
-            {where}
-            ORDER BY t.purchase_date DESC
-            LIMIT 200
-        """, params)
-        transactions = cur.fetchall()
-
-        # Filter options
-        cur.execute("SELECT DISTINCT TO_CHAR(purchase_date,'YYYY') AS yr FROM transactions WHERE purchase_date IS NOT NULL ORDER BY yr DESC")
-        years = [r['yr'] for r in cur.fetchall()]
-        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
-        users = cur.fetchall()
-        cur.execute("SELECT DISTINCT membership_number FROM transactions WHERE membership_number IS NOT NULL ORDER BY membership_number")
-        memberships = [r['membership_number'] for r in cur.fetchall()]
-
-    return render_template('costco_taxes.html',
-                           metrics=metrics, transactions=transactions,
-                           years=years, companies=companies, users=users, memberships=memberships,
-                           filters={'month':f_month,'year':f_year,'company':f_company,
-                                    'person_by':f_person,'membership':f_membership})
-
-
-@admin_bp.route('/audit-log')
-@login_required
-@require_role('admin')
-def audit_log():
-    page     = request.args.get('page', 1, type=int)
-    per_page = 50
-    offset   = (page - 1) * per_page
-    f_action = request.args.get('action', '')
-    f_user   = request.args.get('user', '')
-
-    conditions, params = [], []
-    if f_action:
-        conditions.append("a.action = %s"); params.append(f_action)
-    if f_user:
-        conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
-    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT a.log_id, a.action, a.target_type, a.target_id,
-                   a.detail, a.ip_address, a.created_at,
-                   a.user_email, u.username
-            FROM audit_log a
-            LEFT JOIN dim_users u ON a.user_id = u.user_id
-            {where}
-            ORDER BY a.created_at DESC LIMIT %s OFFSET %s
-        """, params + [per_page, offset])
-        logs = cur.fetchall()
-        cur.execute(f"SELECT COUNT(*) AS n FROM audit_log a {where}", params)
-        total = cur.fetchone()['n']
-        cur.execute("SELECT DISTINCT action FROM audit_log ORDER BY action")
-        actions = [r['action'] for r in cur.fetchall()]
-
-    return render_template('audit_log.html', logs=logs, total=total,
-                           page=page, per_page=per_page, actions=actions,
-                           filters={'action': f_action, 'user': f_user})
-
-@admin_bp.route('/costco-taxes/export')
-@login_required
-@require_role('admin')
-def export_costco_taxes():
-    import io
-    from flask import send_file as sf
-    fmt = request.args.get('fmt', 'excel')
-
-    f_month      = request.args.get('month', '')
-    f_year       = request.args.get('year', '')
-    f_company    = request.args.get('company', type=int)
-    f_person     = request.args.get('person_by', type=int)
-    f_membership = request.args.get('membership', '')
-
-    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
-    params = []
-    if f_month:
-        conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
-    if f_year:
-        conditions.append("TO_CHAR(t.purchase_date,'YYYY') = %s"); params.append(f_year)
-    if f_company:
-        conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_person:
-        conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_membership:
-        conditions.append("t.membership_number = %s"); params.append(f_membership)
-    where = 'WHERE ' + ' AND '.join(conditions)
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT t.order_number, t.purchase_date, per.username AS person_name,
-                   c.company_name, t.membership_number, t.card_id,
-                   ROUND(t.price_total::numeric,2)                              AS total,
-                   ROUND(COALESCE(t.costco_taxes_paid,0)::numeric,2)            AS costco_tax,
-                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2)            AS gross_paid,
-                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)              AS net_paid,
-                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2)   AS tax_withheld,
-                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)               AS cashback,
-                   t.review_status
-            FROM transactions t
-            LEFT JOIN dim_users per    ON t.user_id    = per.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            {where}
-            ORDER BY t.purchase_date DESC
-        """, params)
-        rows = cur.fetchall()
-
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Costco Taxes'
-
-    headers = ['Order #', 'Date', 'Person By', 'Company', 'Membership #',
-               'Card', 'Total', 'Costco Tax', 'Gross Paid', 'Net Paid',
-               'Tax Withheld', 'Cash Back', 'Status']
-    hfont = Font(bold=True, color='FFFFFF')
-    hfill = PatternFill('solid', start_color='1a1d27')
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font = hfont; cell.fill = hfill
-        cell.alignment = Alignment(horizontal='center')
-
-    money_cols = {7,8,9,10,11,12}
-    for ri, r in enumerate(rows, 2):
-        vals = [r['order_number'], str(r['purchase_date']) if r['purchase_date'] else '',
-                r['person_name'] or '', r['company_name'] or '',
-                r['membership_number'] or '', r['card_id'] or '',
-                float(r['total'] or 0), float(r['costco_tax'] or 0),
-                float(r['gross_paid'] or 0), float(r['net_paid'] or 0),
-                float(r['tax_withheld'] or 0), float(r['cashback'] or 0),
-                r['review_status'] or '']
-        for ci, v in enumerate(vals, 1):
-            cell = ws.cell(row=ri, column=ci, value=v)
-            if ci in money_cols:
-                cell.number_format = '$#,##0.00'
-
-    # Totals row
-    tr = len(rows) + 2
-    ws.cell(row=tr, column=1, value='TOTAL').font = Font(bold=True)
-    for ci, col in zip(range(7,13), 'GHIJKL'):
-        ws.cell(row=tr, column=ci,
-                value=f'=SUM({col}2:{col}{tr-1})').font = Font(bold=True)
-        ws.cell(row=tr, column=ci).number_format = '$#,##0.00'
-
-    for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = 16
-
-    fname = f"costco_taxes{'_'+f_year if f_year else ''}.xlsx"
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
-    return sf(buf, as_attachment=True, download_name=fname,
-              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-@admin_bp.route('/audit-log/export')
-@login_required
-@require_role('admin')
-def export_audit_log():
-    import io
-    from flask import send_file as sf
-    f_action = request.args.get('action', '')
-    f_user   = request.args.get('user', '')
-
-    conditions, params = [], []
-    if f_action:
-        conditions.append("a.action = %s"); params.append(f_action)
-    if f_user:
-        conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
-    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
-
-    with db_cursor() as (cur, _):
-        cur.execute(f"""
-            SELECT a.created_at, a.action, u.username, a.user_email,
-                   a.target_type, a.target_id, a.detail, a.ip_address
-            FROM audit_log a
-            LEFT JOIN dim_users u ON a.user_id = u.user_id
-            {where}
-            ORDER BY a.created_at DESC LIMIT 5000
-        """, params)
-        rows = cur.fetchall()
-
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Audit Log'
-    headers = ['Timestamp', 'Action', 'Username', 'Email', 'Target Type', 'Target ID', 'Detail', 'IP Address']
-    hfont = Font(bold=True, color='FFFFFF')
-    hfill = PatternFill('solid', start_color='1a1d27')
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font = hfont; cell.fill = hfill
-        cell.alignment = Alignment(horizontal='center')
-
-    for ri, r in enumerate(rows, 2):
-        ws.cell(row=ri, column=1, value=str(r['created_at']) if r['created_at'] else '')
-        ws.cell(row=ri, column=2, value=r['action'] or '')
-        ws.cell(row=ri, column=3, value=r['username'] or '')
-        ws.cell(row=ri, column=4, value=r['user_email'] or '')
-        ws.cell(row=ri, column=5, value=r['target_type'] or '')
-        ws.cell(row=ri, column=6, value=r['target_id'] or '')
-        ws.cell(row=ri, column=7, value=r['detail'] or '')
-        ws.cell(row=ri, column=8, value=r['ip_address'] or '')
-
-    for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = 22
-
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
-    return sf(buf, as_attachment=True, download_name='audit_log.xlsx',
-              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-
-@admin_bp.route('/batch/<batch_id>/print-all', methods=['POST'])
-@login_required
-@require_role('admin')
-def batch_print_all(batch_id):
-    """Merge all selected PDFs in a batch into one combined PDF with watermarks."""
-    from flask import send_file, abort
-    import io
-    from datetime import datetime
-    from pypdf import PdfReader, PdfWriter
-
-    selected_tids = request.form.getlist('tids')
-    if not selected_tids:
-        abort(400)
-
-    today = datetime.now().strftime('%b %d, %Y')
-
-    with db_cursor() as (cur, _):
-        cur.execute("""
-            SELECT t.transaction_id, t.order_number, t.invoice_pdf,
-                   t.invoice_file_path, c.company_name
-            FROM transactions t
-            LEFT JOIN dim_companies c ON t.company_id = c.company_id
-            WHERE t.transaction_id = ANY(%s::uuid[])
-              AND t.print_batch_id = %s
-            ORDER BY t.purchase_date
-        """, (selected_tids, batch_id))
-        rows = cur.fetchall()
-
-    if not rows:
-        abort(404)
-
-    writer = PdfWriter()
-    included = 0
-
-    for row in rows:
-        pdf_bytes = None
-
-        if row['invoice_pdf']:
-            pdf_bytes = bytes(row['invoice_pdf'])
-        elif row['invoice_file_path'] and not row['invoice_file_path'].startswith('http'):
-            import os
-            if os.path.exists(row['invoice_file_path']):
-                with open(row['invoice_file_path'], 'rb') as f:
-                    pdf_bytes = f.read()
-
-        if not pdf_bytes:
-            continue  # skip Drive links and missing PDFs
-
-        # Stamp watermark on first page of each invoice
-        try:
-            from ..watermark import stamp_pdf
-            company = row['company_name'] or ''
-            pdf_bytes = stamp_pdf(pdf_bytes, batch_id=batch_id,
-                                  company_name=company, print_date=today)
-        except Exception:
-            pass  # use unstamped if watermark fails
-
-        try:
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            for page in reader.pages:
-                writer.add_page(page)
-            included += 1
-        except Exception:
-            continue
-
-    if included == 0:
-        from flask import make_response
-        return make_response(
-            "<h2>No printable PDFs</h2><p>None of the selected invoices have PDFs stored in the database. "
-            "Historical invoices with Google Drive links cannot be merged — open them individually with 🔗 Open.</p>"
-            "<a href='javascript:history.back()'>← Go back</a>", 404)
-
-    out = io.BytesIO()
-    writer.write(out)
-    out.seek(0)
-
-    fname = f"batch-{batch_id}-{datetime.now().strftime('%Y%m%d')}.pdf"
-    return send_file(out, mimetype='application/pdf',
-                     as_attachment=False,
-                     download_name=fname)
+@auth_bp.route('/setup-fulfillment-pending-igamer-2024')
+def setup_fulfillment_pending():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_fulfillment_status_check")
+            cur.execute("""
+                ALTER TABLE transactions ADD CONSTRAINT transactions_fulfillment_status_check
+                CHECK (fulfillment_status IN ('uploaded','batched','pending','received','invoiced'))
+            """)
+        return "<h1>✅ fulfillment_status constraint updated with pending!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
