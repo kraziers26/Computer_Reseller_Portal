@@ -65,11 +65,17 @@ def dashboard():
                 ROUND(SUM(COALESCE(t.cashback_value,0))::numeric,2)    AS total_cashback,
                 COUNT(*) FILTER (WHERE t.review_status='Pending')        AS pending_count,
                 COUNT(*) FILTER (WHERE t.is_duplicate=TRUE)              AS dup_count,
-                COUNT(*) FILTER (WHERE t.review_status='Needs Review')   AS needs_review_count,
                 ROUND(SUM(COALESCE(t.costco_taxes_paid,0))::numeric,2) AS total_costco_taxes
             FROM transactions t {where}
         """, params)
         metrics = cur.fetchone()
+        
+        # Needs Review count — query separately without is_duplicate filter
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM transactions
+            WHERE is_active=TRUE AND review_status='Needs Review'
+        """)
+        needs_review_count = cur.fetchone()['n']
 
         # Recent submissions — join sub for role filter
         cur.execute(f"""
@@ -112,12 +118,51 @@ def dashboard():
 
     return render_template('dashboard.html',
                            metrics=metrics, recent=recent, pending_total=pending_total,
+                           needs_review_count=needs_review_count,
                            retailers=retailers, companies=companies, users=users, cards=cards, years=years,
                            filters={'month':f_month,'year':f_year,'company':f_company,
                                     'retailer':f_retailer,'submitter':f_submitter,
                                     'person_by':f_person,'card':f_card,
                                     'duplicates':f_duplicates,'order_number':f_order,
                                     'role':f_role,'needs_review':f_needs_review})
+
+
+@admin_bp.route('/submissions/bulk-action', methods=['POST'])
+@login_required
+@require_role('admin')
+def bulk_action():
+    from ..security import audit
+    action = request.form.get('action')
+    tids   = request.form.getlist('tids')
+    back   = request.form.get('back', url_for('admin.all_submissions'))
+    if not tids:
+        flash('No transactions selected.', 'error')
+        return redirect(back)
+    with db_cursor() as (cur, conn):
+        if action == 'approve':
+            cur.execute(
+                "UPDATE transactions SET review_status='Reviewed', review_date=NOW() "
+                "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+            flash(f'{len(tids)} transaction(s) approved.', 'success')
+        elif action == 'flag':
+            cur.execute(
+                "UPDATE transactions SET review_status='Flagged' "
+                "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+            flash(f'{len(tids)} transaction(s) flagged.', 'warning')
+        elif action == 'mark_duplicate':
+            cur.execute(
+                "UPDATE transactions SET is_duplicate=TRUE, review_status='Duplicate' "
+                "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+            flash(f'{len(tids)} transaction(s) marked as duplicate.', 'warning')
+        elif action == 'delete':
+            cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+            cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+            flash(f'{len(tids)} transaction(s) permanently deleted.', 'danger')
+        else:
+            flash('Unknown action.', 'error')
+    for tid in tids:
+        audit(f'bulk_{action}', 'transaction', tid)
+    return redirect(back)
 
 
 @admin_bp.route('/submissions/all')
