@@ -91,6 +91,12 @@
                        {{ 'background:#f87171;color:#fff;border-color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
           ✕ Missing
         </button>
+        <button onclick="setStatus('{{ iid }}','pending')"
+                class="rx-btn rx-pending {{ 'rx-active' if rs=='pending' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#6b7280;color:#fff;border-color:#6b7280' if rs=='pending' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ⏳ Pending
+        </button>
       </div>
       {% else %}
       <span style="font-size:11px;padding:3px 10px;border-radius:10px;
@@ -149,7 +155,7 @@ async function rxPost(payload) {
 function setStatus(iid, status) {
   const el = document.getElementById('item-' + iid);
   const panel = document.getElementById('partial-' + iid);
-  const colors = {received:'#10b981', partial:'#fbbf24', missing:'#f87171', pending:'var(--border)'};
+  const colors = {received:'#10b981', partial:'#fbbf24', missing:'#f87171', pending:'#6b7280'};
   el.style.borderLeftColor = colors[status] || 'var(--border)';
 
   // Update button styles
@@ -161,6 +167,8 @@ function setStatus(iid, status) {
       if (t==='received') { btn.style.background='#10b981'; btn.style.color='#fff'; btn.style.borderColor='#10b981'; }
       else if (t==='partial') { btn.style.background='#fbbf24'; btn.style.color='#1a1d27'; btn.style.borderColor='#fbbf24'; }
       else { btn.style.background='#f87171'; btn.style.color='#fff'; btn.style.borderColor='#f87171'; }
+    } else if (t==='pending' && status==='pending') {
+      btn.style.background='#6b7280'; btn.style.color='#fff'; btn.style.borderColor='#6b7280';
     } else {
       btn.style.background='var(--surface2)'; btn.style.color='var(--muted)'; btn.style.borderColor='var(--border)';
     }
