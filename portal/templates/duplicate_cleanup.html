@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Duplicate Cleanup — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <h1>Duplicate Cleanup</h1>
+    <p>{{ groups|length }} duplicate order numbers · {{ total_dupes }} transactions to remove</p>
+  </div>
+  <div class="flex gap-8">
+    <form method="POST" action="{{ url_for('admin.duplicate_cleanup') }}"
+          onsubmit="return confirm('Delete ALL {{ total_dupes }} duplicate transactions? This cannot be undone.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="delete_all">
+      <button type="submit" class="btn btn-sm"
+              style="background:rgba(239,68,68,.15);color:#f87171;border-color:#f87171">
+        ✕ Delete All Duplicates ({{ total_dupes }})
+      </button>
+    </form>
+    <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">← Back</a>
+  </div>
+</div>
+
+{% if not groups %}
+<div class="card" style="text-align:center;padding:48px;color:var(--muted)">
+  ✅ No duplicates found. All order numbers are unique.
+</div>
+{% else %}
+
+<div class="card" style="margin-bottom:12px;padding:12px 16px;font-size:13px;color:var(--muted)">
+  Each group below shows the same order number submitted more than once.
+  The <strong style="color:var(--text)">first submission</strong> (oldest) is kept.
+  All others are deleted. Returns are excluded automatically.
+</div>
+
+<div class="card">
+  <form method="POST" action="{{ url_for('admin.duplicate_cleanup') }}" id="cleanupForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="delete_selected">
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="selectAll" style="width:auto" onchange="toggleAll(this)"> Select all
+      </label>
+      <button type="submit" class="btn btn-sm"
+              style="background:rgba(239,68,68,.15);color:#f87171;border-color:#f87171"
+              onclick="return confirm('Delete selected duplicate transactions?')">
+        ✕ Delete Selected
+      </button>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Kept (1st)</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Duplicates to delete</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for g in groups %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px">
+          {% for tid in g.dup_tids %}
+          <input type="checkbox" name="tids" value="{{ tid }}" class="row-check" style="width:auto">
+          {% endfor %}
+        </td>
+        <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ g.order_number }}</td>
+        <td style="padding:8px 12px">{{ g.retailer or '—' }}</td>
+        <td style="padding:8px 12px">
+          <div style="font-size:12px">{{ g.kept_submitter or '—' }}</div>
+          <div style="font-size:11px;color:var(--muted)">{{ g.kept_date }}</div>
+        </td>
+        <td style="padding:8px 12px">
+          <span style="background:rgba(239,68,68,.12);color:#f87171;font-size:11px;
+                       padding:2px 8px;border-radius:10px;font-weight:600">
+            {{ g.dup_tids|length }} duplicate{{ 's' if g.dup_tids|length != 1 }}
+          </span>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">
+            {% for s in g.dup_submitters %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %}
+          </div>
+        </td>
+        <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(g.price_total or 0) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </form>
+</div>
+{% endif %}
+
+<script>
+function toggleAll(cb) {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
+}
+</script>
+{% endblock %}
