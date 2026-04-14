@@ -129,11 +129,28 @@ function clearAll() {
 </div>
 
 <div class="card" style="padding:0">
-  <div style="overflow-x:auto">
-    <table style="width:100%;min-width:1200px;border-collapse:collapse;font-size:13px">
+  <div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed">
+      <colgroup>
+        <col style="width:36px">
+        <col style="width:150px">
+        <col style="width:80px">
+        <col style="width:90px">
+        <col style="width:90px">
+        <col style="width:90px">
+        <col style="width:100px">
+        <col style="width:80px">
+        <col style="width:90px">
+        <col style="width:90px">
+        <col style="width:55px">
+        <col style="width:55px">
+        <col style="width:100px">
+        <col style="width:110px">
+        <col style="width:50px">
+      </colgroup>
       <thead>
         <tr style="background:var(--surface2)">
-          {% set th = "padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap" %}
+          {% set th = "padding:8px 10px;text-align:left;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" %}
           <th style="{{ th }}"></th>
           <th style="{{ th }}">Order #</th>
           <th style="{{ th }}">Retailer</th>
@@ -143,11 +160,10 @@ function clearAll() {
           <th style="{{ th }}">Card</th>
           <th style="{{ th }}">Company</th>
           <th style="{{ th }};text-align:right">Total</th>
-          <th style="{{ th }};text-align:right">Gross</th>
-          <th style="{{ th }};text-align:right">Net</th>
+          <th style="{{ th }};text-align:right">Gross / Net</th>
           <th style="{{ th }};text-align:right">Tax</th>
           <th style="{{ th }};text-align:right">CB</th>
-          <th style="{{ th }}">Review Status</th>
+          <th style="{{ th }}">Review</th>
           <th style="{{ th }}">Stage</th>
           <th style="{{ th }}"></th>
         </tr>
@@ -162,25 +178,25 @@ function clearAll() {
         <td style="padding:8px 14px">
           <input type="checkbox" name="tids" value="{{ r.transaction_id }}" style="width:auto" class="row-check">
         </td>
-        <td style="padding:8px 14px;font-family:var(--mono);font-size:12px;white-space:nowrap">
+        <td style="padding:7px 10px;font-family:var(--mono);font-size:12px;white-space:nowrap">
           <a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}"
              style="color:var(--accent2)">{{ r.order_number }}</a>
           {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
         </td>
-        <td style="padding:8px 14px;white-space:nowrap">{{ r.retailer }}</td>
-        <td style="padding:8px 14px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-        <td style="padding:8px 14px;white-space:nowrap">{{ r.person_name or '—' }}</td>
-        <td style="padding:8px 14px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.submitter_name or '—' }}</td>
-        <td style="padding:8px 14px;font-family:var(--mono);font-size:11px;white-space:nowrap">
+        <td style="padding:7px 10px;white-space:nowrap">{{ r.retailer }}</td>
+        <td style="padding:7px 10px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
+        <td style="padding:7px 10px;white-space:nowrap">{{ r.person_name or '—' }}</td>
+        <td style="padding:7px 10px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.submitter_name or '—' }}</td>
+        <td style="padding:7px 10px;font-family:var(--mono);font-size:11px;white-space:nowrap">
           {% if r.card_id %}{{ r.card_id }} <span style="color:var(--muted)">{{ "%.1f"|format((r.cashback_rate or 0)*100) }}%</span>{% else %}—{% endif %}
         </td>
-        <td style="padding:8px 14px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
-        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
-        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
-        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
-        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
-        <td style="padding:8px 14px;white-space:nowrap">
+        <td style="padding:7px 10px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
+        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
+        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
+        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
+        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
+        <td style="padding:7px 10px;white-space:nowrap">
           {% if rs == 'Auto-approved' or rs == 'Reviewed' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">✓ Approved</span>
           {% elif rs == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Pending</span>
           {% elif rs == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Flagged</span>
@@ -188,7 +204,7 @@ function clearAll() {
           {% elif rs == 'Duplicate' %}<span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Duplicate</span>
           {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:10px;padding:2px 7px;border-radius:10px">{{ rs }}</span>{% endif %}
         </td>
-        <td style="padding:8px 14px;white-space:nowrap">
+        <td style="padding:7px 10px;white-space:nowrap">
           {% if fs == 'uploaded' %}<span style="background:rgba(79,110,247,.12);color:#4f6ef7;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Uploaded{% if days > 0 %} · {{ days }}d{% endif %}</span>
           {% elif fs == 'batched' %}<span style="background:rgba(139,92,246,.12);color:{{ '#f87171' if stuck else '#8b5cf6' }};font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Batched · {{ days }}d{% if stuck %} ⚠{% endif %}</span>
           {% elif fs == 'received' %}<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Received{% if days > 0 %} · {{ days }}d{% endif %}</span>
