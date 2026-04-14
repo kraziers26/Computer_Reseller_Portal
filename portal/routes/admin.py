@@ -48,6 +48,11 @@ def dashboard():
         conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
     if f_fulfillment:
         conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
+    if f_stuck_days:
+        conditions.append(
+            "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
+            " / 86400 >= %s")
+        params.append(f_stuck_days)
     if f_role == 'contributor':
         conditions.append("sub.portal_role = 'contributor'")
     elif f_role == 'admin':
@@ -101,16 +106,26 @@ def dashboard():
         cur.execute("SELECT COUNT(*) AS n FROM v_pending_review")
         pending_total = cur.fetchone()['n']
 
-        # Pipeline funnel counts
+        # Pipeline funnel counts + timing
         cur.execute("""
             SELECT
                 COUNT(*) FILTER (WHERE fulfillment_status='uploaded' AND is_active=TRUE
-                                   AND is_duplicate=FALSE)                   AS uploaded,
+                                   AND is_duplicate=FALSE)                        AS uploaded,
                 COUNT(*) FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)  AS batched,
                 COUNT(*) FILTER (WHERE fulfillment_status='received' AND is_active=TRUE)  AS received,
                 COUNT(*) FILTER (WHERE fulfillment_status='invoiced' AND is_active=TRUE)  AS invoiced,
                 COUNT(*) FILTER (WHERE review_status='Needs Review'  AND is_active=TRUE)  AS needs_review_total,
-                COUNT(*) FILTER (WHERE review_status='Duplicate'     AND is_active=TRUE)  AS duplicates_total
+                COUNT(*) FILTER (WHERE review_status='Duplicate'     AND is_active=TRUE)  AS duplicates_total,
+                ROUND(AVG(EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400)
+                    FILTER (WHERE fulfillment_status='uploaded' AND is_active=TRUE
+                              AND is_duplicate=FALSE))                            AS avg_days_uploaded,
+                ROUND(AVG(EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400)
+                    FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)) AS avg_days_batched,
+                ROUND(MAX(EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400)
+                    FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)) AS max_days_batched,
+                COUNT(*) FILTER (WHERE fulfillment_status='batched' AND is_active=TRUE
+                    AND EXTRACT(EPOCH FROM (NOW()-COALESCE(fulfillment_status_updated_at,submitted_at)))/86400 >= 14
+                ) AS stuck_batched
             FROM transactions
         """)
         pipeline = cur.fetchone()
@@ -289,7 +304,8 @@ def all_submissions():
     f_person     = request.args.get('person_by', type=int)
     f_order      = request.args.get('order_number', '')
     f_role        = request.args.get('role', '')
-    f_fulfillment = request.args.get('fulfillment', '')
+    f_fulfillment  = request.args.get('fulfillment', '')
+    f_stuck_days   = request.args.get('stuck_days', type=int)  # filter: in status > N days
 
     conditions = ["t.is_active = TRUE"]
     params = []
@@ -317,6 +333,11 @@ def all_submissions():
         conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
     if f_fulfillment:
         conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
+    if f_stuck_days:
+        conditions.append(
+            "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
+            " / 86400 >= %s")
+        params.append(f_stuck_days)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -373,7 +394,8 @@ def all_submissions():
                            filters={'retailer':f_retailer,'company':f_company,'status':f_status,
                                     'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
                                     'card':f_card,'person_by':f_person,'order_number':f_order,
-                                    'role':f_role,'fulfillment':f_fulfillment})
+                                    'role':f_role,'fulfillment':f_fulfillment,
+                                    'stuck_days':f_stuck_days})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
@@ -624,7 +646,9 @@ def print_batch():
             with db_cursor() as (cur, conn):
                 cur.execute("""
                     UPDATE transactions
-                    SET print_batch_id=%s, print_date=NOW(), fulfillment_status='batched'
+                    SET print_batch_id=%s, print_date=NOW(),
+                        fulfillment_status='batched',
+                        fulfillment_status_updated_at=NOW()
                     WHERE transaction_id = ANY(%s::uuid[])
                 """, (batch_id, txn_ids))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
