@@ -127,6 +127,94 @@ def dashboard():
                                     'role':f_role,'needs_review':f_needs_review})
 
 
+
+
+@admin_bp.route('/duplicate-cleanup', methods=['GET', 'POST'])
+@login_required
+@require_role('admin')
+def duplicate_cleanup():
+    from ..security import audit
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'delete_all':
+            with db_cursor() as (cur, conn):
+                # Find all duplicate tids (keep first per order_number)
+                cur.execute("""
+                    SELECT ARRAY_AGG(transaction_id ORDER BY submitted_at) AS tids
+                    FROM transactions
+                    WHERE is_active=TRUE AND order_number IS NOT NULL AND order_number != ''
+                      AND (order_type IS NULL OR order_type NOT ILIKE '%return%')
+                    GROUP BY order_number
+                    HAVING COUNT(*) > 1
+                """)
+                rows = cur.fetchall()
+                to_delete = []
+                for row in rows:
+                    to_delete.extend(str(t) for t in row['tids'][1:])
+                if to_delete:
+                    cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
+                    cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
+            flash(f'Deleted {len(to_delete)} duplicate transactions.', 'success')
+            for tid in to_delete:
+                audit('bulk_delete_duplicate', 'transaction', tid)
+            return redirect(url_for('admin.duplicate_cleanup'))
+
+        elif action == 'delete_selected':
+            tids = request.form.getlist('tids')
+            if tids:
+                with db_cursor() as (cur, conn):
+                    cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+                    cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+                flash(f'Deleted {len(tids)} selected duplicate transactions.', 'success')
+                for tid in tids:
+                    audit('delete_duplicate', 'transaction', tid)
+            return redirect(url_for('admin.duplicate_cleanup'))
+
+    # Build groups of duplicates
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT
+                t.order_number,
+                MIN(t.retailer) AS retailer,
+                ARRAY_AGG(t.transaction_id ORDER BY t.submitted_at) AS tids,
+                ARRAY_AGG(COALESCE(u.username, t.submitted_by_email) ORDER BY t.submitted_at) AS submitters,
+                ARRAY_AGG(t.submitted_at::date::text ORDER BY t.submitted_at) AS dates,
+                ARRAY_AGG(t.price_total ORDER BY t.submitted_at) AS totals
+            FROM transactions t
+            LEFT JOIN dim_users u ON t.submitted_by_email = u.email
+            WHERE t.is_active=TRUE AND t.order_number IS NOT NULL AND t.order_number != ''
+              AND (t.order_type IS NULL OR t.order_type NOT ILIKE '%return%')
+            GROUP BY t.order_number
+            HAVING COUNT(*) > 1
+            ORDER BY COUNT(*) DESC, MIN(t.submitted_at) DESC
+        """)
+        rows = cur.fetchall()
+
+    groups = []
+    total_dupes = 0
+    for row in rows:
+        tids       = [str(t) for t in row['tids']]
+        submitters = row['submitters']
+        dates      = row['dates']
+        totals     = row['totals']
+        kept_tid   = tids[0]
+        dup_tids   = tids[1:]
+        total_dupes += len(dup_tids)
+        groups.append({
+            'order_number':   row['order_number'],
+            'retailer':       row['retailer'],
+            'kept_tid':       kept_tid,
+            'kept_submitter': submitters[0] if submitters else '—',
+            'kept_date':      dates[0] if dates else '—',
+            'dup_tids':       dup_tids,
+            'dup_submitters': submitters[1:],
+            'price_total':    totals[0] if totals else 0,
+        })
+
+    return render_template('duplicate_cleanup.html', groups=groups, total_dupes=total_dupes)
+
 @admin_bp.route('/submissions/bulk-action', methods=['POST'])
 @login_required
 @require_role('admin')
