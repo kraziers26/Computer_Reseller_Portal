@@ -250,6 +250,89 @@ def duplicate_cleanup():
 
     return render_template('duplicate_cleanup.html', groups=groups, total_dupes=total_dupes)
 
+@admin_bp.route('/submissions/export')
+@login_required
+@require_role('admin')
+def export_submissions():
+    import io
+    from openpyxl import Workbook
+    from flask import send_file
+    f_retailer   = request.args.get('retailer', '')
+    f_company    = request.args.get('company', type=int)
+    f_status     = request.args.get('status', '')
+    f_month      = request.args.get('month', '')
+    f_duplicates = request.args.get('duplicates', '')
+    f_submitter  = request.args.get('submitter', type=int)
+    f_card       = request.args.get('card', '')
+    f_person     = request.args.get('person_by', type=int)
+    f_order      = request.args.get('order_number', '')
+    f_role       = request.args.get('role', '')
+    f_fulfillment = request.args.get('fulfillment', '')
+    f_stuck_days  = request.args.get('stuck_days', type=int)
+
+    conditions = ["t.is_active = TRUE"]
+    params = []
+    if f_retailer: conditions.append("t.retailer = %s"); params.append(f_retailer)
+    if f_company:  conditions.append("t.company_id = %s"); params.append(f_company)
+    if f_status:   conditions.append("t.review_status = %s"); params.append(f_status)
+    if f_month:    conditions.append("t.purchase_year_month = %s"); params.append(f_month)
+    if f_duplicates: conditions.append("t.is_duplicate = TRUE")
+    if f_submitter: conditions.append("sub.user_id = %s"); params.append(f_submitter)
+    if f_card:     conditions.append("t.card_id = %s"); params.append(f_card)
+    if f_person:   conditions.append("t.user_id = %s"); params.append(f_person)
+    if f_order:    conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+    if f_role == 'contributor': conditions.append("sub.portal_role = 'contributor'")
+    elif f_role == 'admin':     conditions.append("sub.portal_role = 'admin'")
+    if f_fulfillment: conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
+    if f_stuck_days:
+        conditions.append("EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,t.submitted_at)))/86400 >= %s")
+        params.append(f_stuck_days)
+    where = 'WHERE ' + ' AND '.join(conditions)
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT t.order_number, t.retailer, t.purchase_date, t.price_total,
+                   t.review_status, t.fulfillment_status, t.submitted_at,
+                   t.fulfillment_status_updated_at,
+                   ROUND(EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,
+                         t.submitted_at)))/86400) AS days_in_status,
+                   sub.username AS submitter, per.username AS person_by,
+                   c.company_name, t.card_id, t.order_type, t.is_duplicate
+            FROM transactions t
+            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
+            LEFT JOIN dim_users per    ON t.user_id = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            {where}
+            ORDER BY t.submitted_at DESC
+        """, params)
+        rows = cur.fetchall()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Submissions"
+    headers = ['Order #','Retailer','Purchase Date','Total','Review Status',
+               'Fulfillment Stage','Days in Stage','Submitted At','Submitter',
+               'Person By','Company','Card','Order Type','Duplicate']
+    ws.append(headers)
+    for r in rows:
+        ws.append([
+            r['order_number'], r['retailer'],
+            r['purchase_date'].strftime('%Y-%m-%d') if r['purchase_date'] else '',
+            float(r['price_total'] or 0), r['review_status'],
+            r['fulfillment_status'], int(r['days_in_status'] or 0),
+            r['submitted_at'].strftime('%Y-%m-%d %H:%M') if r['submitted_at'] else '',
+            r['submitter'], r['person_by'], r['company_name'],
+            r['card_id'], r['order_type'], 'Yes' if r['is_duplicate'] else 'No'
+        ])
+    from openpyxl.styles import Font
+    for cell in ws[1]: cell.font = Font(bold=True)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name='submissions_export.xlsx')
+
+
 @admin_bp.route('/submissions/bulk-action', methods=['POST'])
 @login_required
 @require_role('admin')
