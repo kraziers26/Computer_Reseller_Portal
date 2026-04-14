@@ -46,10 +46,6 @@
       <option value="">All submitters</option>
       {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.submitter==u.user_id }}>{{ u.username }}</option>{% endfor %}
     </select>
-    <select name="submitter" style="width:140px" onchange="this.form.submit()">
-      <option value="">All submitters</option>
-      {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.submitter==u.user_id }}>{{ u.username }}</option>{% endfor %}
-    </select>
     <select name="company" style="width:150px" onchange="this.form.submit()">
       <option value="">All companies</option>
       {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
