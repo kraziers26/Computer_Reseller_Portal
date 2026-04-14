@@ -605,9 +605,20 @@ def setup_fulfillment_status():
                     CHECK (fulfillment_status IN ('uploaded','batched','received','invoiced'))
             """)
             cur.execute("""
-                UPDATE transactions SET fulfillment_status='batched'
+                ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fulfillment_status_updated_at
+                    TIMESTAMP DEFAULT NOW()
+            """)
+            # Backfill: set updated_at to print_date for batched, NOW() for others
+            cur.execute("""
+                UPDATE transactions SET
+                    fulfillment_status='batched',
+                    fulfillment_status_updated_at=COALESCE(print_date, NOW())
                 WHERE print_batch_id IS NOT NULL
                   AND (fulfillment_status IS NULL OR fulfillment_status='uploaded')
+            """)
+            cur.execute("""
+                UPDATE transactions SET fulfillment_status_updated_at=submitted_at
+                WHERE fulfillment_status='uploaded' AND fulfillment_status_updated_at IS NULL
             """)
             cur.execute("""
                 SELECT fulfillment_status, COUNT(*) AS n
@@ -615,6 +626,45 @@ def setup_fulfillment_status():
             """)
             rows = cur.fetchall()
         result = ', '.join(f"{r['fulfillment_status']}: {r['n']}" for r in rows)
-        return f"<h1>✅ fulfillment_status column added!</h1><p>{result}</p><p><b>Remove this route.</b></p>"
+        return f"<h1>✅ fulfillment_status + updated_at columns added!</h1><p>{result}</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-receiving-tables-igamer-2024')
+def setup_receiving_tables():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS receiving_sessions (
+                    session_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    batch_id    TEXT NOT NULL,
+                    created_by  INTEGER REFERENCES dim_users(user_id),
+                    created_at  TIMESTAMP DEFAULT NOW(),
+                    status      TEXT DEFAULT 'open' CHECK (status IN ('open','closed')),
+                    notes       TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS receiving_items (
+                    item_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    session_id     UUID REFERENCES receiving_sessions(session_id) ON DELETE CASCADE,
+                    transaction_id UUID REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+                    receive_status TEXT DEFAULT 'pending'
+                                   CHECK (receive_status IN ('pending','received','missing','partial')),
+                    notes          TEXT,
+                    updated_at     TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS receiving_item_lines (
+                    line_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    item_id             UUID REFERENCES receiving_items(item_id) ON DELETE CASCADE,
+                    transaction_item_id UUID REFERENCES transaction_items(transaction_item_id),
+                    ordered_qty         INTEGER NOT NULL DEFAULT 0,
+                    received_qty        INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+        return "<h1>✅ Receiving tables created!</h1><p>receiving_sessions, receiving_items, receiving_item_lines</p><p><b>Remove this route.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
