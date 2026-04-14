@@ -1,5 +1,32 @@
 {% extends "base.html" %}
-{% block title %}All Submissions — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}All Submissions — ComputerReseller Invoices Portal<script>
+function toggleAll(cb) {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
+  updateBar();
+}
+function updateBar() {
+  const checked = document.querySelectorAll('.row-check:checked');
+  const bar = document.getElementById('bulkBar');
+  const cnt = document.getElementById('bulkCount');
+  bar.style.display = checked.length > 0 ? 'flex' : 'none';
+  cnt.textContent = checked.length + ' selected';
+}
+document.addEventListener('change', function(e) {
+  if (e.target.classList.contains('row-check')) updateBar();
+});
+function doBulk(action) {
+  const checked = document.querySelectorAll('.row-check:checked');
+  if (!checked.length) return;
+  if (action === 'delete' && !confirm('Permanently delete ' + checked.length + ' transaction(s)? This cannot be undone.')) return;
+  document.getElementById('bulkAction').value = action;
+  document.getElementById('bulkForm').submit();
+}
+function clearAll() {
+  document.querySelectorAll('.row-check, #selectAll').forEach(c => c.checked = false);
+  updateBar();
+}
+</script>
+{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>All Submissions</h1><p>{{ total }} records</p></div>
@@ -141,4 +168,31 @@
   </div>
   {% endif %}
 </div>
+<script>
+function toggleAll(cb) {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
+  updateBar();
+}
+function updateBar() {
+  const checked = document.querySelectorAll('.row-check:checked');
+  const bar = document.getElementById('bulkBar');
+  const cnt = document.getElementById('bulkCount');
+  bar.style.display = checked.length > 0 ? 'flex' : 'none';
+  cnt.textContent = checked.length + ' selected';
+}
+document.addEventListener('change', function(e) {
+  if (e.target.classList.contains('row-check')) updateBar();
+});
+function doBulk(action) {
+  const checked = document.querySelectorAll('.row-check:checked');
+  if (!checked.length) return;
+  if (action === 'delete' && !confirm('Permanently delete ' + checked.length + ' transaction(s)? This cannot be undone.')) return;
+  document.getElementById('bulkAction').value = action;
+  document.getElementById('bulkForm').submit();
+}
+function clearAll() {
+  document.querySelectorAll('.row-check, #selectAll').forEach(c => c.checked = false);
+  updateBar();
+}
+</script>
 {% endblock %}
