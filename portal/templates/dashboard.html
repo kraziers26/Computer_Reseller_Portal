@@ -37,7 +37,15 @@
       <option value="">All cards</option>
       {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if filters.card==c.card_id }}>Card {{ c.card_id }} — {{ "%.1f"|format(c.cashback_rate*100) }}% Cash Back</option>{% endfor %}
     </select>
-    {% if filters.month or filters.year or filters.company or filters.retailer or filters.person_by or filters.card %}
+    <select name="fulfillment" style="width:140px" onchange="this.form.submit()">
+      <option value="">All stages</option>
+      <option value="uploaded" {{ 'selected' if filters.fulfillment=='uploaded' }}>Uploaded</option>
+      <option value="batched"  {{ 'selected' if filters.fulfillment=='batched'  }}>Batched</option>
+      <option value="pending"  {{ 'selected' if filters.fulfillment=='pending'  }}>Pending Pool</option>
+      <option value="received" {{ 'selected' if filters.fulfillment=='received' }}>Received</option>
+      <option value="invoiced" {{ 'selected' if filters.fulfillment=='invoiced' }}>Invoiced</option>
+    </select>
+    {% if filters.month or filters.year or filters.company or filters.retailer or filters.person_by or filters.card or filters.fulfillment %}
     <a href="{{ url_for('admin.dashboard') }}" class="btn btn-ghost btn-sm">Clear</a>
     {% endif %}
   </form>
@@ -74,13 +82,15 @@
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;position:relative">
 
     {% set stage_data = [
-      ('uploaded', '1', 'Uploaded',  '#4f6ef7', 'admin.all_submissions', {'fulfillment': 'uploaded'},
+      ('uploaded', '1', 'Uploaded',    '#4f6ef7', 'admin.all_submissions', {'fulfillment': 'uploaded'},
        pipeline.avg_days_uploaded, none, none),
-      ('batched',  '2', 'Batched',   '#8b5cf6', 'admin.all_submissions', {'fulfillment': 'batched'},
+      ('batched',  '2', 'Batched',     '#8b5cf6', 'admin.all_submissions', {'fulfillment': 'batched'},
        pipeline.avg_days_batched, pipeline.max_days_batched, pipeline.stuck_batched),
-      ('received', '3', 'Received',  '#10b981', 'admin.all_submissions', {'fulfillment': 'received'},
+      ('pending',  '3', 'Pending Pool','#f59e0b', 'receiving.pending_pool', {},
        none, none, none),
-      ('invoiced', '4', 'Invoiced',  '#6b7280', 'admin.all_submissions', {'fulfillment': 'invoiced'},
+      ('received', '4', 'Received',    '#10b981', 'admin.all_submissions', {'fulfillment': 'received'},
+       none, none, none),
+      ('invoiced', '5', 'Invoiced',    '#6b7280', 'admin.all_submissions', {'fulfillment': 'invoiced'},
        none, none, none),
     ] %}
 
