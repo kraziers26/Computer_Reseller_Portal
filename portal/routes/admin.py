@@ -113,6 +113,7 @@ def dashboard():
                 COUNT(*) FILTER (WHERE fulfillment_status='uploaded' AND is_active=TRUE
                                    AND is_duplicate=FALSE)                        AS uploaded,
                 COUNT(*) FILTER (WHERE fulfillment_status='batched'  AND is_active=TRUE)  AS batched,
+                COUNT(*) FILTER (WHERE fulfillment_status='pending'  AND is_active=TRUE)  AS pending,
                 COUNT(*) FILTER (WHERE fulfillment_status='received' AND is_active=TRUE)  AS received,
                 COUNT(*) FILTER (WHERE fulfillment_status='invoiced' AND is_active=TRUE)  AS invoiced,
                 COUNT(*) FILTER (WHERE review_status='Needs Review'  AND is_active=TRUE)  AS needs_review_total,
