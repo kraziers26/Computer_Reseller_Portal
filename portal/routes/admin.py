@@ -22,6 +22,7 @@ def dashboard():
     f_order       = request.args.get('order_number', '')
     f_role        = request.args.get('role', '')
     f_needs_review = request.args.get('needs_review', '')
+    f_fulfillment = request.args.get('fulfillment', '')
 
     conditions = ["t.price_total > 0", "t.is_active = TRUE"]
     params = []
