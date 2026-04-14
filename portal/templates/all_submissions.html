@@ -30,6 +30,7 @@ function clearAll() {
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>All Submissions</h1><p>{{ total }} records</p></div>
+  <a href="{{ url_for('admin.export_submissions', **request.args) }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
 </div>
 
 <div class="card" style="margin-bottom:16px">
@@ -127,81 +128,78 @@ function clearAll() {
   </form>
 </div>
 
-<div class="card">
-  <div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
+<div class="card" style="padding:0">
+  <div style="overflow-x:auto">
+    <table style="width:100%;min-width:1200px;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="background:var(--surface2)">
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Order #</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Card</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
-          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Gross</th>
-          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Net</th>
-          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Tax</th>
-          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">CB</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
-          <th style="padding:10px 12px;border-bottom:1px solid var(--border)"></th>
+          {% set th = "padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap" %}
+          <th style="{{ th }}"></th>
+          <th style="{{ th }}">Order #</th>
+          <th style="{{ th }}">Retailer</th>
+          <th style="{{ th }}">Date</th>
+          <th style="{{ th }}">Person By</th>
+          <th style="{{ th }}">Submitter</th>
+          <th style="{{ th }}">Card</th>
+          <th style="{{ th }}">Company</th>
+          <th style="{{ th }};text-align:right">Total</th>
+          <th style="{{ th }};text-align:right">Gross</th>
+          <th style="{{ th }};text-align:right">Net</th>
+          <th style="{{ th }};text-align:right">Tax</th>
+          <th style="{{ th }};text-align:right">CB</th>
+          <th style="{{ th }}">Review Status</th>
+          <th style="{{ th }}">Stage</th>
+          <th style="{{ th }}"></th>
         </tr>
       </thead>
       <tbody>
       {% for r in submissions %}
+      {% set rs = r.review_status %}
+      {% set fs = r.fulfillment_status or 'uploaded' %}
+      {% set days = r.days_in_status|float|round|int if r.days_in_status else 0 %}
+      {% set stuck = days >= 14 %}
       <tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:9px 12px;font-family:var(--mono);font-size:11px;white-space:nowrap">
-          {{ r.order_number[:18] }}{% if r.is_duplicate %} <span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:1px 5px;border-radius:3px">dup</span>{% endif %}
+        <td style="padding:8px 14px">
+          <input type="checkbox" name="tids" value="{{ r.transaction_id }}" style="width:auto" class="row-check">
         </td>
-        <td style="padding:9px 12px;white-space:nowrap">{{ r.retailer }}</td>
-        <td style="padding:9px 12px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-        <td style="padding:9px 12px;white-space:nowrap">{{ r.person_name or '—' }}</td>
-        <td style="padding:9px 12px;font-family:var(--mono);font-size:11px;white-space:nowrap">
+        <td style="padding:8px 14px;font-family:var(--mono);font-size:12px;white-space:nowrap">
+          <a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}"
+             style="color:var(--accent2)">{{ r.order_number }}</a>
+          {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
+        </td>
+        <td style="padding:8px 14px;white-space:nowrap">{{ r.retailer }}</td>
+        <td style="padding:8px 14px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
+        <td style="padding:8px 14px;white-space:nowrap">{{ r.person_name or '—' }}</td>
+        <td style="padding:8px 14px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.submitter_name or '—' }}</td>
+        <td style="padding:8px 14px;font-family:var(--mono);font-size:11px;white-space:nowrap">
           {% if r.card_id %}{{ r.card_id }} <span style="color:var(--muted)">{{ "%.1f"|format((r.cashback_rate or 0)*100) }}%</span>{% else %}—{% endif %}
         </td>
-        <td style="padding:9px 12px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
-        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
-        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
-        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
-        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
-        <td style="padding:9px 12px;white-space:nowrap">
-          {% set rs = r.review_status %}
-          {% set fs = r.fulfillment_status or 'uploaded' %}
-          {# Review status badge #}
+        <td style="padding:8px 14px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
+        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
+        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
+        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
+        <td style="padding:8px 14px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
+        <td style="padding:8px 14px;white-space:nowrap">
           {% if rs == 'Auto-approved' or rs == 'Reviewed' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">✓ Approved</span>
           {% elif rs == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Pending</span>
           {% elif rs == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Flagged</span>
           {% elif rs == 'Needs Review' %}<span style="background:rgba(251,146,60,.15);color:#fb923c;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Needs Review</span>
           {% elif rs == 'Duplicate' %}<span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Duplicate</span>
           {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:10px;padding:2px 7px;border-radius:10px">{{ rs }}</span>{% endif %}
-          {# Fulfillment stage badge with time-in-status #}
-          {% set days = r.days_in_status|float|round|int if r.days_in_status else 0 %}
-          {% set stuck = days >= 14 %}
-          {% if fs == 'uploaded' %}
-            <span style="background:rgba(79,110,247,.12);color:#4f6ef7;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500
-                         {{ ';outline:1px solid #f87171' if stuck else '' }}">
-              Uploaded{% if days > 0 %} · {{ days }}d{% endif %}
-            </span>
-          {% elif fs == 'batched' %}
-            <span style="background:rgba(139,92,246,.12);color:{{ '#f87171' if stuck else '#8b5cf6' }};font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500">
-              Batched{% if days > 0 %} · {{ days }}d{% if stuck %} ⚠{% endif %}{% endif %}
-            </span>
-          {% elif fs == 'received' %}
-            <span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500">
-              Received{% if days > 0 %} · {{ days }}d{% endif %}
-            </span>
-          {% elif fs == 'invoiced' %}
-            <span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500">
-              Invoiced
-            </span>
+        </td>
+        <td style="padding:8px 14px;white-space:nowrap">
+          {% if fs == 'uploaded' %}<span style="background:rgba(79,110,247,.12);color:#4f6ef7;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Uploaded{% if days > 0 %} · {{ days }}d{% endif %}</span>
+          {% elif fs == 'batched' %}<span style="background:rgba(139,92,246,.12);color:{{ '#f87171' if stuck else '#8b5cf6' }};font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Batched · {{ days }}d{% if stuck %} ⚠{% endif %}</span>
+          {% elif fs == 'received' %}<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Received{% if days > 0 %} · {{ days }}d{% endif %}</span>
+          {% elif fs == 'invoiced' %}<span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Invoiced</span>
           {% endif %}
         </td>
         <td style="padding:9px 12px"><a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}" class="btn btn-ghost btn-sm">Review</a></td>
       </tr>
       {% endfor %}
       {% if not submissions %}
-      <tr><td colspan="13" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
+      <tr><td colspan="16" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
       {% endif %}
       </tbody>
     </table>
