@@ -566,3 +566,30 @@ def setup_pending_view():
         return "<h1>✅ v_pending_review updated!</h1><p><b>Remove this route.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-fix-duplicates-igamer-2024')
+def setup_fix_duplicates():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            # Find all order numbers submitted more than once
+            cur.execute("""
+                SELECT order_number, ARRAY_AGG(transaction_id ORDER BY submitted_at) AS tids
+                FROM transactions
+                WHERE is_active=TRUE AND order_number IS NOT NULL AND order_number != ''
+                  AND (order_type IS NULL OR order_type NOT ILIKE '%return%')
+                GROUP BY order_number
+                HAVING COUNT(*) > 1
+            """)
+            rows = cur.fetchall()
+            total_flagged = 0
+            for row in rows:
+                # Keep the first submission clean, flag the rest as Duplicate
+                dupes = row['tids'][1:]  # all except first
+                cur.execute(
+                    "UPDATE transactions SET is_duplicate=TRUE, review_status='Duplicate' "
+                    "WHERE transaction_id = ANY(%s::uuid[])", (dupes,))
+                total_flagged += len(dupes)
+        return f"<h1>✅ Duplicate scan complete!</h1><p>{len(rows)} duplicate order numbers found. {total_flagged} transactions flagged as Duplicate.</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
