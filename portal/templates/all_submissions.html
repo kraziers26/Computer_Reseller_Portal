@@ -49,6 +49,16 @@ function clearAll() {
         </select>
       </div>
       <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stuck &gt; Days</div>
+        <select name="stuck_days" style="width:100%" onchange="this.form.submit()">
+          <option value="">Any duration</option>
+          <option value="3"  {{ 'selected' if filters.stuck_days==3  }}>3+ days</option>
+          <option value="7"  {{ 'selected' if filters.stuck_days==7  }}>7+ days</option>
+          <option value="14" {{ 'selected' if filters.stuck_days==14 }}>14+ days</option>
+          <option value="30" {{ 'selected' if filters.stuck_days==30 }}>30+ days</option>
+        </select>
+      </div>
+      <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
         <select name="retailer" style="width:100%" onchange="this.form.submit()">
           <option value="">All retailers</option>
@@ -99,7 +109,7 @@ function clearAll() {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0;white-space:nowrap">
           <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Dups only
         </label>
-        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.role %}
+        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.role or filters.stuck_days %}
         <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
         {% endif %}
       </div>
@@ -146,10 +156,36 @@ function clearAll() {
         <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
         <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
         <td style="padding:9px 12px;white-space:nowrap">
-          {% if r.review_status == 'Auto-approved' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:11px;padding:2px 8px;border-radius:20px">Approved</span>
-          {% elif r.review_status == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:11px;padding:2px 8px;border-radius:20px">Pending</span>
-          {% elif r.review_status == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:11px;padding:2px 8px;border-radius:20px">Flagged</span>
-          {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:20px">{{ r.review_status }}</span>{% endif %}
+          {% set rs = r.review_status %}
+          {% set fs = r.fulfillment_status or 'uploaded' %}
+          {# Review status badge #}
+          {% if rs == 'Auto-approved' or rs == 'Reviewed' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">✓ Approved</span>
+          {% elif rs == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Pending</span>
+          {% elif rs == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Flagged</span>
+          {% elif rs == 'Needs Review' %}<span style="background:rgba(251,146,60,.15);color:#fb923c;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Needs Review</span>
+          {% elif rs == 'Duplicate' %}<span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Duplicate</span>
+          {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:10px;padding:2px 7px;border-radius:10px">{{ rs }}</span>{% endif %}
+          {# Fulfillment stage badge with time-in-status #}
+          {% set days = r.days_in_status|float|round|int if r.days_in_status else 0 %}
+          {% set stuck = days >= 14 %}
+          {% if fs == 'uploaded' %}
+            <span style="background:rgba(79,110,247,.12);color:#4f6ef7;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500
+                         {{ ';outline:1px solid #f87171' if stuck else '' }}">
+              Uploaded{% if days > 0 %} · {{ days }}d{% endif %}
+            </span>
+          {% elif fs == 'batched' %}
+            <span style="background:rgba(139,92,246,.12);color:{{ '#f87171' if stuck else '#8b5cf6' }};font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500">
+              Batched{% if days > 0 %} · {{ days }}d{% if stuck %} ⚠{% endif %}{% endif %}
+            </span>
+          {% elif fs == 'received' %}
+            <span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500">
+              Received{% if days > 0 %} · {{ days }}d{% endif %}
+            </span>
+          {% elif fs == 'invoiced' %}
+            <span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:500">
+              Invoiced
+            </span>
+          {% endif %}
         </td>
         <td style="padding:9px 12px"><a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}" class="btn btn-ghost btn-sm">Review</a></td>
       </tr>
