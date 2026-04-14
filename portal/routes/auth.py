@@ -660,7 +660,7 @@ def setup_receiving_tables():
                 CREATE TABLE IF NOT EXISTS receiving_item_lines (
                     line_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     item_id             UUID REFERENCES receiving_items(item_id) ON DELETE CASCADE,
-                    transaction_item_id UUID REFERENCES transaction_items(transaction_item_id),
+                    transaction_item_id UUID REFERENCES transaction_items(item_id),
                     ordered_qty         INTEGER NOT NULL DEFAULT 0,
                     received_qty        INTEGER NOT NULL DEFAULT 0
                 )
