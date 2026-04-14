@@ -304,9 +304,17 @@ def confirm():
             with open(tmp_path, 'rb') as pf:
                 pdf_bytes = pf.read()
 
-        tid = save_transaction(request.form, invoice_data, pdf_bytes,
-                               request.form.get('user_id', type=int) or current_user.id,
-                               current_user.email)
+        try:
+            tid = save_transaction(request.form, invoice_data, pdf_bytes,
+                                   request.form.get('user_id', type=int) or current_user.id,
+                                   current_user.email)
+        except ValueError as e:
+            if str(e).startswith('DUPLICATE:'):
+                order_num = str(e).split(':', 1)[1]
+                flash(f'⛔ Order #{order_num} already exists in the system and was not submitted. '
+                      f'If this is a return, change the Order Type to a Return before submitting.', 'error')
+                return redirect(url_for('upload.upload'))
+            raise
 
         session.pop('pending_invoice', None)
         if tmp_path and os.path.exists(tmp_path):
@@ -471,8 +479,21 @@ def batch_item_confirm(draft_id, item_id):
             pdf_bytes = bytes(item['pdf_bytes']) if item['pdf_bytes'] else None
             form_user_id = request.form.get('user_id', type=int) or current_user.id
 
-            tid = save_transaction(request.form, invoice_data, pdf_bytes,
-                                   form_user_id, current_user.email)
+            try:
+                tid = save_transaction(request.form, invoice_data, pdf_bytes,
+                                       form_user_id, current_user.email)
+            except ValueError as e:
+                if str(e).startswith('DUPLICATE:'):
+                    order_num = str(e).split(':', 1)[1]
+                    # Mark as skipped in batch with dup note
+                    with db_cursor() as (cur, conn):
+                        cur.execute(
+                            "UPDATE batch_draft_items SET parse_status='skipped' WHERE item_id=%s",
+                            (item_id,))
+                    flash(f'⛔ Order #{order_num} is a duplicate and was skipped. '
+                          f'Change Order Type to Return if applicable.', 'error')
+                    return redirect(url_for('upload.batch_review', draft_id=draft_id))
+                raise
 
             with db_cursor() as (cur, conn):
                 cur.execute("""
@@ -609,8 +630,16 @@ def manual_upload():
                 pdf_bytes = f.read()
 
         form_user_id = request.form.get('user_id', type=int) or current_user.id
-        tid = save_transaction(request.form, invoice_data, pdf_bytes,
-                               form_user_id, current_user.email)
+        try:
+            tid = save_transaction(request.form, invoice_data, pdf_bytes,
+                                   form_user_id, current_user.email)
+        except ValueError as e:
+            if str(e).startswith('DUPLICATE:'):
+                order_num = str(e).split(':', 1)[1]
+                flash(f'⛔ Order #{order_num} already exists in the system and was not submitted. '
+                      f'Change Order Type to Return if this is a return.', 'error')
+                return redirect(url_for('upload.manual_upload'))
+            raise
 
         flash(f"Order #{invoice_data['order_number']} manually submitted!", 'success')
         return redirect(url_for('upload.my_submissions'))
