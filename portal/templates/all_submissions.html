@@ -49,6 +49,16 @@ function clearAll() {
         </select>
       </div>
       <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stage</div>
+        <select name="fulfillment" style="width:100%" onchange="this.form.submit()">
+          <option value="">All stages</option>
+          <option value="uploaded"  {{ 'selected' if filters.fulfillment=='uploaded'  }}>Uploaded</option>
+          <option value="batched"   {{ 'selected' if filters.fulfillment=='batched'   }}>Batched</option>
+          <option value="received"  {{ 'selected' if filters.fulfillment=='received'  }}>Received</option>
+          <option value="invoiced"  {{ 'selected' if filters.fulfillment=='invoiced'  }}>Invoiced</option>
+        </select>
+      </div>
+      <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stuck &gt; Days</div>
         <select name="stuck_days" style="width:100%" onchange="this.form.submit()">
           <option value="">Any duration</option>
@@ -109,7 +119,7 @@ function clearAll() {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0;white-space:nowrap">
           <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Dups only
         </label>
-        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.role or filters.stuck_days %}
+        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.role or filters.stuck_days or filters.fulfillment %}
         <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
         {% endif %}
       </div>
