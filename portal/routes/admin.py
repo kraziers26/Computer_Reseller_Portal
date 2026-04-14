@@ -158,7 +158,8 @@ def dashboard():
                                     'retailer':f_retailer,'submitter':f_submitter,
                                     'person_by':f_person,'card':f_card,
                                     'duplicates':f_duplicates,'order_number':f_order,
-                                    'role':f_role,'needs_review':f_needs_review})
+                                    'role':f_role,'needs_review':f_needs_review,
+                                    'fulfillment':f_fulfillment,'stuck_days':f_stuck_days})
 
 
 
