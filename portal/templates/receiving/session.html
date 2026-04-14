@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Receiving Session — {{ sess.batch_id }}{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <a href="{{ url_for('receiving.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Receiving</a>
+    <h1>{{ sess.batch_id }}</h1>
+    <p>Session started {{ sess.created_at.strftime('%b %d, %Y') }} by {{ sess.created_by_name or '—' }}
+       · <span style="color:{{ '#10b981' if sess.status=='closed' else '#fbbf24' }}">{{ sess.status|title }}</span></p>
+  </div>
+  {% if sess.status == 'open' %}
+  <form method="POST" action="{{ url_for('receiving.close_session', session_id=session_id) }}"
+        onsubmit="return confirm('Close this session? Missing and partial items stay in the receiving pool.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost btn-sm">Close Session</button>
+  </form>
+  {% endif %}
+</div>
+
+<!-- KPI bar -->
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px">
+  <div style="background:var(--surface2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Total</div>
+    <div style="font-size:20px;font-weight:600">{{ total }}</div>
+  </div>
+  <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:#10b981;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Received</div>
+    <div style="font-size:20px;font-weight:600;color:#10b981">{{ rcvd }}</div>
+  </div>
+  <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:#fbbf24;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Partial</div>
+    <div style="font-size:20px;font-weight:600;color:#fbbf24">{{ partial }}</div>
+  </div>
+  <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:#f87171;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Missing</div>
+    <div style="font-size:20px;font-weight:600;color:#f87171">{{ missing }}</div>
+  </div>
+  <div style="background:var(--surface2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Pending</div>
+    <div style="font-size:20px;font-weight:600;color:var(--muted)">{{ pending }}</div>
+  </div>
+</div>
+
+<div class="card" style="padding:0">
+  {% for item in items %}
+  {% set iid = item.item_id|string %}
+  {% set lines = line_map.get(iid, []) %}
+  {% set rs = item.receive_status %}
+  <div class="rx-item" id="item-{{ iid }}"
+       style="border-bottom:1px solid var(--border);
+              border-left:4px solid {{ '#10b981' if rs=='received' else '#fbbf24' if rs=='partial' else '#f87171' if rs=='missing' else 'var(--border)' }}">
+
+    <!-- Order header -->
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:160px">
+        <div style="font-family:var(--mono);font-size:12px;font-weight:500">{{ item.order_number }}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          {{ item.retailer }} · {{ item.person_name or '—' }} · {{ item.company_name or '—' }}
+          · ${{ "{:,.2f}".format(item.price_total or 0) }}
+          {% set d = item.days_in_status|float|round|int if item.days_in_status else 0 %}
+          {% if d > 0 %}
+          · <span style="color:{{ '#f87171' if d >= 14 else '#fbbf24' if d >= 7 else 'var(--muted)' }}">
+              {{ d }}d in batched{% if d >= 14 %} ⚠{% endif %}
+            </span>
+          {% endif %}
+        </div>
+        {% if lines %}
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          {% for l in lines %}{{ l.item_description[:40] if l.item_description else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      {% if sess.status == 'open' %}
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button onclick="setStatus('{{ iid }}','received')"
+                class="rx-btn rx-received {{ 'rx-active' if rs=='received' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#10b981;color:#fff;border-color:#10b981' if rs=='received' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ✓ Received
+        </button>
+        <button onclick="setStatus('{{ iid }}','partial')"
+                class="rx-btn rx-partial {{ 'rx-active' if rs=='partial' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#fbbf24;color:#1a1d27;border-color:#fbbf24' if rs=='partial' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ⚠ Partial
+        </button>
+        <button onclick="setStatus('{{ iid }}','missing')"
+                class="rx-btn rx-missing {{ 'rx-active' if rs=='missing' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#f87171;color:#fff;border-color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ✕ Missing
+        </button>
+      </div>
+      {% else %}
+      <span style="font-size:11px;padding:3px 10px;border-radius:10px;
+                   {{ 'background:rgba(16,185,129,.12);color:#10b981' if rs=='received' else 'background:rgba(251,191,36,.12);color:#fbbf24' if rs=='partial' else 'background:rgba(239,68,68,.12);color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted)' }}">
+        {{ rs|title }}
+      </span>
+      {% endif %}
+    </div>
+
+    <!-- Partial line items panel (hidden until Partial clicked) -->
+    {% if lines %}
+    <div id="partial-{{ iid }}"
+         style="display:{{ 'block' if rs=='partial' else 'none' }};
+                background:var(--surface2);border-top:1px solid var(--border);padding:12px 16px 14px 20px">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">
+        Mark units received
+      </div>
+      {% for l in lines %}
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <div style="font-size:12px">{{ l.item_description or '—' }}</div>
+          {% if l.sku_model_color %}<div style="font-size:10px;color:var(--muted);font-family:var(--mono)">{{ l.sku_model_color }}</div>{% endif %}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;white-space:nowrap">
+          <span style="font-size:11px;color:var(--muted)">Received:</span>
+          <input type="number" id="line-{{ l.line_id }}" min="0" max="{{ l.ordered_qty }}"
+                 value="{{ l.received_qty }}"
+                 style="width:56px;text-align:center;padding:4px;font-size:13px;
+                        background:var(--surface);border:1px solid var(--border);
+                        border-radius:6px;color:var(--text);font-family:var(--mono)"
+                 oninput="savePartial('{{ iid }}')">
+          <span style="font-size:11px;color:var(--muted)">of {{ l.ordered_qty }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+const SESSION_ID = "{{ session_id }}";
+const CSRF = "{{ csrf_token() }}";
+let saveTimers = {};
+
+async function rxPost(payload) {
+  const r = await fetch(`/receiving/session/${SESSION_ID}/mark`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken': CSRF},
+    body: JSON.stringify(payload)
+  });
+  return r.json();
+}
+
+function setStatus(iid, status) {
+  const el = document.getElementById('item-' + iid);
+  const panel = document.getElementById('partial-' + iid);
+  const colors = {received:'#10b981', partial:'#fbbf24', missing:'#f87171', pending:'var(--border)'};
+  el.style.borderLeftColor = colors[status] || 'var(--border)';
+
+  // Update button styles
+  el.querySelectorAll('.rx-btn').forEach(btn => {
+    const t = btn.classList.contains('rx-received') ? 'received'
+             : btn.classList.contains('rx-partial')  ? 'partial'
+             : 'missing';
+    if (t === status) {
+      if (t==='received') { btn.style.background='#10b981'; btn.style.color='#fff'; btn.style.borderColor='#10b981'; }
+      else if (t==='partial') { btn.style.background='#fbbf24'; btn.style.color='#1a1d27'; btn.style.borderColor='#fbbf24'; }
+      else { btn.style.background='#f87171'; btn.style.color='#fff'; btn.style.borderColor='#f87171'; }
+    } else {
+      btn.style.background='var(--surface2)'; btn.style.color='var(--muted)'; btn.style.borderColor='var(--border)';
+    }
+  });
+
+  // Show/hide partial panel
+  if (panel) panel.style.display = status === 'partial' ? 'block' : 'none';
+
+  if (status !== 'partial') {
+    rxPost({item_id: iid, status: status}).then(r => {
+      if (r.ok) updateKPIs();
+    });
+  }
+}
+
+function savePartial(iid) {
+  clearTimeout(saveTimers[iid]);
+  saveTimers[iid] = setTimeout(() => {
+    const lines = {};
+    document.querySelectorAll(`#partial-${iid} input[id^="line-"]`).forEach(inp => {
+      const lid = inp.id.replace('line-', '');
+      lines[lid] = parseInt(inp.value) || 0;
+    });
+    rxPost({item_id: iid, status: 'partial', lines: lines}).then(r => {
+      if (r.ok) updateKPIs();
+    });
+  }, 600);
+}
+
+function updateKPIs() {
+  const items = document.querySelectorAll('.rx-item');
+  let rcvd=0, partial=0, missing=0, pending=0;
+  items.forEach(el => {
+    const c = el.style.borderLeftColor;
+    if (c.includes('16,185,129') || c.includes('10b981')) rcvd++;
+    else if (c.includes('251,191,36') || c.includes('fbbf24')) partial++;
+    else if (c.includes('239,68,68') || c.includes('f87171')) missing++;
+    else pending++;
+  });
+  // Update KPI cards by position
+  const cards = document.querySelectorAll('[style*="border-radius:8px"][style*="padding:12px"]');
+  if (cards[1]) cards[1].querySelector('[style*="font-size:20px"]').textContent = rcvd;
+  if (cards[2]) cards[2].querySelector('[style*="font-size:20px"]').textContent = partial;
+  if (cards[3]) cards[3].querySelector('[style*="font-size:20px"]').textContent = missing;
+  if (cards[4]) cards[4].querySelector('[style*="font-size:20px"]').textContent = pending;
+}
+</script>
+{% endblock %}
