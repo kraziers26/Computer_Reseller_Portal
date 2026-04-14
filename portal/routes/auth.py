@@ -593,3 +593,28 @@ def setup_fix_duplicates():
         return f"<h1>✅ Duplicate scan complete!</h1><p>{len(rows)} duplicate order numbers found. {total_flagged} transactions flagged as Duplicate.</p><p><b>Remove this route.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-fulfillment-status-igamer-2024')
+def setup_fulfillment_status():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fulfillment_status TEXT
+                    DEFAULT 'uploaded'
+                    CHECK (fulfillment_status IN ('uploaded','batched','received','invoiced'))
+            """)
+            cur.execute("""
+                UPDATE transactions SET fulfillment_status='batched'
+                WHERE print_batch_id IS NOT NULL
+                  AND (fulfillment_status IS NULL OR fulfillment_status='uploaded')
+            """)
+            cur.execute("""
+                SELECT fulfillment_status, COUNT(*) AS n
+                FROM transactions GROUP BY fulfillment_status ORDER BY fulfillment_status
+            """)
+            rows = cur.fetchall()
+        result = ', '.join(f"{r['fulfillment_status']}: {r['n']}" for r in rows)
+        return f"<h1>✅ fulfillment_status column added!</h1><p>{result}</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
