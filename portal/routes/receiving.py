@@ -92,7 +92,7 @@ def start_session():
                 (item_id, session_id, str(txn['transaction_id'])))
             # Pre-populate line items from transaction_items
             cur.execute(
-                "SELECT transaction_item_id, quantity FROM transaction_items WHERE transaction_id=%s",
+                "SELECT item_id AS transaction_item_id, quantity FROM transaction_items WHERE transaction_id=%s",
                 (str(txn['transaction_id']),))
             items = cur.fetchall()
             for li in items:
@@ -146,7 +146,7 @@ def session(session_id):
                 SELECT ril.line_id, ril.ordered_qty, ril.received_qty,
                        ti.item_description, ti.sku_model_color, ti.quantity
                 FROM receiving_item_lines ril
-                JOIN transaction_items ti ON ril.transaction_item_id = ti.transaction_item_id
+                JOIN transaction_items ti ON ril.transaction_item_id = ti.item_id
                 WHERE ril.item_id = %s
             """, (str(item['item_id']),))
             line_map[str(item['item_id'])] = cur.fetchall()
