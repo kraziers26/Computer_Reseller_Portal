@@ -23,13 +23,15 @@ def create_app():
     from .routes.upload    import upload_bp
     from .routes.admin     import admin_bp
     from .routes.manage    import manage_bp
-    from .routes.receiving import receiving_bp
+    from .routes.receiving  import receiving_bp
+    from .routes.invoicing  import invoicing_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(upload_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(manage_bp)
     app.register_blueprint(receiving_bp)
+    app.register_blueprint(invoicing_bp)
 
     # ── Security (must be after blueprints so CSRF & Talisman cover all routes) ──
     from .security import init_security
