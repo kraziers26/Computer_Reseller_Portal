@@ -1,67 +1,112 @@
 {% extends "base.html" %}
-{% block title %}New Invoice — ComputerReseller Portal{% endblock %}
+{% block title %}{{ 'Edit' if edit_mode else 'New' }} Invoice — ComputerReseller Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
   <div>
     <a href="{{ url_for('invoicing.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoicing</a>
-    <h1>New Invoice</h1>
-    <p>Select received orders, set markup, choose customer</p>
+    <h1>{{ 'Edit Invoice' if edit_mode else 'New Invoice' }}</h1>
+    {% if edit_mode %}<p>Editing <strong>{{ existing_invoice.invoice_number }}</strong> · Draft</p>{% else %}<p>Select received orders and set markup</p>{% endif %}
   </div>
 </div>
 
 <form method="POST" id="invoiceForm">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if edit_mode %}
+  <input type="hidden" name="invoice_number" value="{{ existing_invoice.invoice_number }}">
+  {% endif %}
 
   <div style="display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start">
 
     <!-- Left: Order selector -->
     <div>
-      <!-- Filters -->
+      <!-- Filters + Search -->
       <div class="card" style="margin-bottom:12px;padding:12px 16px">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <input type="text" id="searchOrders" placeholder="Search orders..." style="width:180px" oninput="filterOrders()">
-          <select id="filterCompany" style="width:160px" onchange="filterOrders()">
+          <input type="text" id="searchOrders" placeholder="🔍 Search items, SKUs, orders..."
+                 style="width:220px" oninput="filterOrders()">
+          <select id="filterRetailer" style="width:130px" onchange="filterOrders()">
+            <option value="">All retailers</option>
+            {% for r in retailers %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+          </select>
+          <select id="filterPerson" style="width:130px" onchange="filterOrders()">
+            <option value="">All persons</option>
+            {% for p in persons %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+          </select>
+          <select id="filterCompanyOrders" style="width:150px" onchange="filterOrders()">
             <option value="">All companies</option>
             {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
           </select>
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
-            <input type="checkbox" id="selectAll" style="width:auto" onchange="toggleAll(this)"> Select all
+            <input type="checkbox" id="selectAll" style="width:auto" onchange="toggleAll(this)"> Select all visible
           </label>
-          <span id="selectedCount" style="font-size:12px;color:var(--muted)">0 selected</span>
+          <span id="selectedCount" style="font-size:12px;color:var(--muted)">
+            {% if edit_mode %}{{ existing_txn_ids|length }} pre-selected{% else %}0 selected{% endif %}
+          </span>
+          <span style="font-size:11px;color:var(--muted)">· Items under $1 are automatically excluded from invoices</span>
         </div>
       </div>
 
-      <!-- Order table -->
+      <!-- Order table with expanded items -->
       <div class="card" style="padding:0">
         {% if not orders %}
         <div style="text-align:center;padding:40px;color:var(--muted)">No received orders available to invoice.</div>
         {% else %}
-        <table style="width:100%;border-collapse:collapse;font-size:13px" id="ordersTable">
-          <thead>
-            <tr style="background:var(--surface2)">
-              <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-              <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
-            </tr>
-          </thead>
-          <tbody>
+        <div id="ordersContainer">
           {% for o in orders %}
-          <tr class="order-row" data-company="{{ o.company_id }}" data-search="{{ o.order_number|lower }} {{ o.retailer|lower }} {{ o.person_name|lower }}">
-            <td style="padding:8px 12px">
-              <input type="checkbox" name="txn_ids" value="{{ o.transaction_id }}" class="order-check" style="width:auto" onchange="updateCount()">
-            </td>
-            <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ o.order_number[:24] }}</td>
-            <td style="padding:8px 12px">{{ o.retailer }}</td>
-            <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.person_name or '—' }}</td>
-            <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.company_name or '—' }}</td>
-            <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(o.price_total or 0) }}</td>
-          </tr>
+          {% set tid = o.transaction_id|string %}
+          {% set items = order_items.get(tid, []) %}
+          {% set is_preselected = tid in existing_txn_ids %}
+          {% set item_search = items|map(attribute='item_description')|join(' ')|lower %}
+          {% set sku_search = items|map(attribute='sku_model_color')|join(' ')|lower %}
+          <div class="order-row"
+               data-company="{{ o.company_id }}"
+               data-retailer="{{ o.retailer or '' }}"
+               data-person="{{ o.person_name or '' }}"
+               data-search="{{ o.order_number|lower }} {{ o.retailer|lower }} {{ o.person_name|lower }} {{ item_search }} {{ sku_search }}"
+               style="border-bottom:1px solid var(--border)">
+
+            <!-- Order header row -->
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:{% if is_preselected %}rgba(79,110,247,.05){% else %}transparent{% endif %}">
+              <input type="checkbox" name="txn_ids" value="{{ tid }}"
+                     class="order-check" style="width:auto;flex-shrink:0"
+                     {{ 'checked' if is_preselected }}
+                     onchange="updateCount();highlightRow(this)">
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text)">{{ o.order_number[:28] }}</span>
+                  <span style="font-size:11px;color:var(--muted)">{{ o.retailer }}</span>
+                  <span style="font-size:11px;color:var(--muted)">· {{ o.person_name or '—' }}</span>
+                  <span style="font-size:11px;color:var(--muted)">· {{ o.company_name or '—' }}</span>
+                </div>
+                {% if items %}
+                <div style="margin-top:5px;padding-left:2px">
+                  {% for item in items %}
+                  <div style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:11px">
+                    <span style="color:var(--muted);width:6px;flex-shrink:0">·</span>
+                    <span style="color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ item.item_description }}">{{ item.item_description }}</span>
+                    {% if item.sku_model_color %}
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap">{{ item.sku_model_color[:20] }}</span>
+                    {% endif %}
+                    <span style="font-size:11px;color:var(--muted);white-space:nowrap">× {{ item.quantity }}</span>
+                    <span style="font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap">${{ "{:,.2f}".format(item.unit_price or 0) }}</span>
+                  </div>
+                  {% endfor %}
+                </div>
+                {% else %}
+                <div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">No billable items (all items under $1)</div>
+                {% endif %}
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-family:var(--mono);font-size:13px;font-weight:500">${{ "{:,.2f}".format(o.price_total or 0) }}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">{{ items|length }} item{{ 's' if items|length != 1 }}</div>
+              </div>
+            </div>
+          </div>
           {% endfor %}
-          </tbody>
-        </table>
+        </div>
+        <div id="noResults" style="display:none;text-align:center;padding:32px;color:var(--muted)">No orders match your search.</div>
         {% endif %}
       </div>
     </div>
@@ -75,7 +120,10 @@
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Issuing Company</div>
           <select name="company_id" required style="width:100%">
             {% for c in companies %}
-            <option value="{{ c.company_id }}">{{ c.company_name }}</option>
+            <option value="{{ c.company_id }}"
+              {{ 'selected' if edit_mode and existing_invoice.company_id == c.company_id }}>
+              {{ c.company_name }}
+            </option>
             {% endfor %}
           </select>
         </label>
@@ -85,7 +133,10 @@
           <select name="customer_id" id="customerSelect" style="width:100%" onchange="toggleNewCustomer(this)">
             <option value="">— Select customer —</option>
             {% for c in customers %}
-            <option value="{{ c.customer_id }}">{{ c.customer_name }}</option>
+            <option value="{{ c.customer_id }}"
+              {{ 'selected' if edit_mode and existing_invoice.customer_id|string == c.customer_id|string }}>
+              {{ c.customer_name }}
+            </option>
             {% endfor %}
             <option value="__new__">+ Add new customer</option>
           </select>
@@ -96,28 +147,39 @@
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Invoice Date</div>
-          <input type="date" name="invoice_date" value="{{ today }}" style="width:100%">
+          <input type="date" name="invoice_date"
+                 value="{{ existing_invoice.invoice_date|string if edit_mode else today }}"
+                 style="width:100%">
         </label>
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Batch Markup %</div>
-          <input type="number" name="batch_markup" id="batchMarkup" value="1.0" step="0.1" min="0" style="width:100%"
-                 title="Applied to all items. You can override per item after creating the invoice.">
+          <input type="number" name="batch_markup" id="batchMarkup"
+                 value="{{ existing_invoice.batch_markup_pct if edit_mode else '1.0' }}"
+                 step="0.1" min="0" style="width:100%">
         </label>
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Label</div>
-          <input type="text" name="other_label" placeholder="e.g. Shipping, Handling" style="width:100%">
+          <input type="text" name="other_label"
+                 value="{{ existing_invoice.other_label or '' if edit_mode else '' }}"
+                 placeholder="e.g. Shipping" style="width:100%">
         </label>
         <label style="display:block;margin-bottom:16px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Amount</div>
-          <input type="number" name="other_amount" value="0" step="0.01" min="0" style="width:100%">
+          <input type="number" name="other_amount"
+                 value="{{ existing_invoice.other_amount or 0 if edit_mode else '0' }}"
+                 step="0.01" min="0" style="width:100%">
         </label>
 
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px" id="submitBtn" disabled>
-          Generate Invoice
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px"
+                id="submitBtn" {{ '' if edit_mode else 'disabled' }}>
+          {{ 'Update Invoice' if edit_mode else 'Generate Invoice' }}
         </button>
-        <div id="submitHint" style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">Select at least one order above</div>
+        <div id="submitHint" style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;
+             display:{{ 'none' if edit_mode else 'block' }}">
+          Select at least one order above
+        </div>
       </div>
     </div>
   </div>
@@ -131,22 +193,44 @@ function updateCount(){
   btn.disabled = checked === 0;
   document.getElementById('submitHint').style.display = checked > 0 ? 'none' : 'block';
 }
+
+function highlightRow(cb){
+  const row = cb.closest('.order-row');
+  row.querySelector('div').style.background = cb.checked ? 'rgba(79,110,247,.05)' : 'transparent';
+}
+
 function toggleAll(cb){
-  document.querySelectorAll('.order-check:not([disabled])').forEach(c=>c.checked=cb.checked);
+  document.querySelectorAll('.order-row:not([style*="display: none"]) .order-check').forEach(c=>{
+    c.checked = cb.checked;
+    highlightRow(c);
+  });
   updateCount();
 }
+
 function filterOrders(){
-  const q    = document.getElementById('searchOrders').value.toLowerCase();
-  const comp = document.getElementById('filterCompany').value;
+  const q       = document.getElementById('searchOrders').value.toLowerCase();
+  const retail  = document.getElementById('filterRetailer').value.toLowerCase();
+  const person  = document.getElementById('filterPerson').value.toLowerCase();
+  const company = document.getElementById('filterCompanyOrders').value;
+  let visible = 0;
   document.querySelectorAll('.order-row').forEach(row=>{
-    const matchQ = !q || row.dataset.search.includes(q);
-    const matchC = !comp || row.dataset.company == comp;
-    row.style.display = (matchQ && matchC) ? '' : 'none';
+    const matchQ = !q       || row.dataset.search.includes(q);
+    const matchR = !retail  || row.dataset.retailer.toLowerCase() === retail;
+    const matchP = !person  || row.dataset.person.toLowerCase() === person;
+    const matchC = !company || row.dataset.company === company;
+    const show = matchQ && matchR && matchP && matchC;
+    row.style.display = show ? '' : 'none';
+    if(show) visible++;
   });
+  document.getElementById('noResults').style.display = visible === 0 ? 'block' : 'none';
 }
+
 function toggleNewCustomer(sel){
   document.getElementById('newCustomerField').style.display = sel.value === '__new__' ? 'block' : 'none';
   if(sel.value === '__new__') sel.value = '';
 }
+
+// Init count
+updateCount();
 </script>
 {% endblock %}
