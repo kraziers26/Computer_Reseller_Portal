@@ -12,29 +12,71 @@ COMPANY_DATA = {
         'name': 'Sunny Enterprise Corp',
         'addr': '9400 W Flagler ST\nMiami FL 33174',
         'beneficiario': 'Sunny Esnug Enterprise\n9400 W Flagler ST\nMiami FL 33174',
-        'banco': 'Chase Bank',
-        'route': '267084131',
-        'account': '890615856',
-        'payable': 'Sunny Esnug Enterprise',
-        'seq': 'invoice_seq_se',
+        'banco': 'Chase Bank', 'route': '267084131', 'account': '890615856',
+        'payable': 'Sunny Esnug Enterprise', 'seq': 'invoice_seq_se',
     },
     'MS': {
         'name': 'Medara Studio',
         'addr': '10739 NW 70th Lane\nDoral FL 33178',
         'beneficiario': 'Medara Corp\n10739 NW 70th Lane\nDoral FL 33178',
-        'banco': 'Chase Bank',
-        'route': '267084131',
-        'account': '795651980',
-        'payable': 'Medara Corp',
-        'seq': 'invoice_seq_ms',
+        'banco': 'Chase Bank', 'route': '267084131', 'account': '795651980',
+        'payable': 'Medara Corp', 'seq': 'invoice_seq_ms',
     },
 }
 
+MIN_ITEM_PRICE = 1.0  # Items under $1 are omitted from invoices
+
+
 def get_next_invoice_number(cur, code):
+    # Check reusable pool first
+    cur.execute("""
+        SELECT inv_number FROM invoice_number_pool
+        WHERE company_code=%s ORDER BY recycled_at LIMIT 1
+    """, (code,))
+    row = cur.fetchone()
+    if row:
+        num = row['inv_number']
+        cur.execute("DELETE FROM invoice_number_pool WHERE inv_number=%s AND company_code=%s",
+                    (num, code))
+        return num
     seq = COMPANY_DATA[code]['seq']
     cur.execute(f"SELECT nextval('{seq}') AS n")
     n = cur.fetchone()['n']
     return f"{int(n):05d}-{code}"
+
+
+def _load_received_orders(cur):
+    """Load received orders with their line items (items >= $1 only)."""
+    cur.execute("""
+        SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
+               t.price_total, u.username AS person_name,
+               c.company_name, c.company_id,
+               c.company_short_code
+        FROM transactions t
+        LEFT JOIN dim_users u      ON t.user_id = u.user_id
+        LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+        WHERE t.fulfillment_status='received' AND t.is_active=TRUE
+        ORDER BY t.retailer, t.order_number
+    """)
+    orders = cur.fetchall()
+
+    # Load line items per order, filtering out < $1 items
+    order_items = {}
+    if orders:
+        txn_ids = [str(o['transaction_id']) for o in orders]
+        cur.execute("""
+            SELECT transaction_id, item_id, item_description,
+                   sku_model_color, quantity, unit_price, line_total
+            FROM transaction_items
+            WHERE transaction_id = ANY(%s::uuid[])
+              AND unit_price >= %s
+            ORDER BY transaction_id, item_description
+        """, (txn_ids, MIN_ITEM_PRICE))
+        for item in cur.fetchall():
+            tid = str(item['transaction_id'])
+            order_items.setdefault(tid, []).append(item)
+
+    return orders, order_items
 
 
 # ── Invoice History ───────────────────────────────────────────────────────────
@@ -51,11 +93,11 @@ def index():
 
     conditions = ["1=1"]
     params = []
-    if f_company:  conditions.append("i.company_id=%s");       params.append(f_company)
+    if f_company:  conditions.append("i.company_id=%s");        params.append(f_company)
     if f_customer: conditions.append("i.customer_id=%s::uuid"); params.append(f_customer)
-    if f_status:   conditions.append("i.status=%s");            params.append(f_status)
-    if f_from:     conditions.append("i.invoice_date>=%s");     params.append(f_from)
-    if f_to:       conditions.append("i.invoice_date<=%s");     params.append(f_to)
+    if f_status:   conditions.append("i.status=%s");             params.append(f_status)
+    if f_from:     conditions.append("i.invoice_date>=%s");      params.append(f_from)
+    if f_to:       conditions.append("i.invoice_date<=%s");      params.append(f_to)
     where = ' AND '.join(conditions)
 
     with db_cursor() as (cur, _):
@@ -85,7 +127,6 @@ def index():
         cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
         customers = cur.fetchall()
 
-        # Totals for KPIs
         cur.execute("""
             SELECT
                 COUNT(*) FILTER (WHERE status='draft') AS drafts,
@@ -104,83 +145,179 @@ def index():
                                     'status':f_status,'date_from':f_from,'date_to':f_to})
 
 
-# ── New Invoice Builder ───────────────────────────────────────────────────────
+# ── New Invoice ───────────────────────────────────────────────────────────────
 
 @invoicing_bp.route('/new', methods=['GET', 'POST'])
 @login_required
 @require_role('admin')
 def new_invoice():
     if request.method == 'POST':
-        company_id    = request.form.get('company_id', type=int)
-        customer_id   = request.form.get('customer_id', '').strip()
-        new_customer  = request.form.get('new_customer_name', '').strip()
-        markup_pct    = request.form.get('batch_markup', type=float) or 1.0
-        other_amount  = request.form.get('other_amount', type=float) or 0.0
-        other_label   = request.form.get('other_label', '').strip()
-        invoice_date  = request.form.get('invoice_date') or str(date.today())
-        txn_ids       = request.form.getlist('txn_ids')
+        return _save_invoice(existing_id=None)
 
-        if not txn_ids:
-            flash('Select at least one order to invoice.', 'error')
-            return redirect(url_for('invoicing.new_invoice'))
+    with db_cursor() as (cur, _):
+        orders, order_items = _load_received_orders(cur)
+        cur.execute("SELECT company_id, company_name, company_short_code FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
+        customers = cur.fetchall()
+        retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
+        persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
 
-        # Get company short code
-        with db_cursor() as (cur, conn):
-            cur.execute("SELECT company_short_code FROM dim_companies WHERE company_id=%s", (company_id,))
-            row = cur.fetchone()
-            code = (row['company_short_code'] if row else 'SE').upper()
-            if code not in COMPANY_DATA:
-                code = 'SE'
+    return render_template('invoicing/new.html',
+                           orders=orders, order_items=order_items,
+                           companies=companies, customers=customers,
+                           retailers=retailers, persons=persons,
+                           today=str(date.today()),
+                           edit_mode=False, existing_invoice=None,
+                           existing_txn_ids=[])
 
-            # Create customer if new
-            if new_customer and not customer_id:
-                customer_id = str(uuid.uuid4())
-                cur.execute("INSERT INTO dim_customers (customer_id, customer_name) VALUES (%s,%s)",
-                            (customer_id, new_customer))
 
-            # Generate invoice number
-            inv_number = get_next_invoice_number(cur, code)
+# ── Edit Invoice ──────────────────────────────────────────────────────────────
+
+@invoicing_bp.route('/<uuid:invoice_id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_role('admin')
+def edit_invoice(invoice_id):
+    sid = str(invoice_id)
+
+    if request.method == 'POST':
+        return _save_invoice(existing_id=sid)
+
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT i.*, c.company_name, c.company_short_code, cu.customer_name
+            FROM invoices i
+            LEFT JOIN dim_companies c  ON i.company_id  = c.company_id
+            LEFT JOIN dim_customers cu ON i.customer_id = cu.customer_id
+            WHERE i.invoice_id=%s AND i.status='draft'
+        """, (sid,))
+        inv = cur.fetchone()
+        if not inv:
+            flash('Invoice not found or not editable.', 'error')
+            return redirect(url_for('invoicing.index'))
+
+        # Current orders on this invoice
+        cur.execute("""
+            SELECT DISTINCT transaction_id::text FROM invoice_items
+            WHERE invoice_id=%s
+        """, (sid,))
+        existing_txn_ids = [r['transaction_id'] for r in cur.fetchall()]
+
+        orders, order_items = _load_received_orders(cur)
+        cur.execute("SELECT company_id, company_name, company_short_code FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
+        customers = cur.fetchall()
+        retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
+        persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
+
+    return render_template('invoicing/new.html',
+                           orders=orders, order_items=order_items,
+                           companies=companies, customers=customers,
+                           retailers=retailers, persons=persons,
+                           today=str(date.today()),
+                           edit_mode=True, existing_invoice=inv,
+                           existing_txn_ids=existing_txn_ids)
+
+
+# ── Shared save logic ─────────────────────────────────────────────────────────
+
+def _save_invoice(existing_id=None):
+    company_id   = request.form.get('company_id', type=int)
+    customer_id  = request.form.get('customer_id', '').strip()
+    new_customer = request.form.get('new_customer_name', '').strip()
+    markup_pct   = request.form.get('batch_markup', type=float) or 1.0
+    other_amount = request.form.get('other_amount', type=float) or 0.0
+    other_label  = request.form.get('other_label', '').strip()
+    invoice_date = request.form.get('invoice_date') or str(date.today())
+    txn_ids      = request.form.getlist('txn_ids')
+
+    if not txn_ids:
+        flash('Select at least one order.', 'error')
+        return redirect(url_for('invoicing.edit_invoice', invoice_id=existing_id)
+                        if existing_id else url_for('invoicing.new_invoice'))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT company_short_code FROM dim_companies WHERE company_id=%s", (company_id,))
+        row = cur.fetchone()
+        code = (row['company_short_code'] if row else 'SE').upper()
+        if code not in COMPANY_DATA:
+            code = 'SE'
+
+        if new_customer and not customer_id:
+            customer_id = str(uuid.uuid4())
+            cur.execute("INSERT INTO dim_customers (customer_id, customer_name) VALUES (%s,%s)",
+                        (customer_id, new_customer))
+
+        if existing_id:
+            # Edit: find orders that were removed → release back to received
+            cur.execute("SELECT DISTINCT transaction_id::text FROM invoice_items WHERE invoice_id=%s",
+                        (existing_id,))
+            old_ids = set(r['transaction_id'] for r in cur.fetchall())
+            new_ids = set(txn_ids)
+            released = old_ids - new_ids
+            if released:
+                cur.execute("""
+                    UPDATE transactions SET fulfillment_status='received',
+                        fulfillment_status_updated_at=NOW()
+                    WHERE transaction_id = ANY(%s::uuid[])
+                """, (list(released),))
+            # Delete old items
+            cur.execute("DELETE FROM invoice_items WHERE invoice_id=%s", (existing_id,))
+            invoice_id  = existing_id
+            inv_number  = request.form.get('invoice_number')
+        else:
             invoice_id = str(uuid.uuid4())
+            inv_number = get_next_invoice_number(cur, code)
 
-            # Build line items from transaction_items
+        # Build line items — skip < $1
+        cur.execute("""
+            SELECT t.transaction_id, t.order_number, t.retailer,
+                   ti.item_description, ti.sku_model_color,
+                   ti.quantity, ti.unit_price
+            FROM transactions t
+            LEFT JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
+            WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
+              AND ti.unit_price >= %s
+            ORDER BY t.order_number, ti.item_description
+        """, (txn_ids, MIN_ITEM_PRICE))
+        raw_items = cur.fetchall()
+
+        subtotal = 0.0
+        line_items = []
+        for i, item in enumerate(raw_items):
+            item_markup = float(request.form.get(f'markup_{i}', markup_pct))
+            unit_cost   = float(item['unit_price'] or 0)
+            unit_price  = round(unit_cost * (1 + item_markup / 100), 2)
+            qty         = int(item['quantity'] or 1)
+            line_total  = round(unit_price * qty, 2)
+            subtotal   += line_total
+            line_items.append({
+                'item_id':       str(uuid.uuid4()),
+                'transaction_id': str(item['transaction_id']),
+                'description':   item['item_description'] or item['retailer'] or '',
+                'sku':           item['sku_model_color'] or '',
+                'qty':           qty,
+                'unit_cost':     unit_cost,
+                'markup_pct':    item_markup,
+                'unit_price':    unit_price,
+                'line_total':    line_total,
+                'sort_order':    i,
+            })
+
+        subtotal = round(subtotal, 2)
+        total    = round(subtotal + other_amount, 2)
+
+        if existing_id:
             cur.execute("""
-                SELECT t.transaction_id, t.order_number, t.retailer,
-                       ti.item_description, ti.sku_model_color,
-                       ti.quantity, ti.unit_price
-                FROM transactions t
-                LEFT JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
-                WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
-                ORDER BY t.order_number, ti.item_description
-            """, (txn_ids,))
-            raw_items = cur.fetchall()
-
-            # Compute per-item overrides from form
-            subtotal = 0.0
-            line_items = []
-            for i, item in enumerate(raw_items):
-                item_markup = float(request.form.get(f'markup_{i}', markup_pct))
-                unit_cost   = float(item['unit_price'] or 0)
-                unit_price  = round(unit_cost * (1 + item_markup / 100), 2)
-                qty         = int(item['quantity'] or 1)
-                line_total  = round(unit_price * qty, 2)
-                subtotal   += line_total
-                line_items.append({
-                    'item_id':      str(uuid.uuid4()),
-                    'transaction_id': str(item['transaction_id']),
-                    'description':  item['item_description'] or item['retailer'] or '',
-                    'sku':          item['sku_model_color'] or '',
-                    'qty':          qty,
-                    'unit_cost':    unit_cost,
-                    'markup_pct':   item_markup,
-                    'unit_price':   unit_price,
-                    'line_total':   line_total,
-                    'sort_order':   i,
-                })
-
-            subtotal = round(subtotal, 2)
-            total    = round(subtotal + other_amount, 2)
-
-            # Save invoice
+                UPDATE invoices SET company_id=%s, customer_id=%s, invoice_date=%s,
+                    batch_markup_pct=%s, subtotal=%s, other_amount=%s,
+                    other_label=%s, total=%s
+                WHERE invoice_id=%s
+            """, (company_id, customer_id or None, invoice_date,
+                  markup_pct, subtotal, other_amount,
+                  other_label or None, total, invoice_id))
+        else:
             cur.execute("""
                 INSERT INTO invoices (invoice_id, invoice_number, company_id, customer_id,
                     created_by, invoice_date, batch_markup_pct,
@@ -191,49 +328,70 @@ def new_invoice():
                   invoice_date, markup_pct,
                   subtotal, other_amount, other_label or None, total))
 
-            for li in line_items:
-                cur.execute("""
-                    INSERT INTO invoice_items
-                        (item_id, invoice_id, transaction_id, item_description, sku,
-                         quantity, unit_cost, markup_pct, unit_price, line_total, sort_order)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, (li['item_id'], invoice_id, li['transaction_id'],
-                      li['description'], li['sku'], li['qty'],
-                      li['unit_cost'], li['markup_pct'], li['unit_price'],
-                      li['line_total'], li['sort_order']))
-
-            # Mark transactions as invoiced
+        for li in line_items:
             cur.execute("""
-                UPDATE transactions SET fulfillment_status='invoiced',
-                    fulfillment_status_updated_at=NOW()
-                WHERE transaction_id = ANY(%s::uuid[])
-            """, (txn_ids,))
+                INSERT INTO invoice_items
+                    (item_id, invoice_id, transaction_id, item_description, sku,
+                     quantity, unit_cost, markup_pct, unit_price, line_total, sort_order)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (li['item_id'], invoice_id, li['transaction_id'],
+                  li['description'], li['sku'], li['qty'],
+                  li['unit_cost'], li['markup_pct'], li['unit_price'],
+                  li['line_total'], li['sort_order']))
 
-        flash(f'Invoice {inv_number} created!', 'success')
-        return redirect(url_for('invoicing.view_invoice', invoice_id=invoice_id))
-
-    # GET — load received orders
-    with db_cursor() as (cur, _):
+        # Mark all selected transactions as invoiced
         cur.execute("""
-            SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
-                   t.price_total, t.fulfillment_status,
-                   u.username AS person_name, c.company_name, c.company_id
-            FROM transactions t
-            LEFT JOIN dim_users u      ON t.user_id = u.user_id
-            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
-            WHERE t.fulfillment_status='received' AND t.is_active=TRUE
-            ORDER BY t.retailer, t.order_number
-        """)
-        orders = cur.fetchall()
+            UPDATE transactions SET fulfillment_status='invoiced',
+                fulfillment_status_updated_at=NOW()
+            WHERE transaction_id = ANY(%s::uuid[])
+        """, (txn_ids,))
 
-        cur.execute("SELECT company_id, company_name, company_short_code FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
-        companies = cur.fetchall()
-        cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
-        customers = cur.fetchall()
+    action = 'updated' if existing_id else 'created'
+    flash(f'Invoice {inv_number} {action}!', 'success')
+    return redirect(url_for('invoicing.view_invoice', invoice_id=invoice_id))
 
-    return render_template('invoicing/new.html',
-                           orders=orders, companies=companies, customers=customers,
-                           today=str(date.today()))
+
+# ── Delete Invoice (Draft only) ───────────────────────────────────────────────
+
+@invoicing_bp.route('/<uuid:invoice_id>/delete', methods=['POST'])
+@login_required
+@require_role('admin')
+def delete_invoice(invoice_id):
+    sid = str(invoice_id)
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT invoice_number, status, company_id FROM invoices WHERE invoice_id=%s", (sid,))
+        inv = cur.fetchone()
+        if not inv:
+            flash('Invoice not found.', 'error')
+            return redirect(url_for('invoicing.index'))
+        if inv['status'] != 'draft':
+            flash('Only Draft invoices can be deleted.', 'error')
+            return redirect(url_for('invoicing.index'))
+
+        # Release orders back to received
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status='received', fulfillment_status_updated_at=NOW()
+            FROM invoice_items ii
+            WHERE ii.transaction_id = t.transaction_id AND ii.invoice_id=%s
+        """, (sid,))
+
+        # Recycle invoice number
+        cur.execute("SELECT company_short_code FROM dim_companies WHERE company_id=%s",
+                    (inv['company_id'],))
+        co = cur.fetchone()
+        if co:
+            cur.execute("""
+                INSERT INTO invoice_number_pool (inv_number, company_code)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (inv['invoice_number'], co['company_short_code']))
+
+        # Delete invoice (cascades to invoice_items)
+        cur.execute("DELETE FROM invoices WHERE invoice_id=%s", (sid,))
+
+    flash(f'Invoice {inv["invoice_number"]} deleted. Orders returned to Received pool.', 'success')
+    return redirect(url_for('invoicing.index'))
 
 
 # ── Invoice Detail ────────────────────────────────────────────────────────────
@@ -257,9 +415,8 @@ def view_invoice(invoice_id):
             flash('Invoice not found.', 'error')
             return redirect(url_for('invoicing.index'))
 
-        cur.execute("""
-            SELECT * FROM invoice_items WHERE invoice_id=%s ORDER BY sort_order
-        """, (str(invoice_id),))
+        cur.execute("SELECT * FROM invoice_items WHERE invoice_id=%s ORDER BY sort_order",
+                    (str(invoice_id),))
         items = cur.fetchall()
 
     code = (inv['company_short_code'] or 'SE').upper()
@@ -288,13 +445,10 @@ def update_status(invoice_id):
 @require_role('admin')
 def export_excel(invoice_id):
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
-
+    from openpyxl.styles import Font, Alignment, PatternFill
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT i.*, c.company_name, c.company_short_code,
-                   cu.customer_name
+            SELECT i.*, c.company_name, c.company_short_code, cu.customer_name
             FROM invoices i
             LEFT JOIN dim_companies c  ON i.company_id  = c.company_id
             LEFT JOIN dim_customers cu ON i.customer_id = cu.customer_id
@@ -311,15 +465,10 @@ def export_excel(invoice_id):
     wb = Workbook()
     ws = wb.active
     ws.title = inv['invoice_number']
-
-    # Column widths
     ws.column_dimensions['A'].width = 42
     ws.column_dimensions['B'].width = 14
     ws.column_dimensions['C'].width = 14
     ws.column_dimensions['D'].width = 14
-
-    thin = Side(style='thin')
-    border = Border(bottom=Side(style='medium'))
 
     def cell(row, col, value, bold=False, align='left', fmt=None):
         c = ws.cell(row=row, column=col, value=value)
@@ -328,7 +477,6 @@ def export_excel(invoice_id):
         if fmt: c.number_format = fmt
         return c
 
-    # Header
     ws.merge_cells('A1:D1')
     c = ws.cell(row=1, column=1, value=co['name'])
     c.font = Font(bold=True, size=14, name='Calibri')
@@ -342,20 +490,14 @@ def export_excel(invoice_id):
 
     ws.merge_cells(f'A{r}:B{r}')
     cell(r, 1, f"INVOICE #{inv['invoice_number']}", bold=True)
-    cell(r, 3, 'Date:', bold=True, align='right')
     dt = inv['invoice_date']
+    cell(r, 3, 'Date:', bold=True, align='right')
     cell(r, 4, dt.strftime('%m/%d/%y') if hasattr(dt,'strftime') else str(dt), align='right')
-    r += 1
-
-    # To section
-    r += 1
-    cell(r, 1, 'To', bold=True)
-    r += 1
-    cell(r, 1, inv['customer_name'] or '—', bold=True)
     r += 2
 
-    # Items header
-    ws.row_dimensions[r].height = 18
+    cell(r, 1, 'To', bold=True); r += 1
+    cell(r, 1, inv['customer_name'] or '—', bold=True); r += 2
+
     for col, (txt, al) in enumerate([('Description','left'),('Price','right'),('QTY','right'),('Total','right')], 1):
         c = ws.cell(row=r, column=col, value=txt)
         c.font = Font(bold=True, name='Calibri', size=11)
@@ -372,31 +514,22 @@ def export_excel(invoice_id):
 
     r += 1
     cell(r, 3, 'SUBTOTAL', bold=True, align='right')
-    cell(r, 4, float(inv['subtotal']), align='right', fmt='"$"#,##0.00')
-    r += 1
+    cell(r, 4, float(inv['subtotal']), align='right', fmt='"$"#,##0.00'); r += 1
     cell(r, 3, 'TAX RATE', align='right')
-    cell(r, 4, '0.00%', align='right')
-    r += 1
+    cell(r, 4, '0.00%', align='right'); r += 1
     other_lbl = inv.get('other_label') or 'OTHER'
     cell(r, 3, other_lbl, align='right')
-    cell(r, 4, float(inv['other_amount'] or 0), align='right', fmt='"$"#,##0.00')
-    r += 1
+    cell(r, 4, float(inv['other_amount'] or 0), align='right', fmt='"$"#,##0.00'); r += 1
     cell(r, 3, 'TOTAL', bold=True, align='right')
-    cell(r, 4, float(inv['total']), bold=True, align='right', fmt='"$"#,##0.00')
-    r += 2
+    cell(r, 4, float(inv['total']), bold=True, align='right', fmt='"$"#,##0.00'); r += 2
 
-    cell(r, 1, 'THANK YOU FOR YOUR BUSINESS!', bold=True)
-    r += 2
-
-    cell(r, 1, 'TERMS & CONDITIONS', bold=True)
-    r += 1
-    cell(r, 1, 'Beneficiario:')
-    r += 1
+    cell(r, 1, 'THANK YOU FOR YOUR BUSINESS!', bold=True); r += 2
+    cell(r, 1, 'TERMS & CONDITIONS', bold=True); r += 1
+    cell(r, 1, 'Beneficiario:'); r += 1
     for line in co['beneficiario'].split('\n'):
         cell(r, 1, line); r += 1
     r += 1
-    cell(r, 1, 'Banco:')
-    r += 1
+    cell(r, 1, 'Banco:'); r += 1
     cell(r, 1, co['banco']); r += 1
     cell(r, 1, f"Route number: {co['route']}"); r += 1
     cell(r, 1, f"Account number: {co['account']}"); r += 2
@@ -404,9 +537,8 @@ def export_excel(invoice_id):
 
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
-    fname = f"Invoice_{inv['invoice_number']}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True, download_name=fname)
+                     as_attachment=True, download_name=f"Invoice_{inv['invoice_number']}.xlsx")
 
 
 # ── Export PDF ────────────────────────────────────────────────────────────────
@@ -416,16 +548,15 @@ def export_excel(invoice_id):
 @require_role('admin')
 def export_pdf(invoice_id):
     from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
     from reportlab.lib import colors
-    from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER
 
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT i.*, c.company_name, c.company_short_code,
-                   cu.customer_name
+            SELECT i.*, c.company_name, c.company_short_code, cu.customer_name
             FROM invoices i
             LEFT JOIN dim_companies c  ON i.company_id  = c.company_id
             LEFT JOIN dim_customers cu ON i.customer_id = cu.customer_id
@@ -443,47 +574,30 @@ def export_pdf(invoice_id):
     doc = SimpleDocTemplate(buf, pagesize=letter,
                             leftMargin=0.75*inch, rightMargin=0.75*inch,
                             topMargin=0.75*inch, bottomMargin=0.75*inch)
-    styles = getSampleStyleSheet()
-    normal  = ParagraphStyle('n', fontName='Helvetica', fontSize=10, leading=14)
-    bold    = ParagraphStyle('b', fontName='Helvetica-Bold', fontSize=10, leading=14)
-    right   = ParagraphStyle('r', fontName='Helvetica', fontSize=10, leading=14, alignment=TA_RIGHT)
-    rbold   = ParagraphStyle('rb', fontName='Helvetica-Bold', fontSize=10, leading=14, alignment=TA_RIGHT)
-    center  = ParagraphStyle('c', fontName='Helvetica', fontSize=10, leading=14, alignment=TA_CENTER)
-    title   = ParagraphStyle('t', fontName='Helvetica-Bold', fontSize=16, leading=20)
-    small   = ParagraphStyle('s', fontName='Helvetica', fontSize=9, leading=12, textColor=colors.HexColor('#666666'))
+
+    normal = ParagraphStyle('n', fontName='Helvetica', fontSize=10, leading=14)
+    bold   = ParagraphStyle('b', fontName='Helvetica-Bold', fontSize=10, leading=14)
+    right  = ParagraphStyle('r', fontName='Helvetica', fontSize=10, leading=14, alignment=TA_RIGHT)
+    rbold  = ParagraphStyle('rb', fontName='Helvetica-Bold', fontSize=10, leading=14, alignment=TA_RIGHT)
+    center = ParagraphStyle('c', fontName='Helvetica', fontSize=10, leading=14, alignment=TA_CENTER)
+    title  = ParagraphStyle('t', fontName='Helvetica-Bold', fontSize=16, leading=20)
+    small  = ParagraphStyle('s', fontName='Helvetica', fontSize=9, leading=12, textColor=colors.HexColor('#666666'))
 
     story = []
-
-    # Header
     addr_html = co['addr'].replace('\n','<br/>')
     inv_date  = inv['invoice_date']
     date_str  = inv_date.strftime('%m/%d/%y') if hasattr(inv_date,'strftime') else str(inv_date)
-    header_data = [
-        [Paragraph(co['name'], title),
-         Paragraph(f"<b>INVOICE #{inv['invoice_number']}</b>", rbold)],
-        [Paragraph(addr_html, small),
-         Paragraph(date_str, right)],
-    ]
-    ht = Table(header_data, colWidths=[4*inch, 3*inch])
-    ht.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-    ]))
-    story.append(ht)
-    story.append(Spacer(1, 0.2*inch))
 
-    # To
-    story.append(Paragraph('To', small))
-    story.append(Paragraph(inv['customer_name'] or '—', bold))
-    story.append(Spacer(1, 0.25*inch))
+    ht = Table([
+        [Paragraph(co['name'], title), Paragraph(f"<b>INVOICE #{inv['invoice_number']}</b>", rbold)],
+        [Paragraph(addr_html, small),  Paragraph(date_str, right)],
+    ], colWidths=[4*inch, 3*inch])
+    ht.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),4)]))
+    story += [ht, Spacer(1,0.2*inch), Paragraph('To', small),
+              Paragraph(inv['customer_name'] or '—', bold), Spacer(1,0.25*inch)]
 
-    # Line items table
-    table_data = [[
-        Paragraph('Description', bold),
-        Paragraph('Price', rbold),
-        Paragraph('QTY', rbold),
-        Paragraph('Total', rbold),
-    ]]
+    table_data = [[Paragraph('Description',bold),Paragraph('Price',rbold),
+                   Paragraph('QTY',rbold),Paragraph('Total',rbold)]]
     for item in items:
         table_data.append([
             Paragraph(item['item_description'] or '', normal),
@@ -491,60 +605,43 @@ def export_pdf(invoice_id):
             Paragraph(str(item['quantity']), right),
             Paragraph(f"${float(item['line_total']):,.2f}", right),
         ])
-
-    col_w = [3.8*inch, 1.2*inch, 0.7*inch, 1.3*inch]
-    t = Table(table_data, colWidths=col_w, repeatRows=1)
+    t = Table(table_data, colWidths=[3.8*inch,1.2*inch,0.7*inch,1.3*inch], repeatRows=1)
     t.setStyle(TableStyle([
-        ('BACKGROUND',    (0,0), (-1,0), colors.HexColor('#EEEEEE')),
-        ('LINEBELOW',     (0,0), (-1,0), 0.5, colors.black),
-        ('LINEBELOW',     (0,1), (-1,-1), 0.25, colors.HexColor('#DDDDDD')),
-        ('TOPPADDING',    (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-        ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+        ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#EEEEEE')),
+        ('LINEBELOW',(0,0),(-1,0),0.5,colors.black),
+        ('LINEBELOW',(0,1),(-1,-1),0.25,colors.HexColor('#DDDDDD')),
+        ('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5),
+        ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
     ]))
-    story.append(t)
-    story.append(Spacer(1, 0.15*inch))
+    story += [t, Spacer(1,0.15*inch)]
 
-    # Totals
     other_lbl = inv.get('other_label') or 'OTHER'
-    totals_data = [
-        [Paragraph('SUBTOTAL', right),   Paragraph(f"${float(inv['subtotal']):,.2f}", right)],
-        [Paragraph('TAX RATE', right),   Paragraph('0.00%', right)],
-        [Paragraph(other_lbl, right),    Paragraph(f"${float(inv['other_amount'] or 0):,.2f}", right)],
-        [Paragraph('<b>TOTAL</b>', rbold), Paragraph(f"<b>${float(inv['total']):,.2f}</b>", rbold)],
-    ]
-    tt = Table(totals_data, colWidths=[5.5*inch, 1.5*inch])
+    tt = Table([
+        [Paragraph('SUBTOTAL',right), Paragraph(f"${float(inv['subtotal']):,.2f}",right)],
+        [Paragraph('TAX RATE',right), Paragraph('0.00%',right)],
+        [Paragraph(other_lbl,right),  Paragraph(f"${float(inv['other_amount'] or 0):,.2f}",right)],
+        [Paragraph('<b>TOTAL</b>',rbold), Paragraph(f"<b>${float(inv['total']):,.2f}</b>",rbold)],
+    ], colWidths=[5.5*inch,1.5*inch])
     tt.setStyle(TableStyle([
-        ('LINEABOVE',     (0,3), (-1,3), 0.5, colors.black),
-        ('TOPPADDING',    (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LINEABOVE',(0,3),(-1,3),0.5,colors.black),
+        ('TOPPADDING',(0,0),(-1,-1),4),('BOTTOMPADDING',(0,0),(-1,-1),4),
     ]))
-    story.append(tt)
-    story.append(Spacer(1, 0.3*inch))
+    story += [tt, Spacer(1,0.3*inch), Paragraph('THANK YOU FOR YOUR BUSINESS!',center),
+              Spacer(1,0.25*inch), Paragraph('<b>TERMS &amp; CONDITIONS</b>',bold),
+              Spacer(1,0.08*inch)]
 
-    story.append(Paragraph('THANK YOU FOR YOUR BUSINESS!', center))
-    story.append(Spacer(1, 0.25*inch))
-
-    # Banking
     bene_html = co['beneficiario'].replace('\n','<br/>')
-    story.append(Paragraph('<b>TERMS &amp; CONDITIONS</b>', bold))
-    story.append(Spacer(1, 0.08*inch))
-    banking_data = [
-        [Paragraph('<b>Beneficiario:</b>', bold), Paragraph('<b>Banco:</b>', bold)],
-        [Paragraph(bene_html, normal),
-         Paragraph(f"{co['banco']}<br/>Route number: {co['route']}<br/>Account number: {co['account']}", normal)],
-    ]
-    bt = Table(banking_data, colWidths=[3.5*inch, 3.5*inch])
-    bt.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('TOPPADDING', (0,0), (-1,-1), 3),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
-    story.append(bt)
-    story.append(Spacer(1, 0.1*inch))
-    story.append(Paragraph(f"Make all checks payable to {co['payable']}", small))
+    bt = Table([
+        [Paragraph('<b>Beneficiario:</b>',bold), Paragraph('<b>Banco:</b>',bold)],
+        [Paragraph(bene_html,normal),
+         Paragraph(f"{co['banco']}<br/>Route number: {co['route']}<br/>Account number: {co['account']}",normal)],
+    ], colWidths=[3.5*inch,3.5*inch])
+    bt.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),
+                             ('TOPPADDING',(0,0),(-1,-1),3),('BOTTOMPADDING',(0,0),(-1,-1),3)]))
+    story += [bt, Spacer(1,0.1*inch),
+              Paragraph(f"Make all checks payable to {co['payable']}", small)]
 
     doc.build(story)
     buf.seek(0)
-    fname = f"Invoice_{inv['invoice_number']}.pdf"
-    return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=fname)
+    return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                     download_name=f"Invoice_{inv['invoice_number']}.pdf")
