@@ -394,6 +394,67 @@ def delete_invoice(invoice_id):
     return redirect(url_for('invoicing.index'))
 
 
+# ── Remove single item from draft invoice ────────────────────────────────────
+
+@invoicing_bp.route('/<uuid:invoice_id>/remove-item', methods=['POST'])
+@login_required
+@require_role('admin')
+def remove_item(invoice_id):
+    sid = str(invoice_id)
+    data = request.get_json()
+    item_id = data.get('item_id')
+    if not item_id:
+        return jsonify({'error': 'Missing item_id'}), 400
+
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT status FROM invoices WHERE invoice_id=%s", (sid,))
+        inv = cur.fetchone()
+        if not inv or inv['status'] != 'draft':
+            return jsonify({'error': 'Invoice not editable'}), 400
+
+        cur.execute(
+            "SELECT transaction_id FROM invoice_items WHERE item_id=%s AND invoice_id=%s",
+            (item_id, sid))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'error': 'Item not found'}), 404
+        txn_id = str(row['transaction_id'])
+
+        cur.execute("DELETE FROM invoice_items WHERE item_id=%s", (item_id,))
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM invoice_items "
+            "WHERE invoice_id=%s AND transaction_id=%s::uuid",
+            (sid, txn_id))
+        remaining = cur.fetchone()['n']
+        released_order = False
+        if remaining == 0:
+            cur.execute(
+                "UPDATE transactions SET fulfillment_status='received',"
+                "fulfillment_status_updated_at=NOW() "
+                "WHERE transaction_id=%s::uuid",
+                (txn_id,))
+            released_order = True
+
+        cur.execute(
+            "SELECT COALESCE(SUM(line_total),0) AS s FROM invoice_items WHERE invoice_id=%s",
+            (sid,))
+        new_subtotal = float(cur.fetchone()['s'])
+        cur.execute("SELECT other_amount FROM invoices WHERE invoice_id=%s", (sid,))
+        other = float(cur.fetchone()['other_amount'] or 0)
+        new_total = round(new_subtotal + other, 2)
+        cur.execute(
+            "UPDATE invoices SET subtotal=%s, total=%s WHERE invoice_id=%s",
+            (new_subtotal, new_total, sid))
+
+    return jsonify({
+        'ok': True,
+        'subtotal': f"{new_subtotal:,.2f}",
+        'total': f"{new_total:,.2f}",
+        'removed_order': released_order
+    })
+
+
 # ── Invoice Detail ────────────────────────────────────────────────────────────
 
 @invoicing_bp.route('/<uuid:invoice_id>')
