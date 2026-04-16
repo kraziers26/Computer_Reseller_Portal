@@ -602,7 +602,7 @@ def setup_fulfillment_status():
             cur.execute("""
                 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fulfillment_status TEXT
                     DEFAULT 'uploaded'
-                    CHECK (fulfillment_status IN ('uploaded','batched','received','invoiced'))
+                    CHECK (fulfillment_status IN ('uploaded','batched','pending','received','invoiced'))
             """)
             cur.execute("""
                 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS fulfillment_status_updated_at
@@ -666,5 +666,76 @@ def setup_receiving_tables():
                 )
             """)
         return "<h1>✅ Receiving tables created!</h1><p>receiving_sessions, receiving_items, receiving_item_lines</p><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-fulfillment-pending-igamer-2024')
+def setup_fulfillment_pending():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_fulfillment_status_check")
+            cur.execute("""
+                ALTER TABLE transactions ADD CONSTRAINT transactions_fulfillment_status_check
+                CHECK (fulfillment_status IN ('uploaded','batched','pending','received','invoiced'))
+            """)
+        return "<h1>✅ fulfillment_status constraint updated with pending!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-invoicing-igamer-2024')
+def setup_invoicing():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS dim_customers (
+                    customer_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    customer_name TEXT NOT NULL,
+                    email        TEXT,
+                    phone        TEXT,
+                    is_active    BOOLEAN DEFAULT TRUE,
+                    created_at   TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS invoices (
+                    invoice_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    invoice_number  TEXT NOT NULL UNIQUE,
+                    company_id      INTEGER REFERENCES dim_companies(company_id),
+                    customer_id     UUID REFERENCES dim_customers(customer_id),
+                    created_by      INTEGER REFERENCES dim_users(user_id),
+                    created_at      TIMESTAMP DEFAULT NOW(),
+                    invoice_date    DATE DEFAULT CURRENT_DATE,
+                    batch_markup_pct NUMERIC(6,3) DEFAULT 1.0,
+                    subtotal        NUMERIC(14,2) DEFAULT 0,
+                    other_amount    NUMERIC(14,2) DEFAULT 0,
+                    other_label     TEXT,
+                    total           NUMERIC(14,2) DEFAULT 0,
+                    status          TEXT DEFAULT 'draft'
+                                    CHECK (status IN ('draft','sent','paid')),
+                    notes           TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS invoice_items (
+                    item_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    invoice_id      UUID REFERENCES invoices(invoice_id) ON DELETE CASCADE,
+                    transaction_id  UUID REFERENCES transactions(transaction_id),
+                    item_description TEXT NOT NULL,
+                    sku             TEXT,
+                    quantity        INTEGER DEFAULT 1,
+                    unit_cost       NUMERIC(12,2) DEFAULT 0,
+                    markup_pct      NUMERIC(6,3) DEFAULT 1.0,
+                    unit_price      NUMERIC(12,2) DEFAULT 0,
+                    line_total      NUMERIC(14,2) DEFAULT 0,
+                    sort_order      INTEGER DEFAULT 0
+                )
+            """)
+            cur.execute("""
+                CREATE SEQUENCE IF NOT EXISTS invoice_seq_se START 1;
+                CREATE SEQUENCE IF NOT EXISTS invoice_seq_ms START 1;
+            """)
+        return "<h1>✅ Invoicing tables created!</h1><p>dim_customers, invoices, invoice_items</p><p><b>Remove this route.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
