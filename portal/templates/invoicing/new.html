@@ -15,10 +15,10 @@
   <input type="hidden" name="invoice_number" value="{{ existing_invoice.invoice_number }}">
   {% endif %}
 
-  <div style="display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start">
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start">
 
     <!-- Left: Order selector -->
-    <div>
+    <div style="min-width:0;overflow:hidden">
       <!-- Filters + Search -->
       <div class="card" style="margin-bottom:12px;padding:12px 16px">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
@@ -83,14 +83,13 @@
                 {% if items %}
                 <div style="margin-top:5px;padding-left:2px">
                   {% for item in items %}
-                  <div style="display:flex;align-items:center;gap:8px;padding:2px 0;font-size:11px">
+                  <div style="display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:11px;flex-wrap:wrap">
                     <span style="color:var(--muted);width:6px;flex-shrink:0">·</span>
-                    <span style="color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ item.item_description }}">{{ item.item_description }}</span>
+                    <span style="color:var(--text);flex:1;min-width:0;word-break:break-word;line-height:1.4">{{ item.item_description }}</span>
                     {% if item.sku_model_color %}
-                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap">{{ item.sku_model_color[:20] }}</span>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0">{{ item.sku_model_color[:24] }}</span>
                     {% endif %}
-                    <span style="font-size:11px;color:var(--muted);white-space:nowrap">× {{ item.quantity }}</span>
-                    <span style="font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap">${{ "{:,.2f}".format(item.unit_price or 0) }}</span>
+                    <span style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0;margin-left:auto">× {{ item.quantity }} &nbsp;<strong>${{ "{:,.2f}".format(item.unit_price or 0) }}</strong></span>
                   </div>
                   {% endfor %}
                 </div>
