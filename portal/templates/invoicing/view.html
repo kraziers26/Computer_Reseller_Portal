@@ -66,11 +66,12 @@
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Price</th>
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:10%">QTY</th>
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Total</th>
+          {% if inv.status == 'draft' %}<th style="padding:9px 6px;width:32px"></th>{% endif %}
         </tr>
       </thead>
       <tbody>
       {% for item in items %}
-      <tr style="border-bottom:0.5px solid var(--border)">
+      <tr style="border-bottom:0.5px solid var(--border)" id="item-row-{{ item.item_id }}">
         <td style="padding:10px 10px">
           {{ item.item_description }}
           {% if item.sku %}<div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">{{ item.sku }}</div>{% endif %}
@@ -78,6 +79,14 @@
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.unit_price or 0) }}</td>
         <td style="padding:10px 10px;text-align:right">{{ item.quantity }}</td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.line_total or 0) }}</td>
+        {% if inv.status == 'draft' %}
+        <td style="padding:10px 6px;text-align:center;width:32px">
+          <button onclick="removeItem('{{ item.item_id }}','{{ "{:,.2f}".format(item.line_total or 0) }}')"
+                  title="Remove this item"
+                  style="background:none;border:none;cursor:pointer;color:#f87171;font-size:14px;padding:2px 4px;border-radius:4px;line-height:1"
+                  >✕</button>
+        </td>
+        {% endif %}
       </tr>
       {% endfor %}
       </tbody>
@@ -124,6 +133,40 @@
     </div>
   </div>
 </div>
+
+{% if inv.status == 'draft' %}
+<script>
+function removeItem(itemId, lineTotal){
+  if(!confirm('Remove this item from the invoice? The order may return to Received if no items remain.')) return;
+  fetch('{{ url_for("invoicing.remove_item", invoice_id=inv.invoice_id) }}', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token() }}'},
+    body: JSON.stringify({item_id: itemId})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      document.getElementById('item-row-'+itemId).remove();
+      // Update totals display
+      document.getElementById('tSubtotal').textContent = '$'+d.subtotal;
+      document.getElementById('tTotal').textContent = '$'+d.total;
+      if(d.removed_order){ 
+        showFlash('Item removed. Order released back to Received pool.'); 
+      } else {
+        showFlash('Item removed.');
+      }
+    } else {
+      alert(d.error || 'Error removing item.');
+    }
+  });
+}
+function showFlash(msg){
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;top:16px;right:16px;background:#10b981;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999';
+  div.textContent = msg;
+  document.body.appendChild(div);
+  setTimeout(()=>div.remove(), 3000);
+}
+</script>
+{% endif %}
 
 {% if inv.notes %}
 <div class="card" style="margin-top:14px">
