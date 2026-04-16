@@ -6,7 +6,6 @@
   <a href="{{ url_for('invoicing.new_invoice') }}" class="btn btn-primary">+ New Invoice</a>
 </div>
 
-<!-- KPIs -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
   <div class="card" style="padding:14px 16px">
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Drafts</div>
@@ -30,7 +29,6 @@
   </div>
 </div>
 
-<!-- Filters -->
 <div class="card" style="margin-bottom:14px">
   <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:end">
     <div>
@@ -89,13 +87,15 @@
         <th style="{{ th }};text-align:right">Total</th>
         <th style="{{ th }}">Status</th>
         <th style="{{ th }}">Created by</th>
-        <th style="{{ th }}"></th>
+        <th style="{{ th }}">Actions</th>
       </tr>
     </thead>
     <tbody>
     {% for inv in invoices %}
     <tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:9px 14px;font-family:var(--mono);font-size:12px;font-weight:500">{{ inv.invoice_number }}</td>
+      <td style="padding:9px 14px;font-family:var(--mono);font-size:12px;font-weight:500">
+        <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" style="color:var(--accent2)">{{ inv.invoice_number }}</a>
+      </td>
       <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.invoice_date }}</td>
       <td style="padding:9px 14px;font-weight:500">{{ inv.customer_name or '—' }}</td>
       <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.company_name or '—' }}</td>
@@ -107,8 +107,17 @@
         {% endif %}
       </td>
       <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.created_by or '—' }}</td>
-      <td style="padding:9px 14px">
+      <td style="padding:9px 14px;white-space:nowrap">
         <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">View</a>
+        {% if inv.status == 'draft' %}
+        <a href="{{ url_for('invoicing.edit_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm" style="color:#4f6ef7;border-color:#4f6ef740;margin-left:4px">✏ Edit</a>
+        <form method="POST" action="{{ url_for('invoicing.delete_invoice', invoice_id=inv.invoice_id) }}"
+              style="display:inline;margin-left:4px"
+              onsubmit="return confirm('Delete Invoice {{ inv.invoice_number }}? Orders will return to Received pool.')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">✕ Delete</button>
+        </form>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
