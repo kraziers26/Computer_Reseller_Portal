@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}New Invoice — ComputerReseller Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <a href="{{ url_for('invoicing.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoicing</a>
+    <h1>New Invoice</h1>
+    <p>Select received orders, set markup, choose customer</p>
+  </div>
+</div>
+
+<form method="POST" id="invoiceForm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div style="display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start">
+
+    <!-- Left: Order selector -->
+    <div>
+      <!-- Filters -->
+      <div class="card" style="margin-bottom:12px;padding:12px 16px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="searchOrders" placeholder="Search orders..." style="width:180px" oninput="filterOrders()">
+          <select id="filterCompany" style="width:160px" onchange="filterOrders()">
+            <option value="">All companies</option>
+            {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="selectAll" style="width:auto" onchange="toggleAll(this)"> Select all
+          </label>
+          <span id="selectedCount" style="font-size:12px;color:var(--muted)">0 selected</span>
+        </div>
+      </div>
+
+      <!-- Order table -->
+      <div class="card" style="padding:0">
+        {% if not orders %}
+        <div style="text-align:center;padding:40px;color:var(--muted)">No received orders available to invoice.</div>
+        {% else %}
+        <table style="width:100%;border-collapse:collapse;font-size:13px" id="ordersTable">
+          <thead>
+            <tr style="background:var(--surface2)">
+              <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
+              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person</th>
+              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
+              <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for o in orders %}
+          <tr class="order-row" data-company="{{ o.company_id }}" data-search="{{ o.order_number|lower }} {{ o.retailer|lower }} {{ o.person_name|lower }}">
+            <td style="padding:8px 12px">
+              <input type="checkbox" name="txn_ids" value="{{ o.transaction_id }}" class="order-check" style="width:auto" onchange="updateCount()">
+            </td>
+            <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ o.order_number[:24] }}</td>
+            <td style="padding:8px 12px">{{ o.retailer }}</td>
+            <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.person_name or '—' }}</td>
+            <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.company_name or '—' }}</td>
+            <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(o.price_total or 0) }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Right: Invoice settings -->
+    <div style="position:sticky;top:16px">
+      <div class="card" style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Invoice Settings</div>
+
+        <label style="display:block;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Issuing Company</div>
+          <select name="company_id" required style="width:100%">
+            {% for c in companies %}
+            <option value="{{ c.company_id }}">{{ c.company_name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label style="display:block;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Customer</div>
+          <select name="customer_id" id="customerSelect" style="width:100%" onchange="toggleNewCustomer(this)">
+            <option value="">— Select customer —</option>
+            {% for c in customers %}
+            <option value="{{ c.customer_id }}">{{ c.customer_name }}</option>
+            {% endfor %}
+            <option value="__new__">+ Add new customer</option>
+          </select>
+        </label>
+        <div id="newCustomerField" style="display:none;margin-bottom:10px">
+          <input type="text" name="new_customer_name" placeholder="Customer name" style="width:100%">
+        </div>
+
+        <label style="display:block;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Invoice Date</div>
+          <input type="date" name="invoice_date" value="{{ today }}" style="width:100%">
+        </label>
+
+        <label style="display:block;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Batch Markup %</div>
+          <input type="number" name="batch_markup" id="batchMarkup" value="1.0" step="0.1" min="0" style="width:100%"
+                 title="Applied to all items. You can override per item after creating the invoice.">
+        </label>
+
+        <label style="display:block;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Label</div>
+          <input type="text" name="other_label" placeholder="e.g. Shipping, Handling" style="width:100%">
+        </label>
+        <label style="display:block;margin-bottom:16px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Amount</div>
+          <input type="number" name="other_amount" value="0" step="0.01" min="0" style="width:100%">
+        </label>
+
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px" id="submitBtn" disabled>
+          Generate Invoice
+        </button>
+        <div id="submitHint" style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">Select at least one order above</div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<script>
+function updateCount(){
+  const checked = document.querySelectorAll('.order-check:checked').length;
+  document.getElementById('selectedCount').textContent = checked + ' selected';
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = checked === 0;
+  document.getElementById('submitHint').style.display = checked > 0 ? 'none' : 'block';
+}
+function toggleAll(cb){
+  document.querySelectorAll('.order-check:not([disabled])').forEach(c=>c.checked=cb.checked);
+  updateCount();
+}
+function filterOrders(){
+  const q    = document.getElementById('searchOrders').value.toLowerCase();
+  const comp = document.getElementById('filterCompany').value;
+  document.querySelectorAll('.order-row').forEach(row=>{
+    const matchQ = !q || row.dataset.search.includes(q);
+    const matchC = !comp || row.dataset.company == comp;
+    row.style.display = (matchQ && matchC) ? '' : 'none';
+  });
+}
+function toggleNewCustomer(sel){
+  document.getElementById('newCustomerField').style.display = sel.value === '__new__' ? 'block' : 'none';
+  if(sel.value === '__new__') sel.value = '';
+}
+</script>
+{% endblock %}
