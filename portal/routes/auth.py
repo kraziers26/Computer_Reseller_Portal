@@ -739,3 +739,20 @@ def setup_invoicing():
         return "<h1>✅ Invoicing tables created!</h1><p>dim_customers, invoices, invoice_items</p><p><b>Remove this route.</b></p>"
     except Exception as e:
         return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
+
+@auth_bp.route('/setup-invoice-pool-igamer-2024')
+def setup_invoice_pool():
+    from ..db import db_cursor
+    try:
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS invoice_number_pool (
+                    inv_number   TEXT NOT NULL,
+                    company_code TEXT NOT NULL,
+                    recycled_at  TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (inv_number, company_code)
+                )
+            """)
+        return "<h1>✅ invoice_number_pool table created!</h1><p><b>Remove this route.</b></p>"
+    except Exception as e:
+        return f"<h1>❌ Error</h1><pre>{str(e)}</pre>", 500
