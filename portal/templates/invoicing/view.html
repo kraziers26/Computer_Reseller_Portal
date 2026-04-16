@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Invoice {{ inv.invoice_number }} — ComputerReseller Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <a href="{{ url_for('invoicing.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoicing</a>
+    <h1>Invoice #{{ inv.invoice_number }}</h1>
+    <p>{{ inv.customer_name or '—' }} · {{ inv.invoice_date }}</p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="{{ url_for('invoicing.export_excel', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">⬇ Excel</a>
+    <a href="{{ url_for('invoicing.export_pdf',   invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">⬇ PDF</a>
+    {% if inv.status == 'draft' %}
+    <form method="POST" action="{{ url_for('invoicing.update_status', invoice_id=inv.invoice_id) }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="status" value="sent">
+      <button type="submit" class="btn btn-primary btn-sm">Mark as Sent</button>
+    </form>
+    {% elif inv.status == 'sent' %}
+    <form method="POST" action="{{ url_for('invoicing.update_status', invoice_id=inv.invoice_id) }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="status" value="paid">
+      <button type="submit" class="btn btn-sm" style="background:rgba(16,185,129,.15);color:#10b981;border-color:#10b981">✓ Mark Paid</button>
+    </form>
+    {% elif inv.status == 'paid' %}
+    <span style="font-size:12px;background:rgba(16,185,129,.12);color:#10b981;padding:4px 12px;border-radius:10px;font-weight:600">✓ Paid</span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Invoice document -->
+<div id="invoiceDoc" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;max-width:760px;overflow:hidden;font-size:13px">
+
+  <!-- Header -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:28px 36px 20px">
+    <div>
+      <div style="font-size:18px;font-weight:600;color:var(--text)">{{ co.name }}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:5px;line-height:1.8">{{ co.addr.replace('\n','<br>')|safe }}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:20px;font-weight:600;color:var(--text);letter-spacing:-.3px">INVOICE #{{ inv.invoice_number }}</div>
+      <div style="font-size:13px;color:var(--muted);margin-top:4px">{{ inv.invoice_date }}</div>
+      <div style="margin-top:8px">
+        {% if inv.status=='draft' %}<span style="background:rgba(251,191,36,.15);color:#fbbf24;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Draft</span>
+        {% elif inv.status=='sent' %}<span style="background:rgba(139,92,246,.12);color:#8b5cf6;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Sent</span>
+        {% elif inv.status=='paid' %}<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Paid</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div style="height:0.5px;background:var(--border);margin:0 36px"></div>
+
+  <!-- To -->
+  <div style="padding:16px 36px">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">To</div>
+    <div style="font-size:15px;font-weight:500;color:var(--text)">{{ inv.customer_name or '—' }}</div>
+  </div>
+
+  <!-- Line items -->
+  <div style="padding:0 36px 8px">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          <th style="padding:9px 10px;text-align:left;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:54%">Description</th>
+          <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Price</th>
+          <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:10%">QTY</th>
+          <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in items %}
+      <tr style="border-bottom:0.5px solid var(--border)">
+        <td style="padding:10px 10px">
+          {{ item.item_description }}
+          {% if item.sku %}<div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">{{ item.sku }}</div>{% endif %}
+        </td>
+        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.unit_price or 0) }}</td>
+        <td style="padding:10px 10px;text-align:right">{{ item.quantity }}</td>
+        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.line_total or 0) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Totals -->
+  <div style="display:flex;justify-content:flex-end;padding:4px 36px 16px">
+    <table style="width:240px;font-size:13px;border-collapse:collapse">
+      <tr><td style="padding:5px 8px;color:var(--muted)">SUBTOTAL</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(inv.subtotal or 0) }}</td></tr>
+      <tr><td style="padding:5px 8px;color:var(--muted)">TAX RATE</td><td style="padding:5px 8px;text-align:right">0.00%</td></tr>
+      <tr><td style="padding:5px 8px;color:var(--muted)">{{ inv.other_label or 'OTHER' }}</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(inv.other_amount or 0) }}</td></tr>
+      <tr style="border-top:0.5px solid var(--border)">
+        <td style="padding:10px 8px 6px;font-weight:600;color:var(--text)">TOTAL</td>
+        <td style="padding:10px 8px 6px;text-align:right;font-family:var(--mono);font-weight:600;font-size:15px">${{ "{:,.2f}".format(inv.total or 0) }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Thank you -->
+  <div style="text-align:center;padding:12px;font-size:12px;font-weight:500;color:var(--muted);border-top:0.5px solid var(--border);letter-spacing:.5px;text-transform:uppercase">
+    Thank you for your business!
+  </div>
+
+  <!-- Banking / Terms -->
+  <div style="padding:18px 36px 22px;border-top:0.5px solid var(--border);background:var(--surface2)">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text);margin-bottom:10px">Terms &amp; Conditions</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Beneficiario</div>
+        <div style="font-size:12px;color:var(--text);line-height:1.9">{{ co.beneficiario.replace('\n','<br>')|safe }}</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Banco</div>
+        <div style="font-size:12px;color:var(--text);line-height:1.9">
+          {{ co.banco }}<br>
+          Route number: {{ co.route }}<br>
+          Account number: {{ co.account }}
+        </div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:12px;padding-top:10px;border-top:0.5px solid var(--border)">
+      Make all checks payable to {{ co.payable }}
+    </div>
+  </div>
+</div>
+
+{% if inv.notes %}
+<div class="card" style="margin-top:14px">
+  <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Notes</div>
+  <div style="font-size:13px;color:var(--text)">{{ inv.notes }}</div>
+</div>
+{% endif %}
+{% endblock %}
