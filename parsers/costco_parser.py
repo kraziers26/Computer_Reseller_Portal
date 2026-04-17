@@ -174,11 +174,31 @@ def parse_line_items(text: str, invoice: CostcoInvoice):
         item_description = ' '.join(desc_lines).strip()
 
         # Unit price — line immediately after "Item #XXXXX"
-        unit_price = 0.0
-        if sku_line_idx + 1 < len(lines):
-            up_m = re.match(r'^\$([0-9,]+\.\d{2})$', lines[sku_line_idx + 1])
+        unit_price_raw = 0.0
+        discount_total = 0.0
+        next_idx = sku_line_idx + 1
+
+        if next_idx < len(lines):
+            up_m = re.match(r'^\$([0-9,]+\.\d{2})$', lines[next_idx])
             if up_m:
-                unit_price = float(up_m.group(1).replace(',', ''))
+                unit_price_raw = float(up_m.group(1).replace(',', ''))
+                next_idx += 1
+
+        # Discount line — appears directly after unit price, e.g. "Discount $800.00"
+        if next_idx < len(lines):
+            disc_m = re.match(r'^Discount\s+\$([0-9,]+\.\d{2})$', lines[next_idx], re.IGNORECASE)
+            if disc_m:
+                discount_total = float(disc_m.group(1).replace(',', ''))
+
+        # Net unit cost = list price minus per-unit share of the discount
+        # e.g. $1,299.99 list, $800 discount on qty 2 → $899.99 net unit cost
+        per_unit_discount = round(discount_total / qty, 4) if qty > 0 else 0.0
+        unit_price = round(unit_price_raw - per_unit_discount, 2)
+
+        # Recalculate line_total using net unit price if we had a discount
+        # (the printed line_total on the PDF is the gross amount before discount)
+        if discount_total > 0:
+            line_total = round(unit_price * qty, 2)
 
         invoice.items.append(LineItem(
             item_description=item_description,
