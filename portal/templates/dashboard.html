@@ -79,7 +79,7 @@
     <div class="card-title" style="margin:0">Fulfillment Pipeline</div>
     <span style="font-size:11px;color:var(--muted)">Where your orders are right now</span>
   </div>
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;position:relative">
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0;position:relative">
 
     {% set stage_data = [
       ('uploaded', '1', 'Uploaded',    '#4f6ef7', 'admin.all_submissions', {'fulfillment': 'uploaded'},
@@ -97,36 +97,36 @@
     {% for key, num, label, color, endpoint, params, avg_days, max_days, stuck in stage_data %}
     {% set count = pipeline[key] or 0 %}
     {% set has_stuck = stuck and stuck > 0 %}
-    <div style="text-align:center;padding:16px 8px;position:relative">
+    <div style="text-align:center;padding:12px 4px;position:relative">
       {% if not loop.last %}
-      <div style="position:absolute;top:28px;right:-1px;width:50%;height:2px;background:var(--border);z-index:0"></div>
+      <div style="position:absolute;top:22px;right:-1px;width:50%;height:2px;background:var(--border);z-index:0"></div>
       {% endif %}
       {% if not loop.first %}
-      <div style="position:absolute;top:28px;left:0;width:50%;height:2px;background:var(--border);z-index:0"></div>
+      <div style="position:absolute;top:22px;left:0;width:50%;height:2px;background:var(--border);z-index:0"></div>
       {% endif %}
 
-      <div style="width:40px;height:40px;border-radius:50%;margin:0 auto 10px;
+      <div style="width:32px;height:32px;border-radius:50%;margin:0 auto 8px;
                   display:flex;align-items:center;justify-content:center;
-                  font-size:16px;font-weight:600;position:relative;z-index:1;
+                  font-size:13px;font-weight:600;position:relative;z-index:1;
                   background:{{ color }}22;border:2px solid {{ '#f87171' if has_stuck else color }};color:{{ color }}">
         {{ num }}
       </div>
 
-      <div style="font-size:20px;font-weight:600;color:{{ color }};margin-bottom:2px">
+      <div style="font-size:18px;font-weight:600;color:{{ color }};margin-bottom:2px">
         <a href="{{ url_for(endpoint, **params) }}" style="color:inherit;text-decoration:none">{{ count }}</a>
       </div>
-      <div style="font-size:12px;font-weight:500;color:var(--text)">{{ label }}</div>
+      <div style="font-size:11px;font-weight:500;color:var(--text)">{{ label }}</div>
 
       {% if avg_days and avg_days > 0 %}
-      <div style="font-size:10px;color:var(--muted);margin-top:3px">
-        avg {{ avg_days|int }}d in stage
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">
+        avg {{ avg_days|int }}d
       </div>
       {% endif %}
       {% if has_stuck %}
-      <div style="margin-top:4px">
+      <div style="margin-top:3px">
         <a href="{{ url_for(endpoint, fulfillment=key, stuck_days=14) }}"
            style="font-size:10px;background:rgba(248,113,113,.15);color:#f87171;
-                  padding:2px 7px;border-radius:8px;text-decoration:none">
+                  padding:2px 6px;border-radius:8px;text-decoration:none">
           {{ stuck }} stuck 14d+
         </a>
       </div>
