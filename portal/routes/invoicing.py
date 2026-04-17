@@ -270,7 +270,7 @@ def _save_invoice(existing_id=None):
             invoice_id = str(uuid.uuid4())
             inv_number = get_next_invoice_number(cur, code)
 
-        # Build line items — skip < $1
+        # Build line items — skip < $1, consolidate duplicates by description+price
         cur.execute("""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    ti.item_description, ti.sku_model_color,
@@ -279,30 +279,48 @@ def _save_invoice(existing_id=None):
             LEFT JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
             WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
               AND ti.unit_price >= %s
-            ORDER BY t.order_number, ti.item_description
+            ORDER BY ti.item_description, ti.unit_price
         """, (txn_ids, MIN_ITEM_PRICE))
         raw_items = cur.fetchall()
 
+        # Consolidate: same description + same unit_price → merge qty, keep first transaction_id
+        from collections import OrderedDict
+        merged = OrderedDict()
+        for item in raw_items:
+            desc  = (item['item_description'] or item['retailer'] or '').strip()
+            price = float(item['unit_price'] or 0)
+            key   = (desc.lower(), price)
+            if key in merged:
+                merged[key]['qty'] += int(item['quantity'] or 1)
+            else:
+                merged[key] = {
+                    'transaction_id': str(item['transaction_id']),
+                    'description':    desc,
+                    'sku':            item['sku_model_color'] or '',
+                    'qty':            int(item['quantity'] or 1),
+                    'unit_cost':      price,
+                }
+
         subtotal = 0.0
         line_items = []
-        for i, item in enumerate(raw_items):
+        for i, (key, item) in enumerate(merged.items()):
             item_markup = float(request.form.get(f'markup_{i}', markup_pct))
-            unit_cost   = float(item['unit_price'] or 0)
+            unit_cost   = item['unit_cost']
             unit_price  = round(unit_cost * (1 + item_markup / 100), 2)
-            qty         = int(item['quantity'] or 1)
+            qty         = item['qty']
             line_total  = round(unit_price * qty, 2)
             subtotal   += line_total
             line_items.append({
-                'item_id':       str(uuid.uuid4()),
-                'transaction_id': str(item['transaction_id']),
-                'description':   item['item_description'] or item['retailer'] or '',
-                'sku':           item['sku_model_color'] or '',
-                'qty':           qty,
-                'unit_cost':     unit_cost,
-                'markup_pct':    item_markup,
-                'unit_price':    unit_price,
-                'line_total':    line_total,
-                'sort_order':    i,
+                'item_id':        str(uuid.uuid4()),
+                'transaction_id': item['transaction_id'],
+                'description':    item['description'],
+                'sku':            item['sku'],
+                'qty':            qty,
+                'unit_cost':      unit_cost,
+                'markup_pct':     item_markup,
+                'unit_price':     unit_price,
+                'line_total':     line_total,
+                'sort_order':     i,
             })
 
         subtotal = round(subtotal, 2)
@@ -499,6 +517,29 @@ def update_status(invoice_id):
     return redirect(url_for('invoicing.view_invoice', invoice_id=str(invoice_id)))
 
 
+# ── Update item description (draft only) ─────────────────────────────────────
+
+@invoicing_bp.route('/<uuid:invoice_id>/update-item', methods=['POST'])
+@login_required
+@require_role('admin')
+def update_item_description(invoice_id):
+    sid = str(invoice_id)
+    data = request.get_json()
+    item_id = data.get('item_id')
+    new_desc = (data.get('description') or '').strip()
+    if not item_id or not new_desc:
+        return jsonify({'error': 'Missing fields'}), 400
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT status FROM invoices WHERE invoice_id=%s", (sid,))
+        inv = cur.fetchone()
+        if not inv or inv['status'] != 'draft':
+            return jsonify({'error': 'Not editable'}), 400
+        cur.execute(
+            "UPDATE invoice_items SET item_description=%s WHERE item_id=%s AND invoice_id=%s",
+            (new_desc, item_id, sid))
+    return jsonify({'ok': True, 'description': new_desc})
+
+
 # ── Export Excel ──────────────────────────────────────────────────────────────
 
 @invoicing_bp.route('/<uuid:invoice_id>/export-excel')
@@ -506,7 +547,8 @@ def update_status(invoice_id):
 @require_role('admin')
 def export_excel(invoice_id):
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
     with db_cursor() as (cur, _):
         cur.execute("""
             SELECT i.*, c.company_name, c.company_short_code, cu.customer_name
@@ -526,80 +568,210 @@ def export_excel(invoice_id):
     wb = Workbook()
     ws = wb.active
     ws.title = inv['invoice_number']
-    ws.column_dimensions['A'].width = 42
-    ws.column_dimensions['B'].width = 14
-    ws.column_dimensions['C'].width = 14
-    ws.column_dimensions['D'].width = 14
+    ws.sheet_view.showGridLines = False
+    ws.page_setup.paperSize = 9
+    ws.page_setup.orientation = 'portrait'
+    ws.page_margins.left  = 0.6
+    ws.page_margins.right = 0.6
 
-    def cell(row, col, value, bold=False, align='left', fmt=None):
-        c = ws.cell(row=row, column=col, value=value)
-        c.font = Font(bold=bold, name='Calibri', size=11)
-        c.alignment = Alignment(horizontal=align, vertical='center')
-        if fmt: c.number_format = fmt
-        return c
+    ws.column_dimensions['A'].width = 2
+    ws.column_dimensions['B'].width = 46
+    ws.column_dimensions['C'].width = 13
+    ws.column_dimensions['D'].width = 7
+    ws.column_dimensions['E'].width = 14
+    ws.column_dimensions['F'].width = 2
 
-    ws.merge_cells('A1:D1')
-    c = ws.cell(row=1, column=1, value=co['name'])
-    c.font = Font(bold=True, size=14, name='Calibri')
-    ws.row_dimensions[1].height = 24
+    DARK  = '1A1A2E'
+    ACCENT= '4F6EF7'
+    LIGHT = 'F0F2FF'
+    GRAY  = 'E8E9F0'
+    WHITE = 'FFFFFF'
+    MUTED = '6B7280'
 
-    addr_lines = co['addr'].split('\n')
-    for i, line in enumerate(addr_lines):
-        ws.merge_cells(f'A{2+i}:D{2+i}')
-        cell(2+i, 1, line)
-    r = 2 + len(addr_lines)
+    def c(row, col, val='', bold=False, sz=10, fg=None, bg=None,
+           align='left', valign='center', wrap=False, fmt=None, italic=False):
+        cell = ws.cell(row=row, column=col, value=val)
+        cell.font = Font(name='Calibri', bold=bold, size=sz,
+                         color=fg or '000000', italic=italic)
+        cell.alignment = Alignment(horizontal=align, vertical=valign, wrap_text=wrap)
+        if bg:
+            cell.fill = PatternFill('solid', fgColor=bg)
+        if fmt:
+            cell.number_format = fmt
+        return cell
 
-    ws.merge_cells(f'A{r}:B{r}')
-    cell(r, 1, f"INVOICE #{inv['invoice_number']}", bold=True)
-    dt = inv['invoice_date']
-    cell(r, 3, 'Date:', bold=True, align='right')
-    cell(r, 4, dt.strftime('%m/%d/%y') if hasattr(dt,'strftime') else str(dt), align='right')
-    r += 2
+    def fill_row(row, c1, c2, bg):
+        for col in range(c1, c2+1):
+            ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor=bg)
 
-    cell(r, 1, 'To', bold=True); r += 1
-    cell(r, 1, inv['customer_name'] or '—', bold=True); r += 2
+    def merge(row, c1, c2, val='', **kw):
+        ws.merge_cells(start_row=row, start_column=c1, end_row=row, end_column=c2)
+        return c(row, c1, val, **kw)
 
-    for col, (txt, al) in enumerate([('Description','left'),('Price','right'),('QTY','right'),('Total','right')], 1):
-        c = ws.cell(row=r, column=col, value=txt)
-        c.font = Font(bold=True, name='Calibri', size=11)
-        c.alignment = Alignment(horizontal=al)
-        c.fill = PatternFill('solid', fgColor='EEEEEE')
+    r = 1
+
+    # Accent top bar
+    ws.row_dimensions[r].height = 5
+    fill_row(r, 1, 6, ACCENT); r += 1
+
+    # Company name
+    ws.row_dimensions[r].height = 32
+    fill_row(r, 1, 6, DARK)
+    merge(r, 2, 3, co['name'], bold=True, sz=16, fg=WHITE, bg=DARK, valign='center')
+    inv_num = "INVOICE #" + inv['invoice_number']
+    merge(r, 4, 5, inv_num, bold=True, sz=13, fg=WHITE, bg=DARK,
+          align='right', valign='center')
     r += 1
 
-    for item in items:
-        cell(r, 1, item['item_description'])
-        cell(r, 2, float(item['unit_price']), align='right', fmt='"$"#,##0.00')
-        cell(r, 3, int(item['quantity']), align='right')
-        cell(r, 4, float(item['line_total']), align='right', fmt='"$"#,##0.00')
+    # Address + date
+    ws.row_dimensions[r].height = 42
+    fill_row(r, 1, 6, DARK)
+    addr_val = co['addr']
+    merge(r, 2, 3, addr_val, sz=9, fg='9CA3AF', bg=DARK, wrap=True, valign='top')
+    dt = inv['invoice_date']
+    date_str = dt.strftime('%B %d, %Y') if hasattr(dt, 'strftime') else str(dt)
+    merge(r, 4, 5, date_str, sz=10, fg='CBD5E1', bg=DARK, align='right', valign='top')
+    r += 1
+
+    # Accent bottom bar
+    ws.row_dimensions[r].height = 4
+    fill_row(r, 1, 6, ACCENT); r += 1
+
+    # Spacer
+    ws.row_dimensions[r].height = 12; r += 1
+
+    # Bill to
+    ws.row_dimensions[r].height = 13
+    merge(r, 2, 5, 'BILL TO', bold=True, sz=8, fg=MUTED)
+    r += 1
+    ws.row_dimensions[r].height = 20
+    merge(r, 2, 5, inv['customer_name'] or '—', bold=True, sz=12)
+    r += 1
+
+    # Spacer
+    ws.row_dimensions[r].height = 10; r += 1
+
+    # Items header
+    ws.row_dimensions[r].height = 22
+    fill_row(r, 1, 6, ACCENT)
+    for col, txt, al in [(2,'DESCRIPTION','left'),(3,'PRICE','right'),
+                          (4,'QTY','center'),(5,'TOTAL','right')]:
+        c(r, col, txt, bold=True, sz=9, fg=WHITE, bg=ACCENT, align=al)
+    r += 1
+
+    for idx, item in enumerate(items):
+        bg = WHITE if idx % 2 == 0 else LIGHT
+        ws.row_dimensions[r].height = 34
+        fill_row(r, 1, 6, bg)
+        bdr = Border(bottom=Side(style='thin', color=GRAY))
+        desc_cell = ws.cell(row=r, column=2, value=item['item_description'] or '')
+        desc_cell.font = Font(name='Calibri', size=10)
+        desc_cell.alignment = Alignment(wrap_text=True, vertical='center')
+        desc_cell.fill = PatternFill('solid', fgColor=bg)
+        desc_cell.border = bdr
+
+        pc = ws.cell(row=r, column=3, value=float(item['unit_price']))
+        pc.font = Font(name='Calibri', size=10)
+        pc.number_format = '"$"#,##0.00'
+        pc.alignment = Alignment(horizontal='right', vertical='center')
+        pc.fill = PatternFill('solid', fgColor=bg)
+        pc.border = bdr
+
+        qc = ws.cell(row=r, column=4, value=int(item['quantity']))
+        qc.font = Font(name='Calibri', size=10)
+        qc.alignment = Alignment(horizontal='center', vertical='center')
+        qc.fill = PatternFill('solid', fgColor=bg)
+        qc.border = bdr
+
+        tc = ws.cell(row=r, column=5, value=float(item['line_total']))
+        tc.font = Font(name='Calibri', bold=True, size=10)
+        tc.number_format = '"$"#,##0.00'
+        tc.alignment = Alignment(horizontal='right', vertical='center')
+        tc.fill = PatternFill('solid', fgColor=bg)
+        tc.border = bdr
+        r += 1
+
+    # Spacer
+    ws.row_dimensions[r].height = 8; r += 1
+
+    # Subtotal / Tax / Other
+    for lbl, val, bold in [
+        ('SUBTOTAL', float(inv['subtotal']), False),
+        ('TAX RATE', '0.00%', False),
+        ((inv.get('other_label') or 'OTHER').upper(), float(inv['other_amount'] or 0), False),
+    ]:
+        ws.row_dimensions[r].height = 18
+        c(r, 4, lbl, sz=9, fg=MUTED, align='right')
+        vc = ws.cell(row=r, column=5, value=val)
+        vc.font = Font(name='Calibri', size=10, color=MUTED)
+        vc.alignment = Alignment(horizontal='right', vertical='center')
+        if isinstance(val, float):
+            vc.number_format = '"$"#,##0.00'
+        r += 1
+
+    # Total bar
+    ws.row_dimensions[r].height = 28
+    fill_row(r, 1, 6, DARK)
+    c(r, 4, 'TOTAL', bold=True, sz=11, fg=WHITE, bg=DARK, align='right')
+    tc = ws.cell(row=r, column=5, value=float(inv['total']))
+    tc.font = Font(name='Calibri', bold=True, size=14, color=WHITE)
+    tc.number_format = '"$"#,##0.00'
+    tc.alignment = Alignment(horizontal='right', vertical='center')
+    tc.fill = PatternFill('solid', fgColor=DARK)
+    r += 1
+
+    # Spacer
+    ws.row_dimensions[r].height = 16; r += 1
+
+    # Thank you
+    ws.row_dimensions[r].height = 20
+    merge(r, 2, 5, 'THANK YOU FOR YOUR BUSINESS!',
+          bold=True, sz=10, fg=ACCENT, align='center')
+    r += 1
+
+    # Thin divider
+    ws.row_dimensions[r].height = 3
+    fill_row(r, 2, 5, GRAY); r += 1
+
+    # Spacer
+    ws.row_dimensions[r].height = 12; r += 1
+
+    # Banking section
+    ws.row_dimensions[r].height = 13
+    merge(r, 2, 5, 'TERMS & CONDITIONS', bold=True, sz=8, fg=MUTED)
+    r += 1
+
+    bene_lines  = co['beneficiario'].split('\n')
+    banco_lines = [co['banco'],
+                   'Route number: ' + co['route'],
+                   'Account number: ' + co['account']]
+
+    c(r, 2, 'Beneficiario:', bold=True, sz=9)
+    c(r, 4, 'Banco:', bold=True, sz=9)
+    r += 1
+
+    max_lines = max(len(bene_lines), len(banco_lines))
+    for i in range(max_lines):
+        ws.row_dimensions[r].height = 15
+        if i < len(bene_lines):
+            c(r, 2, bene_lines[i], sz=9, fg='374151')
+        if i < len(banco_lines):
+            c(r, 4, banco_lines[i], sz=9, fg='374151')
         r += 1
 
     r += 1
-    cell(r, 3, 'SUBTOTAL', bold=True, align='right')
-    cell(r, 4, float(inv['subtotal']), align='right', fmt='"$"#,##0.00'); r += 1
-    cell(r, 3, 'TAX RATE', align='right')
-    cell(r, 4, '0.00%', align='right'); r += 1
-    other_lbl = inv.get('other_label') or 'OTHER'
-    cell(r, 3, other_lbl, align='right')
-    cell(r, 4, float(inv['other_amount'] or 0), align='right', fmt='"$"#,##0.00'); r += 1
-    cell(r, 3, 'TOTAL', bold=True, align='right')
-    cell(r, 4, float(inv['total']), bold=True, align='right', fmt='"$"#,##0.00'); r += 2
-
-    cell(r, 1, 'THANK YOU FOR YOUR BUSINESS!', bold=True); r += 2
-    cell(r, 1, 'TERMS & CONDITIONS', bold=True); r += 1
-    cell(r, 1, 'Beneficiario:'); r += 1
-    for line in co['beneficiario'].split('\n'):
-        cell(r, 1, line); r += 1
-    r += 1
-    cell(r, 1, 'Banco:'); r += 1
-    cell(r, 1, co['banco']); r += 1
-    cell(r, 1, f"Route number: {co['route']}"); r += 1
-    cell(r, 1, f"Account number: {co['account']}"); r += 2
-    cell(r, 1, f"Make all checks payable to {co['payable']}")
+    ws.row_dimensions[r].height = 14
+    merge(r, 2, 5, 'Make all checks payable to ' + co['payable'],
+          sz=9, fg=MUTED, italic=True)
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
-    return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True, download_name=f"Invoice_{inv['invoice_number']}.xlsx")
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name='Invoice_' + inv['invoice_number'] + '.xlsx')
+
 
 
 # ── Export PDF ────────────────────────────────────────────────────────────────
