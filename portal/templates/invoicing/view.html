@@ -73,7 +73,19 @@
       {% for item in items %}
       <tr style="border-bottom:0.5px solid var(--border)" id="item-row-{{ item.item_id }}">
         <td style="padding:10px 10px">
+          {% if inv.status == 'draft' %}
+          <div class="editable-desc" data-item-id="{{ item.item_id }}"
+               contenteditable="true" spellcheck="false"
+               style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px -4px;
+                      transition:background .15s;line-height:1.4"
+               onmouseenter="this.style.background='var(--surface2)'"
+               onmouseleave="if(document.activeElement!==this)this.style.background=''"
+               onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+               onblur="saveDesc(this)"
+               >{{ item.item_description }}</div>
+          {% else %}
           {{ item.item_description }}
+          {% endif %}
           {% if item.sku %}<div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">{{ item.sku }}</div>{% endif %}
         </td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.unit_price or 0) }}</td>
@@ -158,9 +170,35 @@ function removeItem(itemId, lineTotal){
     }
   });
 }
-function showFlash(msg){
+function saveDesc(el){
+  el.style.background = '';
+  el.style.outline = 'none';
+  const newDesc = el.textContent.trim();
+  if(!newDesc){ el.textContent = el.dataset.original || el.textContent; return; }
+  const itemId = el.dataset.itemId;
+  fetch('{{ url_for("invoicing.update_item_description", invoice_id=inv.invoice_id) }}', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token() }}'},
+    body: JSON.stringify({item_id: itemId, description: newDesc})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){ showFlash('Description updated.'); }
+    else { showFlash('Error: ' + (d.error||'unknown'), true); }
+  });
+}
+
+// Store originals on load
+document.querySelectorAll('.editable-desc').forEach(el=>{
+  el.dataset.original = el.textContent.trim();
+  // Prevent Enter from adding new lines
+  el.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
+    if(e.key==='Escape'){ el.textContent=el.dataset.original; el.blur(); }
+  });
+});
+
+function showFlash(msg, isError=false){
   const div = document.createElement('div');
-  div.style.cssText = 'position:fixed;top:16px;right:16px;background:#10b981;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999';
+  div.style.cssText = 'position:fixed;top:16px;right:16px;background:'+(isError?'#f87171':'#10b981')+';color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999';
   div.textContent = msg;
   document.body.appendChild(div);
   setTimeout(()=>div.remove(), 3000);
