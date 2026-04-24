@@ -6,8 +6,9 @@
   <a href="{{ url_for('upload.upload') }}" class="btn btn-ghost btn-sm">← Back</a>
 </div>
 
-<form method="POST" enctype="multipart/form-data" style="max-width:720px">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<form method="POST" enctype="multipart/form-data" style="max-width:760px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
   <div class="card">
     <div class="card-title">Order details</div>
     <div class="form-row">
@@ -19,13 +20,11 @@
         </select>
       </div>
       <div class="form-group"><label>Order Number *</label>
-        <input type="text" name="order_number" required placeholder="Full order number">
-      </div>
+        <input type="text" name="order_number" required placeholder="Full order number"></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label>Purchase Date *</label>
-        <input type="date" name="purchase_date" required>
-      </div>
+        <input type="date" name="purchase_date" required></div>
       <div class="form-group"><label>Order Type *</label>
         <select name="order_type" required>
           {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
@@ -35,30 +34,43 @@
     </div>
     <div class="form-row">
       <div class="form-group"><label>Price Total *</label>
-        <input type="number" name="price_total" step="0.01" required placeholder="0.00">
-      </div>
+        <input type="number" name="price_total" step="0.01" required placeholder="0.00"></div>
       <div class="form-group"><label>Costco Taxes Paid</label>
-        <input type="number" name="costco_taxes" step="0.01" placeholder="Costco only">
-      </div>
+        <input type="number" name="costco_taxes" step="0.01" placeholder="Costco only"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Costco Membership Number</label>
+        <input type="text" name="membership_number" placeholder="e.g. 111957620835"
+               style="font-family:monospace;letter-spacing:.5px"></div>
+      <div class="form-group"></div>
     </div>
   </div>
 
+  <!-- Multiple line items -->
   <div class="card mt-16">
-    <div class="card-title">Item description <span style="font-size:12px;color:var(--muted);font-weight:400">(optional)</span></div>
-    <div class="form-row">
-      <div class="form-group"><label>Description</label>
-        <input type="text" name="item_description" placeholder="e.g. MacBook Air 13-inch M3">
-      </div>
-      <div class="form-group"><label>SKU / Model / Color</label>
-        <input type="text" name="sku" placeholder="e.g. MQKP3LL/A">
-      </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div class="card-title" style="margin:0">Line items <span style="font-size:12px;color:var(--muted);font-weight:400">(optional)</span></div>
+      <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label>Quantity</label>
-        <input type="number" name="quantity" min="1" value="1">
-      </div>
-      <div class="form-group"><label>Unit Price</label>
-        <input type="number" name="unit_price" step="0.01" placeholder="0.00">
+    <div id="items-container">
+      <!-- Default first row -->
+      <div class="item-row" id="item-0" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
+        <button type="button" onclick="removeItem(0)"
+                style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+        <div class="form-row" style="margin-bottom:8px">
+          <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
+            <input type="text" name="item_description[]" placeholder="e.g. MacBook Air 13-inch M3" style="font-size:12px"></div>
+          <div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">SKU</label>
+            <input type="text" name="item_sku[]" placeholder="e.g. MQKP3LL/A" style="font-size:12px;font-family:monospace"></div>
+        </div>
+        <div class="form-row" style="margin-bottom:0">
+          <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+            <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
+          <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
+            <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+          <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
+            <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -86,15 +98,14 @@
         </select>
       </div>
       <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
-        <input type="text" name="notes" maxlength="140" placeholder="Optional tag or note">
-      </div>
+        <input type="text" name="notes" maxlength="140" placeholder="Optional tag or note"></div>
     </div>
   </div>
 
   <div class="card mt-16">
     <div class="card-title">Invoice PDF <span style="font-size:12px;color:var(--muted);font-weight:400">(optional)</span></div>
     <div class="form-group">
-      <label>Attach PDF — will be stored but not parsed</label>
+      <label>Attach PDF — stored but not parsed</label>
       <input type="file" name="pdf" accept=".pdf" style="background:var(--surface2);border:1px solid var(--border);padding:8px;border-radius:6px;width:100%">
     </div>
   </div>
@@ -104,4 +115,36 @@
     <a href="{{ url_for('upload.upload') }}" class="btn btn-ghost">Cancel</a>
   </div>
 </form>
+
+<script>
+let itemCount = 1;
+function addItem() {
+  const idx = itemCount++;
+  const div = document.createElement('div');
+  div.className = 'item-row'; div.id = 'item-' + idx;
+  div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
+  div.innerHTML = `
+    <button type="button" onclick="removeItem(${idx})"
+            style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+    <div class="form-row" style="margin-bottom:8px">
+      <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
+        <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">SKU</label>
+        <input type="text" name="item_sku[]" placeholder="SKU" style="font-size:12px;font-family:monospace"></div>
+    </div>
+    <div class="form-row" style="margin-bottom:0">
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+        <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
+        <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
+        <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+    </div>`;
+  document.getElementById('items-container').appendChild(div);
+}
+function removeItem(idx) {
+  const el = document.getElementById('item-' + idx);
+  if (el) el.remove();
+}
+</script>
 {% endblock %}
