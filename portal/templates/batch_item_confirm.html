@@ -22,7 +22,8 @@
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
 
   <form method="POST">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
     <div class="card">
       <div class="card-title">Order details</div>
       <div class="form-row">
@@ -32,14 +33,18 @@
           <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>Purchase Date</label>
-          <input type="text" value="{{ invoice.purchase_date or '' }}" readonly style="opacity:.6"></div>
+        <div class="form-group"><label>Purchase Date *</label>
+          <input type="date" name="purchase_date" value="{{ invoice.purchase_date or '' }}" required
+                 style="{{ 'border-color:#f87171' if not invoice.purchase_date else '' }}">
+          {% if not invoice.purchase_date %}<div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Not found — enter manually</div>{% endif %}
+        </div>
         <div class="form-group"><label>Order Type *</label>
           <select name="order_type">
             {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
             <option value="{{ ot }}" {{ 'selected' if invoice.fulfillment_method==ot }}>{{ ot }}</option>
             {% endfor %}
-          </select></div>
+          </select>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Price Total *</label>
@@ -47,6 +52,13 @@
         <div class="form-group"><label>Costco Taxes</label>
           <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}" placeholder="Costco only"></div>
       </div>
+      {% if invoice.membership_number is defined and invoice.membership_number %}
+      <div class="form-row">
+        <div class="form-group"><label>Membership Number</label>
+          <input type="text" name="membership_number" value="{{ invoice.membership_number }}" style="font-family:monospace;letter-spacing:.5px"></div>
+        <div class="form-group"></div>
+      </div>
+      {% endif %}
     </div>
 
     <div class="card mt-16">
@@ -55,22 +67,65 @@
         <div class="form-group"><label>Person By *</label>
           <select name="user_id" required>
             {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id==current_user_id }}>{{ u.username }}</option>{% endfor %}
-          </select></div>
+          </select>
+        </div>
         <div class="form-group"><label>Purchase Company *</label>
           <select name="company_id" required>
             <option value="">Select company...</option>
             {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
-          </select></div>
+          </select>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
           <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}" placeholder="e.g. 3015" maxlength="4">
-          {% if not invoice.card_last4 %}
-          <div style="font-size:11px;color:var(--warning);margin-top:4px">Enter manually or leave blank to flag.</div>
-          {% endif %}
+          {% if not invoice.card_last4 %}<div style="font-size:11px;color:var(--warning);margin-top:4px">Enter manually or leave blank to flag.</div>{% endif %}
         </div>
         <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
           <input type="text" name="notes" maxlength="140" placeholder="Optional tag or note"></div>
+      </div>
+    </div>
+
+    <!-- Editable line items — same as single confirm -->
+    <div class="card mt-16">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin:0">Line items</div>
+        <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
+      </div>
+      {% set items = invoice.get('items', []) if invoice is mapping else [] %}
+      <div id="items-container">
+        {% for item in items %}
+        {% if item.unit_price|float >= 1.0 %}
+        {% set idx = loop.index0 %}
+        <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
+          <button type="button" onclick="removeItem({{ idx }})"
+                  style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+          <div class="form-row" style="margin-bottom:8px">
+            <div class="form-group" style="margin-bottom:0;flex:3">
+              <label style="font-size:11px">Description</label>
+              <input type="text" name="item_description[]" value="{{ item.item_description }}" placeholder="Item description" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label style="font-size:11px">SKU</label>
+              <input type="text" name="item_sku[]" value="{{ item.sku_model_color or '' }}" placeholder="SKU" style="font-size:12px;font-family:monospace">
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+              <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" style="font-size:12px"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
+              <input type="number" name="item_unit_price[]" value="{{ item.unit_price }}" step="0.01" min="0" style="font-size:12px"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
+              <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px"></div>
+          </div>
+        </div>
+        {% else %}
+        <div style="font-size:11px;color:var(--muted);padding:3px 0;font-style:italic">
+          ⊘ Excluded (under $1): {{ item.item_description[:60] }} — ${{ "%.2f"|format(item.unit_price|float) }}
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% if not items %}<div id="no-items-msg" style="color:var(--muted);font-size:13px;padding:8px 0">No line items parsed.</div>{% endif %}
       </div>
     </div>
 
@@ -90,6 +145,42 @@
     </div>
   </div>
 </div>
+
+<script>
+let itemCount = {{ (invoice.get('items', [])|length) if invoice is mapping else 0 }};
+
+function addItem() {
+  document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
+  const idx = itemCount++;
+  const div = document.createElement('div');
+  div.className = 'item-row'; div.id = 'item-' + idx;
+  div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
+  div.innerHTML = `
+    <button type="button" onclick="removeItem(${idx})"
+            style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+    <div class="form-row" style="margin-bottom:8px">
+      <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
+        <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">SKU</label>
+        <input type="text" name="item_sku[]" placeholder="SKU" style="font-size:12px;font-family:monospace"></div>
+    </div>
+    <div class="form-row" style="margin-bottom:0">
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+        <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
+        <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
+        <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+    </div>`;
+  document.getElementById('items-container').appendChild(div);
+}
+
+function removeItem(idx) {
+  const el = document.getElementById('item-' + idx);
+  if (el) el.remove();
+}
+</script>
+
 <style>
 @media(max-width:900px){
   div[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}
