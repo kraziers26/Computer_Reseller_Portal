@@ -162,7 +162,34 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
               current_email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
               notes, invoice_data.get('membership_number'), pdf_bytes))
 
-        items = invoice_data.get('items', [])
+        # Build items from form fields (editable list fields) if present,
+        # otherwise fall back to parsed invoice_data items
+        form_descs = form.getlist('item_description[]')
+        if form_descs:
+            items = []
+            skus        = form.getlist('item_sku[]')
+            qtys        = form.getlist('item_qty[]')
+            unit_prices = form.getlist('item_unit_price[]')
+            line_totals = form.getlist('item_line_total[]')
+            for i, desc in enumerate(form_descs):
+                desc = desc.strip()
+                if not desc:
+                    continue
+                try:
+                    unit_p = float(unit_prices[i]) if i < len(unit_prices) else 0.0
+                    line_t = float(line_totals[i]) if i < len(line_totals) else 0.0
+                    qty    = int(qtys[i]) if i < len(qtys) else 1
+                    sku    = skus[i].strip() if i < len(skus) else ''
+                    items.append({'item_description': desc,
+                                  'sku_model_color': sku or None,
+                                  'quantity': qty,
+                                  'unit_price': unit_p,
+                                  'line_total': line_t})
+                except (ValueError, IndexError):
+                    continue
+        else:
+            items = invoice_data.get('items', [])
+
         if items:
             cur.executemany("""
                 INSERT INTO transaction_items
