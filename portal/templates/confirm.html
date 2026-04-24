@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Confirm Submission</h1>
-  <p>Review extracted data before saving. Correct anything that looks wrong.</p>
+  <p>Review and edit extracted data before saving.</p>
 </div>
 
 {% if invoice.parse_errors %}
@@ -15,23 +15,16 @@
 {% if dup_transaction %}
 <div id="dup-warning" style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);
      border-radius:8px;padding:14px 16px;margin-bottom:16px">
-  <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:6px">
-    ⛔ Duplicate order — submission blocked
-  </div>
+  <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:6px">⛔ Duplicate order — submission blocked</div>
   <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
     Order <strong style="color:var(--text)">{{ invoice.order_number }}</strong>
     was already submitted by <strong style="color:var(--text)">{{ dup_transaction.person_name or 'someone' }}</strong>
     on {{ dup_transaction.submitted_at.strftime('%b %d, %Y') if dup_transaction.submitted_at else '—' }}.
     This order <strong style="color:#f87171">will not be saved</strong>.
   </div>
-  <div style="font-size:12px;color:var(--muted)">
-    Only exception: change Order Type below to
-    <em>Return (Full Order)</em> or <em>Return (Partial Order)</em>
-    if this is a return on the original order.
-  </div>
+  <div style="font-size:12px;color:var(--muted)">Change Order Type to a Return to enable submission.</div>
 </div>
 <script>
-// Block submit unless order_type is a return
 (function() {
   function checkDup() {
     var sel = document.querySelector('[name="order_type"]');
@@ -39,72 +32,42 @@
     if (!sel || !btn) return;
     var isReturn = sel.value && sel.value.toLowerCase().includes('return');
     btn.disabled = !isReturn;
-    btn.title = isReturn ? '' : 'Change Order Type to a Return to enable submission';
     btn.style.opacity = isReturn ? '1' : '0.4';
     document.getElementById('dup-warning').style.borderColor = isReturn ? 'rgba(74,222,128,.4)' : 'rgba(239,68,68,.4)';
   }
-  document.addEventListener('DOMContentLoaded', function() {
-    checkDup();
-    var sel = document.querySelector('[name="order_type"]');
-    if (sel) sel.addEventListener('change', checkDup);
-  });
+  document.addEventListener('DOMContentLoaded', function() { checkDup(); var sel = document.querySelector('[name="order_type"]'); if (sel) sel.addEventListener('change', checkDup); });
 })();
 </script>
 {% endif %}
 
 {% if card_missing %}
 <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;
-            padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:gap">
+            padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
   <div>
-    <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:4px">
-      ⚠️ Card {{ invoice.card_last4 }} is not in the system
-    </div>
-    <div style="font-size:12px;color:var(--muted)">
-      This card will be auto-created as "Unknown Card" and flagged for review.
-      Add it properly in <a href="{{ url_for('manage.cards') }}" target="_blank" style="color:var(--accent2)">Manage → Cards</a>
-      or fill in below to add it now.
-    </div>
+    <div style="font-size:13px;font-weight:600;color:#f87171;margin-bottom:4px">⚠️ Card {{ invoice.card_last4 }} is not in the system</div>
+    <div style="font-size:12px;color:var(--muted)">Add it in <a href="{{ url_for('manage.cards') }}" target="_blank" style="color:var(--accent2)">Manage → Cards</a> or below.</div>
   </div>
-  <button type="button" onclick="toggleSection('quick-add-card')"
-          class="btn btn-ghost btn-sm" style="margin-left:16px;white-space:nowrap">+ Add Card</button>
+  <button type="button" onclick="toggleSection('quick-add-card')" class="btn btn-ghost btn-sm" style="white-space:nowrap">+ Add Card</button>
 </div>
-
-<div id="quick-add-card" style="display:none;background:var(--surface2);border:1px solid var(--border);
-     border-radius:8px;padding:16px;margin-bottom:16px">
+<div id="quick-add-card" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px">
   <div style="font-size:13px;font-weight:600;margin-bottom:12px">Quick-add Card {{ invoice.card_last4 }}</div>
   <form id="quickAddCardForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="card_id" value="{{ invoice.card_last4 }}">
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
-      <div class="form-group" style="margin-bottom:0">
-        <label>Card Name *</label>
-        <input id="qc_name" name="card_name" required placeholder="e.g. Ink Unlimited">
-      </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label>Brand *</label>
-        <input id="qc_brand" name="card_brand" required placeholder="e.g. Chase">
-      </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label>Cash Back % *</label>
-        <input id="qc_rate" name="cashback_rate" type="number" step="0.01" required placeholder="1.5">
-      </div>
+      <div class="form-group" style="margin-bottom:0"><label>Card Name *</label><input id="qc_name" name="card_name" required placeholder="e.g. Ink Unlimited"></div>
+      <div class="form-group" style="margin-bottom:0"><label>Brand *</label><input id="qc_brand" name="card_brand" required placeholder="e.g. Chase"></div>
+      <div class="form-group" style="margin-bottom:0"><label>Cash Back % *</label><input id="qc_rate" name="cashback_rate" type="number" step="0.01" required placeholder="1.5"></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-      <div class="form-group" style="margin-bottom:0">
-        <label>Company *</label>
-        <select id="qc_company" name="company_id" required>
-          <option value="">Select...</option>
+      <div class="form-group" style="margin-bottom:0"><label>Company *</label>
+        <select id="qc_company" name="company_id" required><option value="">Select...</option>
           {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
         </select>
       </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label>Credit Limit</label>
-        <input id="qc_limit" name="credit_limit" type="number" placeholder="25000">
-      </div>
+      <div class="form-group" style="margin-bottom:0"><label>Credit Limit</label><input id="qc_limit" name="credit_limit" type="number" placeholder="25000"></div>
     </div>
-    <button type="button" onclick="quickAddCard()" class="btn btn-primary btn-sm" id="quickAddBtn">
-      ✓ Add Card
-    </button>
+    <button type="button" onclick="quickAddCard()" class="btn btn-primary btn-sm" id="quickAddBtn">✓ Add Card</button>
     <span id="quickAddMsg" style="font-size:12px;margin-left:10px"></span>
   </form>
 </div>
@@ -113,41 +76,23 @@
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
 
   <form method="POST" id="confirmForm">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
     <div class="card">
       <div class="card-title">Order details</div>
       <div class="form-row">
-        <div class="form-group">
-          <label>Retailer</label>
-          <input type="text" value="{{ invoice.retailer }}" readonly style="opacity:.6">
-        </div>
-        <div class="form-group">
-          <label>Order Number *</label>
-          <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required>
-        </div>
+        <div class="form-group"><label>Retailer</label>
+          <input type="text" value="{{ invoice.retailer }}" readonly style="opacity:.6"></div>
+        <div class="form-group"><label>Order Number *</label>
+          <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required></div>
       </div>
-      {% if invoice.membership_number %}
       <div class="form-row">
-        <div class="form-group">
-          <label>Membership #</label>
-          <input type="text" value="{{ invoice.membership_number }}" readonly
-                 style="opacity:.7;font-family:monospace;letter-spacing:.5px">
+        <div class="form-group"><label>Purchase Date *</label>
+          <input type="date" name="purchase_date" value="{{ invoice.purchase_date or '' }}" required
+                 style="{{ 'border-color:#f87171' if not invoice.purchase_date else '' }}">
+          {% if not invoice.purchase_date %}<div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Not found — enter manually</div>{% endif %}
         </div>
-        <div class="form-group"></div>
-      </div>
-      {% endif %}
-      <div class="form-row">
-        <div class="form-group">
-          <label>Purchase Date *</label>
-          <input type="date" name="purchase_date" value="{{ invoice.purchase_date or '' }}"
-                 required style="{{ 'border-color:#f87171' if not invoice.purchase_date else '' }}"
-                 title="Parser could not detect date — please enter manually">
-          {% if not invoice.purchase_date %}
-          <div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Date not found — please enter manually</div>
-          {% endif %}
-        </div>
-        <div class="form-group">
-          <label>Order Type *</label>
+        <div class="form-group"><label>Order Type *</label>
           <select name="order_type">
             {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
             <option value="{{ ot }}" {{ 'selected' if invoice.fulfillment_method == ot }}>{{ ot }}</option>
@@ -156,76 +101,88 @@
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>Price Total *</label>
-          <input type="number" name="price_total" step="0.01" value="{{ invoice.price_total or '' }}" required>
-        </div>
-        <div class="form-group">
-          <label>Costco Taxes Paid</label>
-          <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}" placeholder="Costco only">
-        </div>
+        <div class="form-group"><label>Price Total *</label>
+          <input type="number" name="price_total" step="0.01" value="{{ invoice.price_total or '' }}" required></div>
+        <div class="form-group"><label>Costco Taxes Paid</label>
+          <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}" placeholder="Costco only"></div>
       </div>
+      {% if invoice.membership_number is defined and invoice.membership_number %}
+      <div class="form-row">
+        <div class="form-group"><label>Membership Number</label>
+          <input type="text" name="membership_number" value="{{ invoice.membership_number }}" style="font-family:monospace;letter-spacing:.5px"></div>
+        <div class="form-group"></div>
+      </div>
+      {% endif %}
     </div>
 
     <div class="card mt-16">
       <div class="card-title">Person & company</div>
       <div class="form-row">
-        <div class="form-group">
-          <label>Person By *</label>
+        <div class="form-group"><label>Person By *</label>
           <select name="user_id" required>
-            {% for u in users %}
-            <option value="{{ u.user_id }}" {{ 'selected' if u.user_id == current_user_id }}>{{ u.username }}</option>
-            {% endfor %}
+            {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id == current_user_id }}>{{ u.username }}</option>{% endfor %}
           </select>
         </div>
-        <div class="form-group">
-          <label>Purchase Company *</label>
+        <div class="form-group"><label>Purchase Company *</label>
           <select name="company_id" required>
             <option value="">Select company...</option>
-            {% for c in companies %}
-            <option value="{{ c.company_id }}">{{ c.company_name }}</option>
-            {% endfor %}
+            {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
           </select>
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
-          <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}"
-                 placeholder="e.g. 3015" maxlength="4">
-          {% if not invoice.card_last4 %}
-          <div style="font-size:11px;color:var(--warning);margin-top:4px">Not found in PDF. Enter manually or leave blank to flag.</div>
-          {% endif %}
+        <div class="form-group"><label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
+          <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}" placeholder="e.g. 3015" maxlength="4">
+          {% if not invoice.card_last4 %}<div style="font-size:11px;color:var(--warning);margin-top:4px">Not found. Enter manually or leave blank.</div>{% endif %}
         </div>
-        <div class="form-group">
-          <label>Notes <span style="font-size:11px;color:var(--muted)">(optional, 140 chars)</span></label>
-          <input type="text" name="notes" maxlength="140" placeholder="e.g. Holiday restock, client order, etc.">
-        </div>
+        <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
+          <input type="text" name="notes" maxlength="140" placeholder="e.g. Holiday restock, client order"></div>
       </div>
     </div>
 
+    <!-- Editable line items -->
     <div class="card mt-16">
-      <div class="card-title">Line items</div>
-      {% set items = invoice.get('items', []) if invoice is mapping else [] %}
-      {% if items %}
-      <div>
-        <table>
-          <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
-          <tbody>
-          {% for item in items %}
-          <tr>
-            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">{{ item.item_description }}</td>
-            <td>{{ item.quantity }}</td>
-            <td class="mono">${{ "%.2f"|format(item.unit_price|float) }}</td>
-            <td class="mono">${{ "%.2f"|format(item.line_total|float) }}</td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin:0">Line items</div>
+        <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
       </div>
-      {% else %}
-      <p style="color:var(--muted);font-size:13px">No line items extracted.</p>
-      {% endif %}
+      {% set items = invoice.get('items', []) if invoice is mapping else [] %}
+      <div id="items-container">
+        {% for item in items %}
+        {% set idx = loop.index0 %}
+        <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
+          <button type="button" onclick="removeItem({{ idx }})"
+                  style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+          <div class="form-row" style="margin-bottom:8px">
+            <div class="form-group" style="margin-bottom:0;flex:3">
+              <label style="font-size:11px">Description</label>
+              <input type="text" name="item_description[]" value="{{ item.item_description }}" placeholder="Item description" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label style="font-size:11px">SKU</label>
+              <input type="text" name="item_sku[]" value="{{ item.sku_model_color or '' }}" placeholder="SKU" style="font-size:12px;font-family:monospace">
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:11px">Qty</label>
+              <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:11px">Unit Price</label>
+              <input type="number" name="item_unit_price[]" value="{{ item.unit_price }}" step="0.01" min="0" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:11px">Line Total</label>
+              <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px">
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% if not items %}
+        <div id="no-items-msg" style="color:var(--muted);font-size:13px;padding:8px 0">No line items parsed. Add them manually above.</div>
+        {% endif %}
+      </div>
     </div>
 
     <div class="flex gap-12 mt-16">
@@ -240,12 +197,81 @@
       <iframe src="/upload/preview-pdf"
               style="width:100%;height:820px;border:none;border-radius:6px;background:var(--surface2)"
               title="Invoice PDF">
-        <p style="color:var(--muted);padding:16px">PDF preview not supported in this browser.</p>
+        <p style="color:var(--muted);padding:16px">PDF preview not supported.</p>
       </iframe>
     </div>
   </div>
-
 </div>
+
+<script>
+let itemCount = {{ (invoice.get('items', [])|length) if invoice is mapping else 0 }};
+
+function addItem() {
+  document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
+  const idx = itemCount++;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = 'item-' + idx;
+  div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
+  div.innerHTML = `
+    <button type="button" onclick="removeItem(${idx})"
+            style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+    <div class="form-row" style="margin-bottom:8px">
+      <div class="form-group" style="margin-bottom:0;flex:3">
+        <label style="font-size:11px">Description</label>
+        <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px">
+      </div>
+      <div class="form-group" style="margin-bottom:0;flex:1">
+        <label style="font-size:11px">SKU</label>
+        <input type="text" name="item_sku[]" placeholder="SKU" style="font-size:12px;font-family:monospace">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:0">
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+        <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
+        <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
+        <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+    </div>`;
+  document.getElementById('items-container').appendChild(div);
+}
+
+function removeItem(idx) {
+  const el = document.getElementById('item-' + idx);
+  if (el) el.remove();
+}
+
+function toggleSection(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+{% if card_missing %}
+function quickAddCard() {
+  const btn = document.getElementById('quickAddBtn');
+  const msg = document.getElementById('quickAddMsg');
+  const data = {
+    card_id: document.querySelector('#quickAddCardForm [name="card_id"]').value,
+    card_name: document.getElementById('qc_name').value,
+    card_brand: document.getElementById('qc_brand').value,
+    cashback_rate: document.getElementById('qc_rate').value,
+    company_id: document.getElementById('qc_company').value,
+    credit_limit: document.getElementById('qc_limit').value,
+    csrf_token: document.querySelector('#quickAddCardForm [name="csrf_token"]').value,
+  };
+  btn.disabled = true; btn.textContent = 'Saving...';
+  fetch("{{ url_for('manage.new_card_ajax') }}", {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  }).then(r=>r.json()).then(d=>{
+    if (d.ok) { msg.style.color='#4ade80'; msg.textContent='✓ Card added!'; }
+    else { msg.style.color='#f87171'; msg.textContent = d.error || 'Error'; btn.disabled=false; btn.textContent='✓ Add Card'; }
+  });
+}
+{% endif %}
+</script>
+
 <style>
 @media(max-width:900px){
   div[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}
