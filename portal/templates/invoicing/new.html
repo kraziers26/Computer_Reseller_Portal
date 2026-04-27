@@ -36,6 +36,12 @@
             <option value="">All companies</option>
             {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
           </select>
+          {% if batches %}
+          <select id="filterBatch" style="width:160px" onchange="filterOrders()">
+            <option value="">All batches</option>
+            {% for b in batches %}<option value="{{ b }}">Batch {{ b }}</option>{% endfor %}
+          </select>
+          {% endif %}
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
@@ -57,6 +63,7 @@
           {% for o in orders %}
           {% set tid = o.transaction_id|string %}
           {% set items = order_items.get(tid, []) %}
+          {% if items %}
           {% set is_preselected = tid in existing_txn_ids %}
           {% set item_search = items|map(attribute='item_description')|join(' ')|lower %}
           {% set sku_search = items|map(attribute='sku_model_color')|join(' ')|lower %}
@@ -64,6 +71,7 @@
                data-company="{{ o.company_id }}"
                data-retailer="{{ o.retailer or '' }}"
                data-person="{{ o.person_name or '' }}"
+               data-batch="{{ o.print_batch_id or '' }}"
                data-search="{{ o.order_number|lower }} {{ o.retailer|lower }} {{ o.person_name|lower }} {{ item_search }} {{ sku_search }}"
                style="border-bottom:1px solid var(--border)">
 
@@ -93,8 +101,6 @@
                   </div>
                   {% endfor %}
                 </div>
-                {% else %}
-                <div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">No billable items (all items under $1)</div>
                 {% endif %}
               </div>
               <div style="text-align:right;flex-shrink:0">
@@ -103,6 +109,7 @@
               </div>
             </div>
           </div>
+          {% endif %}
           {% endfor %}
         </div>
         <div id="noResults" style="display:none;text-align:center;padding:32px;color:var(--muted)">No orders match your search.</div>
@@ -211,13 +218,16 @@ function filterOrders(){
   const retail  = document.getElementById('filterRetailer').value.toLowerCase();
   const person  = document.getElementById('filterPerson').value.toLowerCase();
   const company = document.getElementById('filterCompanyOrders').value;
+  const batchEl = document.getElementById('filterBatch');
+  const batch   = batchEl ? batchEl.value : '';
   let visible = 0;
   document.querySelectorAll('.order-row').forEach(row=>{
     const matchQ = !q       || row.dataset.search.includes(q);
     const matchR = !retail  || row.dataset.retailer.toLowerCase() === retail;
     const matchP = !person  || row.dataset.person.toLowerCase() === person;
     const matchC = !company || row.dataset.company === company;
-    const show = matchQ && matchR && matchP && matchC;
+    const matchB = !batch   || row.dataset.batch === batch;
+    const show = matchQ && matchR && matchP && matchC && matchB;
     row.style.display = show ? '' : 'none';
     if(show) visible++;
   });
