@@ -84,42 +84,78 @@
   </div>
 
   <div class="card" style="padding:0">
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
-      <thead>
-        <tr style="background:var(--surface2)">
-          <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-          <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Pool Status</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Time in Pool</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for r in items %}
-      {% set days = r.days_in_status|int if r.days_in_status else 0 %}
-      {% set stuck = days >= 14 %}
-      <tr style="border-bottom:1px solid var(--border);
-                 border-left:3px solid {{ '#6b7280' if r.receive_status=='pending' else '#fbbf24' if r.receive_status=='partial' else '#f87171' }}">
-        <td style="padding:8px 12px">
+    <!-- Header -->
+    <div style="display:grid;grid-template-columns:32px 200px 1fr 80px 100px 90px 80px;
+                gap:0;padding:8px 12px;background:var(--surface2);
+                border-bottom:1px solid var(--border);font-size:10px;font-weight:600;
+                color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+      <div></div>
+      <div>Order #</div>
+      <div>Details</div>
+      <div style="text-align:right">Total</div>
+      <div>Pool Status</div>
+      <div>Time in Pool</div>
+      <div>Batch</div>
+    </div>
+
+    {% for r in items %}
+    {% set days = r.days_in_status|int if r.days_in_status else 0 %}
+    {% set stuck = days >= 14 %}
+    {% set line_items = order_items.get(r.transaction_id|string, []) %}
+    {% set status_color = '#6b7280' if r.receive_status=='pending' else '#fbbf24' if r.receive_status=='partial' else '#f87171' %}
+    <div style="border-bottom:1px solid var(--border);border-left:3px solid {{ status_color }}">
+
+      <!-- Main row -->
+      <div style="display:grid;grid-template-columns:32px 200px 1fr 80px 100px 90px 80px;
+                  gap:0;padding:10px 12px;align-items:start">
+        <div style="padding-top:2px">
           <input type="checkbox" name="item_ids" value="{{ r.item_id }}" class="row-check" style="width:auto">
-        </td>
-        <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">
-          <a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}" style="color:var(--accent2)">
+        </div>
+
+        <!-- Order # + meta -->
+        <div>
+          <a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}"
+             style="color:var(--accent2);font-family:var(--mono);font-size:12px;font-weight:500">
             {{ r.order_number[:24] }}
           </a>
-        </td>
-        <td style="padding:8px 12px">{{ r.retailer }}</td>
-        <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-        <td style="padding:8px 12px">{{ r.person_name or '—' }}</td>
-        <td style="padding:8px 12px;font-size:12px">{{ r.company_name or '—' }}</td>
-        <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td style="padding:8px 12px;font-family:var(--mono);font-size:11px;color:var(--muted)">{{ r.batch_id }}</td>
-        <td style="padding:8px 12px">
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">{{ r.retailer }}</div>
+          <div style="font-size:11px;color:var(--muted)">{{ r.person_name or '—' }} · {{ r.company_name or '—' }}</div>
+          <div style="font-size:11px;color:var(--muted)">{{ r.purchase_date }}</div>
+        </div>
+
+        <!-- Line items -->
+        <div style="padding-right:8px">
+          {% if line_items %}
+            {% for ti in line_items %}
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:2px 0;font-size:11px;
+                        border-bottom:{% if not loop.last %}0.5px solid var(--border){% else %}none{% endif %};
+                        margin-bottom:{% if not loop.last %}3px{% else %}0{% endif %}">
+              <span style="color:var(--text);flex:1;min-width:0;word-break:break-word;line-height:1.4">
+                {{ ti.item_description }}
+              </span>
+              {% if ti.sku_model_color %}
+              <span style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0">
+                {{ ti.sku_model_color[:20] }}
+              </span>
+              {% endif %}
+              <span style="white-space:nowrap;flex-shrink:0;font-size:11px;color:var(--muted)">× {{ ti.quantity }}</span>
+              <span style="white-space:nowrap;flex-shrink:0;font-family:var(--mono);font-size:11px;font-weight:500">
+                ${{ "{:,.2f}".format(ti.unit_price or 0) }}
+              </span>
+            </div>
+            {% endfor %}
+          {% else %}
+            <span style="font-size:11px;color:var(--muted);font-style:italic">No billable items</span>
+          {% endif %}
+        </div>
+
+        <!-- Total -->
+        <div style="text-align:right;font-family:var(--mono);font-size:12px;font-weight:500;padding-top:2px">
+          ${{ "{:,.2f}".format(r.price_total or 0) }}
+        </div>
+
+        <!-- Pool status -->
+        <div style="padding-top:2px">
           {% if r.receive_status == 'pending' %}
           <span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">⏳ Pending</span>
           {% elif r.receive_status == 'partial' %}
@@ -127,14 +163,21 @@
           {% elif r.receive_status == 'missing' %}
           <span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">✕ Missing</span>
           {% endif %}
-        </td>
-        <td style="padding:8px 12px;font-size:12px;color:{{ '#f87171' if stuck else '#fbbf24' if days >= 7 else 'var(--muted)' }}">
+        </div>
+
+        <!-- Days -->
+        <div style="font-size:12px;color:{{ '#f87171' if stuck else '#fbbf24' if days >= 7 else 'var(--muted)' }};padding-top:2px">
           {{ days }}d{% if stuck %} ⚠{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+        </div>
+
+        <!-- Batch -->
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);padding-top:2px">
+          {{ r.batch_id or '—' }}
+        </div>
+      </div>
+
+    </div>
+    {% endfor %}
   </div>
 </form>
 {% endif %}
