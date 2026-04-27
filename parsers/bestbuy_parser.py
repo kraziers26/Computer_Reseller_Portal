@@ -28,17 +28,35 @@ class BestBuyInvoice:
     needs_review: bool = False
 
 
+
 # UI noise patterns — lines to ignore when building descriptions
-NOISE = re.compile(
-    r'Make Pickup Changes|Ship it Instead|Cancel &|AppleCare|Protection for your|'
-    r'What\'s Included|Terms & Conditions|\(\d+ review|Add \d Year|'
-    r'Digital Item|Order Received|Ready (to Redeem|for Pickup)|Included free|'
-    r'Pickup Person|Store Pickup|Extend Pickup|Store hours|In-Store Hours|'
-    r'Best Buy (Sweetwater|Support)|Browse our|Get help|'
-    r'^\$[\d,]+\.\d{2}$|^\d Year$|Resend Email|Redeem Now|We\'ve emailed',
+_NOISE_PATS = [
+    "Make Pickup Changes", "Ship it Instead", "Add Alternate Pickup",
+    "Cancel &", "AppleCare", "Protection for your",
+    "What's Included", "Terms & Conditions", "review",
+    "Add 4 Year", "Add 3 Year", "Digital Item", "Order Received",
+    "Ready to Redeem", "Ready for Pickup", "Included free",
+    "Pickup Person", "Store Pickup", "Extend Pickup",
+    "Store hours", "In-Store Hours",
+    "Best Buy Sweetwater", "Best Buy Support", "Browse our", "Get help",
+    "Resend Email", "Redeem Now", "We've emailed", "We\u2019ve emailed",
+    "Return Options", "Returnable until", "Price Match", "Check Price",
+    "Picked up on", "We'll hold it", "We\u2019ll hold it", "We can ship",
+    "SWEETWATER", "qualif",
+    "Can't make it", "Can\u2019t make it",
+]
+NOISE = re.compile("|".join(re.escape(p) for p in _NOISE_PATS)
+                   + r"|^\$[\d,]+\.\d{2}(\s+\$[\d,]+\.\d{2})*$"
+                   + r"|^\d Year$",
+                   re.IGNORECASE)
+
+# Hard-stop patterns — stop backward scan immediately
+STOP = re.compile(
+    r"^Store Pickup (One|Two|Three|Four)|^Digital Item|"
+    r"^Picked up on \w+ \d|Order Summary|Order Total|Product Total|"
+    r"^\d+ a\.m\.|In-Store Hours|Store hours",
     re.IGNORECASE
 )
-
 
 def extract_text(pdf_path: str) -> str:
     pages = []
@@ -168,25 +186,32 @@ def parse_line_items(text: str, invoice: BestBuyInvoice):
         if model and model.lower() in ('model:', 'model'):
             model = None
 
-        # SKU and unit price — scan forward from anchor for SKU line
+        # SKU, unit price and quantity — scan forward from anchor
+        # Product Price: may appear on the Model line OR the SKU line depending on layout
         sku = None
         unit_price = 0.0
         quantity = 1
-        for offset in range(1, 6):
+        # First check if Product Price: is on the anchor line itself or lines just after
+        for offset in range(0, 8):
             idx = anchor_idx + offset
             if idx >= len(lines):
                 break
             ln = lines[idx]
-            m_sku = re.search(r'SKU:\s*(\S+)', ln)
-            if m_sku:
-                sku = m_sku.group(1)
+            # Pick up unit price wherever Product Price: appears
+            if unit_price == 0.0:
                 m_price = re.search(r'Product Price:\s*\$([0-9,]+\.\d{2})', ln)
                 if m_price:
                     unit_price = float(m_price.group(1).replace(',', ''))
+            # Pick up SKU
+            if sku is None:
+                m_sku = re.search(r'SKU:\s*(\S+)', ln)
+                if m_sku:
+                    sku = m_sku.group(1)
+            # Pick up quantity
             m_qty = re.match(r'^Quantity:\s*(\d+)', ln)
             if m_qty:
                 quantity = int(m_qty.group(1))
-                break
+                break  # quantity is always last, stop here
 
         # Skip $0.00 free digital bundles
         if unit_price == 0.0 and item_total == 0.0:
@@ -195,18 +220,22 @@ def parse_line_items(text: str, invoice: BestBuyInvoice):
         # Description — walk backwards from anchor, collect non-noise lines
         desc_lines = []
         scan_idx = anchor_idx - 1
-        while scan_idx >= 0 and len(desc_lines) < 5:
+        while scan_idx >= 0 and len(desc_lines) < 6:
             ln = lines[scan_idx]
-            # Stop at hard boundaries
+            # Hard stop — immediately exit on section boundaries
+            if STOP.search(ln):
+                break
             if re.search(r'Order Total|Order Summary|Payment Method|Credit -\$|'
                          r'Store hours|In-Store Hours|\d+ a\.m\.|^\d{4}$', ln, re.IGNORECASE):
                 break
             if not NOISE.search(ln):
-                # Strip appended UI noise from end of line (e.g. "...Indigo Make Pickup Changes")
+                # Strip appended UI noise from end of line
                 clean = re.sub(
-                    r'\s+(Make Pickup Changes|Ship it Instead|Cancel &.*|I\'m at the store).*$',
+                    r'\s+(Make Pickup Changes|Ship it Instead|Cancel &.*|'
+                    r"I\'m at the store|Return Options|Returnable until.*)$",
                     '', ln, flags=re.IGNORECASE).strip()
-                if clean:
+                # Skip lines that are purely price amounts (AppleCare prices etc.)
+                if clean and not re.match(r'^\$[\d,]+\.\d{2}(\s+\$[\d,]+\.\d{2})*$', clean):
                     desc_lines.insert(0, clean)
             scan_idx -= 1
 
@@ -224,13 +253,19 @@ def parse_line_items(text: str, invoice: BestBuyInvoice):
             line_total=item_total,
         ))
 
-    # Deduplicate — Best Buy renders each unit as a separate block (Qty:1 each)
+    # Deduplicate — Best Buy renders each unit as a separate block (Qty:1 each).
+    # Key by SKU only so same item with unit_price=0 (layout variant) merges correctly.
     seen = {}
     for item in raw_items:
-        key = (item.sku_model_color, item.unit_price)
+        # Use just the SKU number as dedup key
+        sku_key = re.search(r'SKU:\s*(\S+)', item.sku_model_color)
+        key = sku_key.group(1) if sku_key else item.sku_model_color
         if key in seen:
             seen[key].quantity += item.quantity
             seen[key].line_total = round(seen[key].line_total + item.line_total, 2)
+            # Keep the higher unit_price (one variant may come through as $0)
+            if item.unit_price > seen[key].unit_price:
+                seen[key].unit_price = item.unit_price
         else:
             seen[key] = item
 
@@ -341,4 +376,3 @@ if __name__ == "__main__":
               f"Unit: ${item.unit_price:,.2f}  |  Total: ${item.line_total:,.2f}")
     print(f"\nDB rows:")
     print(json.dumps(to_db_rows(invoice, 999, 999, "test.pdf"), indent=2, default=str))
-
