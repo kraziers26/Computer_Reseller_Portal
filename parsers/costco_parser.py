@@ -28,6 +28,7 @@ class CostcoInvoice:
     parse_errors: list = field(default_factory=list)
     needs_review: bool = False
     membership_number: Optional[str] = None
+    shipping_total: float = 0.0
 
 
 def extract_text(pdf_path: str) -> str:
@@ -110,6 +111,10 @@ def parse_order_summary(text: str, invoice: CostcoInvoice):
 
     m = re.search(r'\bTax\s+\$([0-9,]+\.\d{2})', text)
     invoice.costco_taxes_paid = float(m.group(1).replace(',', '')) if m else 0.0
+
+    # Shipping cost — extract and store for later distribution across eligible items
+    m = re.search(r'\bShipping\s+\$([0-9,]+\.\d{2})', text)
+    invoice.shipping_total = float(m.group(1).replace(',', '')) if m else 0.0
 
 
 def parse_line_items(text: str, invoice: CostcoInvoice):
@@ -209,6 +214,37 @@ def parse_line_items(text: str, invoice: CostcoInvoice):
         ))
 
 
+def distribute_shipping(invoice: CostcoInvoice):
+    """
+    Distribute shipping cost evenly across eligible items (unit_price >= $1)
+    at the unit level. Ineligible items (free trials, subscriptions < $1) are excluded.
+
+    Example: $29.98 shipping, HP AIO × 2 eligible units → $14.99 added per unit.
+    Any rounding remainder is added to the first eligible item.
+    """
+    if not invoice.shipping_total or invoice.shipping_total <= 0:
+        return
+
+    eligible = [item for item in invoice.items if item.unit_price >= 1.0]
+    if not eligible:
+        return
+
+    total_eligible_units = sum(item.quantity for item in eligible)
+    per_unit_shipping = round(invoice.shipping_total / total_eligible_units, 4)
+
+    distributed = 0.0
+    for i, item in enumerate(eligible):
+        if i < len(eligible) - 1:
+            ship_for_item = round(per_unit_shipping * item.quantity, 2)
+        else:
+            # Last eligible item absorbs any rounding remainder
+            ship_for_item = round(invoice.shipping_total - distributed, 2)
+
+        item.unit_price  = round(item.unit_price + per_unit_shipping, 2)
+        item.line_total  = round(item.unit_price * item.quantity, 2)
+        distributed     += ship_for_item
+
+
 def validate(invoice: CostcoInvoice):
     if not invoice.items or invoice.price_total is None:
         return
@@ -225,6 +261,7 @@ def parse(pdf_path: str) -> Optional[CostcoInvoice]:
     parse_order_header(text, invoice)
     parse_order_summary(text, invoice)
     parse_line_items(text, invoice)
+    distribute_shipping(invoice)
     validate(invoice)
     return invoice
 
