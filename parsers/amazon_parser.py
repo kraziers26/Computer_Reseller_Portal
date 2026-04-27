@@ -115,19 +115,21 @@ def parse_date(text: str, invoice: AmazonInvoice):
             invoice.purchase_year_month = f"{year}-{month:02d}"
             return
 
-    # English — handles all variants:
-    # "Order placed March 5, 2026" (Order Summary format)
-    # "Order Placed: February 9, 2026" (Final Details format)
-    # "Order placed\nDecember 19, 2025" (two-column layout)
-    m = re.search(r'Order [Pp]laced:?\s*\n?\s*(\w+ \d{1,2},\s*\d{4})', text, re.IGNORECASE)
+    # English Format A: "Order placed March 5, 2026"
+    m = re.search(r'Order placed\s+(\w+ \d{1,2},\s*\d{4})', text, re.IGNORECASE)
     if m:
-        try:
-            dt = datetime.strptime(m.group(1).strip(), "%B %d, %Y")
-            invoice.purchase_date = dt.strftime("%Y-%m-%d")
-            invoice.purchase_year_month = dt.strftime("%Y-%m")
-            return
-        except ValueError:
-            pass
+        dt = datetime.strptime(m.group(1).strip(), "%B %d, %Y")
+        invoice.purchase_date = dt.strftime("%Y-%m-%d")
+        invoice.purchase_year_month = dt.strftime("%Y-%m")
+        return
+
+    # English Format B: "Order Placed: February 9, 2026"
+    m = re.search(r'Order Placed:\s*(\w+ \d{1,2},\s*\d{4})', text, re.IGNORECASE)
+    if m:
+        dt = datetime.strptime(m.group(1).strip(), "%B %d, %Y")
+        invoice.purchase_date = dt.strftime("%Y-%m-%d")
+        invoice.purchase_year_month = dt.strftime("%Y-%m")
+        return
 
     invoice.parse_errors.append("purchase_date not found")
     invoice.needs_review = True
@@ -254,8 +256,10 @@ def parse_items_format_b(text: str, invoice: AmazonInvoice):
             j = i + 1
             while j < len(items_section_lines):
                 next_ln = items_section_lines[j]
-                if re.match(r'(Sold by:|Condition:|Shipping Address:|Shipping Speed:|-----)',
-                            next_ln, re.IGNORECASE):
+                if re.match(
+                    r'(Sold by|Vendido por|Condition:|Shipping Address:|'
+                    r'Shipping Speed:|-----|Business Price|Delivered by)',
+                    next_ln, re.IGNORECASE):
                     break
                 # Check if it's another item line
                 if item_pattern.match(next_ln):
@@ -264,6 +268,13 @@ def parse_items_format_b(text: str, invoice: AmazonInvoice):
                 j += 1
 
             desc_part = re.sub(r'\s+', ' ', desc_part).strip()
+            # Strip any trailing noise that slipped through
+            desc_part = re.sub(
+                r'\s*(Sold by.*|Business Price.*|Condition:.*|Delivered by.*)$',
+                '', desc_part, flags=re.IGNORECASE).strip()
+            # Strip leading "Delivered by Amazon" or similar prefixes
+            desc_part = re.sub(
+                r'^(Delivered by \S+\s*)', '', desc_part, flags=re.IGNORECASE).strip()
             line_total = round(unit_price * quantity, 2)
 
             raw_items.append(LineItem(
@@ -379,6 +390,12 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
 
         item_description = ' '.join(desc_lines).strip()
         item_description = re.sub(r'\s+', ' ', item_description)
+        # Strip trailing seller/condition noise and leading "Delivered by" prefixes
+        item_description = re.sub(
+            r'\s*(Sold by.*|Business Price.*|Condition:.*|Delivered by Amazon.*)$',
+            '', item_description, flags=re.IGNORECASE).strip()
+        item_description = re.sub(
+            r'^(Delivered by \S+\s*)', '', item_description, flags=re.IGNORECASE).strip()
         line_total = round(unit_price * quantity, 2)
 
         if item_description:
