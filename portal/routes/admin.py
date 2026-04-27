@@ -190,6 +190,9 @@ def duplicate_cleanup():
                 for row in rows:
                     to_delete.extend(str(t) for t in row['tids'][1:])
                 if to_delete:
+                    cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id IN (SELECT item_id FROM transaction_items WHERE transaction_id = ANY(%s::uuid[]))", (to_delete,))
+                    cur.execute("DELETE FROM receiving_items WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
+                    cur.execute("DELETE FROM invoice_items WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
                     cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
                     cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (to_delete,))
             flash(f'Deleted {len(to_delete)} duplicate transactions.', 'success')
@@ -201,6 +204,9 @@ def duplicate_cleanup():
             tids = request.form.getlist('tids')
             if tids:
                 with db_cursor() as (cur, conn):
+                    cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id IN (SELECT item_id FROM transaction_items WHERE transaction_id = ANY(%s::uuid[]))", (tids,))
+                    cur.execute("DELETE FROM receiving_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+                    cur.execute("DELETE FROM invoice_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
                     cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
                     cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (tids,))
                 flash(f'Deleted {len(tids)} selected duplicate transactions.', 'success')
@@ -362,6 +368,9 @@ def bulk_action():
                 "WHERE transaction_id = ANY(%s::uuid[])", (tids,))
             flash(f'{len(tids)} transaction(s) marked as duplicate.', 'warning')
         elif action == 'delete':
+            cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id IN (SELECT item_id FROM transaction_items WHERE transaction_id = ANY(%s::uuid[]))", (tids,))
+            cur.execute("DELETE FROM receiving_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
+            cur.execute("DELETE FROM invoice_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
             cur.execute("DELETE FROM transaction_items WHERE transaction_id = ANY(%s::uuid[])", (tids,))
             cur.execute("DELETE FROM transactions WHERE transaction_id = ANY(%s::uuid[])", (tids,))
             flash(f'{len(tids)} transaction(s) permanently deleted.', 'danger')
@@ -535,6 +544,9 @@ def review_submission(tid):
                 flash('Transaction inactivated. It will no longer appear in reports.', 'warning')
                 return redirect(url_for('admin.all_submissions'))
             elif action == 'delete':
+                cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id IN (SELECT item_id FROM transaction_items WHERE transaction_id=%s)", (str(tid),))
+                cur.execute("DELETE FROM receiving_items WHERE transaction_id=%s", (str(tid),))
+                cur.execute("DELETE FROM invoice_items WHERE transaction_id=%s", (str(tid),))
                 cur.execute("DELETE FROM transaction_items WHERE transaction_id=%s", (str(tid),))
                 cur.execute("DELETE FROM transactions WHERE transaction_id=%s", (str(tid),))
                 audit('transaction_deleted', 'transaction', str(tid))
