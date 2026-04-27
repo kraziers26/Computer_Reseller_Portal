@@ -50,13 +50,13 @@ def _load_received_orders(cur):
     cur.execute("""
         SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
                t.price_total, u.username AS person_name,
-               c.company_name, c.company_id,
-               c.company_short_code
+               c.company_name, c.company_id, c.company_short_code,
+               t.print_batch_id
         FROM transactions t
         LEFT JOIN dim_users u      ON t.user_id = u.user_id
         LEFT JOIN dim_companies c  ON t.company_id = c.company_id
         WHERE t.fulfillment_status='received' AND t.is_active=TRUE
-        ORDER BY t.retailer, t.order_number
+        ORDER BY t.print_batch_id NULLS LAST, t.retailer, t.order_number
     """)
     orders = cur.fetchall()
 
@@ -162,11 +162,12 @@ def new_invoice():
         customers = cur.fetchall()
         retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
         persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
+        batches   = sorted(set(o['print_batch_id'] for o in orders if o['print_batch_id']))
 
     return render_template('invoicing/new.html',
                            orders=orders, order_items=order_items,
                            companies=companies, customers=customers,
-                           retailers=retailers, persons=persons,
+                           retailers=retailers, persons=persons, batches=batches,
                            today=str(date.today()),
                            edit_mode=False, existing_invoice=None,
                            existing_txn_ids=[])
@@ -210,11 +211,12 @@ def edit_invoice(invoice_id):
         customers = cur.fetchall()
         retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
         persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
+        batches   = sorted(set(o['print_batch_id'] for o in orders if o['print_batch_id']))
 
     return render_template('invoicing/new.html',
                            orders=orders, order_items=order_items,
                            companies=companies, customers=customers,
-                           retailers=retailers, persons=persons,
+                           retailers=retailers, persons=persons, batches=batches,
                            today=str(date.today()),
                            edit_mode=True, existing_invoice=inv,
                            existing_txn_ids=existing_txn_ids)
