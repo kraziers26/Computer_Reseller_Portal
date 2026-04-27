@@ -300,7 +300,24 @@ def pending_pool():
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
         companies = cur.fetchall()
 
+        # Load line items for all displayed orders (>= $1 only)
+        order_items = {}
+        if items:
+            txn_ids = [str(r['transaction_id']) for r in items]
+            cur.execute("""
+                SELECT transaction_id, item_description, sku_model_color,
+                       quantity, unit_price, line_total
+                FROM transaction_items
+                WHERE transaction_id = ANY(%s::uuid[])
+                  AND unit_price >= 1.0
+                ORDER BY transaction_id, unit_price DESC
+            """, (txn_ids,))
+            for ti in cur.fetchall():
+                tid = str(ti['transaction_id'])
+                order_items.setdefault(tid, []).append(ti)
+
     return render_template('receiving/pending_pool.html', items=items,
+                           order_items=order_items,
                            retailers=retailers, users=users, companies=companies,
                            filters={'status':f_status,'retailer':f_retailer,'company':f_company,
                                     'person_by':f_person,'order_number':f_order,
