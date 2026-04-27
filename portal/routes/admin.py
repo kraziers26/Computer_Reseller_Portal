@@ -553,20 +553,27 @@ def review_submission(tid):
                 flash('Transaction permanently deleted.', 'danger')
                 return redirect(url_for('admin.all_submissions'))
             elif action == 'edit':
+                import uuid as _uuid
                 card_id           = request.form.get('card_id') or None
                 company_id        = request.form.get('company_id', type=int)
                 user_id           = request.form.get('user_id', type=int)
                 order_type        = request.form.get('order_type')
+                retailer          = request.form.get('retailer', '').strip()
+                order_number      = request.form.get('order_number', '').strip()
+                purchase_date     = request.form.get('purchase_date') or None
                 price             = request.form.get('price_total', type=float)
+                costco_taxes      = request.form.get('costco_taxes', type=float) or None
+                fulfillment_st    = request.form.get('fulfillment_status') or None
+                review_st         = request.form.get('review_status') or 'Reviewed'
                 notes             = request.form.get('notes', '').strip()[:140] or None
                 membership_number = request.form.get('membership_number', '').strip() or None
 
                 cashback_rate = cashback_value = None
                 if card_id and price:
                     cur.execute("SELECT cashback_rate FROM dim_cards WHERE card_id=%s", (card_id,))
-                    row = cur.fetchone()
-                    if row:
-                        cashback_rate  = float(row['cashback_rate'])
+                    crow = cur.fetchone()
+                    if crow:
+                        cashback_rate  = float(crow['cashback_rate'])
                         cashback_value = round(price * cashback_rate, 2)
 
                 gross_paid   = round(price * 0.01, 2) if price else None
@@ -575,19 +582,66 @@ def review_submission(tid):
                 gross_biz    = round((gross_paid or 0)+(cashback_value or 0),2) if gross_paid else None
                 net_biz      = round((gross_biz or 0)-(net_paid or 0),2) if gross_biz else None
 
-                cur.execute("""
-                    UPDATE transactions SET
-                        card_id=%s, company_id=%s, user_id=%s, order_type=%s, price_total=%s,
-                        cashback_rate=%s, cashback_value=%s,
-                        gross_paid_amount=%s, net_paid_amount=%s,
-                        gross_business_commission=%s, net_business_commission=%s,
-                        sales_payroll_tax_withheld=%s, notes=%s, membership_number=%s,
-                        review_status='Reviewed', review_date=NOW()
-                    WHERE transaction_id=%s
-                """, (card_id, company_id, user_id, order_type, price,
-                      cashback_rate, cashback_value,
-                      gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
-                      notes, membership_number, str(tid)))
+                # Parse year_month from purchase_date
+                purchase_ym = None
+                if purchase_date:
+                    try:
+                        from datetime import datetime as _dt
+                        purchase_ym = _dt.strptime(purchase_date, '%Y-%m-%d').strftime('%Y-%m')
+                    except Exception:
+                        pass
+
+                upd_fields = """
+                    card_id=%s, company_id=%s, user_id=%s, order_type=%s,
+                    retailer=%s, order_number=%s, purchase_date=%s, purchase_year_month=%s,
+                    price_total=%s, costco_taxes_paid=%s,
+                    cashback_rate=%s, cashback_value=%s,
+                    gross_paid_amount=%s, net_paid_amount=%s,
+                    gross_business_commission=%s, net_business_commission=%s,
+                    sales_payroll_tax_withheld=%s, notes=%s, membership_number=%s,
+                    review_status=%s, review_date=NOW()
+                """
+                upd_args = (card_id, company_id, user_id, order_type,
+                            retailer, order_number, purchase_date, purchase_ym,
+                            price, costco_taxes,
+                            cashback_rate, cashback_value,
+                            gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
+                            notes, membership_number, review_st)
+                if fulfillment_st:
+                    cur.execute(f"UPDATE transactions SET {upd_fields}, fulfillment_status=%s, fulfillment_status_updated_at=NOW() WHERE transaction_id=%s",
+                                upd_args + (fulfillment_st, str(tid)))
+                else:
+                    cur.execute(f"UPDATE transactions SET {upd_fields} WHERE transaction_id=%s",
+                                upd_args + (str(tid),))
+
+                # Rebuild line items from form list fields
+                descs = request.form.getlist('item_description[]')
+                if descs:
+                    cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id IN (SELECT item_id FROM transaction_items WHERE transaction_id=%s)", (str(tid),))
+                    cur.execute("DELETE FROM transaction_items WHERE transaction_id=%s", (str(tid),))
+                    skus        = request.form.getlist('item_sku[]')
+                    qtys        = request.form.getlist('item_qty[]')
+                    unit_prices = request.form.getlist('item_unit_price[]')
+                    line_totals = request.form.getlist('item_line_total[]')
+                    for i, desc in enumerate(descs):
+                        desc = desc.strip()
+                        if not desc:
+                            continue
+                        try:
+                            unit_p = float(unit_prices[i]) if i < len(unit_prices) else 0.0
+                            line_t = float(line_totals[i]) if i < len(line_totals) else 0.0
+                            qty    = int(qtys[i]) if i < len(qtys) else 1
+                            sku    = (skus[i].strip() if i < len(skus) else '') or None
+                        except (ValueError, IndexError):
+                            continue
+                        cur.execute("""
+                            INSERT INTO transaction_items
+                            (item_id, transaction_id, item_description, sku_model_color,
+                             quantity, unit_price, line_total)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        """, (str(_uuid.uuid4()), str(tid), desc, sku, qty, unit_p, line_t))
+
+                audit('transaction_edited', 'transaction', str(tid))
                 flash('Transaction updated.', 'success')
         return redirect(url_for('admin.review_submission', tid=tid))
 
