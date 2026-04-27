@@ -1,136 +1,226 @@
 {% extends "base.html" %}
-{% block title %}Review #{{ txn.order_number }} — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}{{ txn.retailer }} #{{ txn.order_number }} — ComputerReseller Portal{% endblock %}
 {% block content %}
+
 <div class="page-header page-header-row">
   <div>
+    <a href="javascript:history.back()" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Back</a>
     <h1>{{ txn.retailer }} — {{ txn.order_number }}</h1>
     <p>Submitted by {{ txn.submitter_name or txn.submitted_by_email }}
-       {% if txn.submitter_role == 'contributor' %}<span style="background:rgba(251,146,60,.15);color:#fb923c;font-size:10px;padding:2px 7px;border-radius:10px;margin-left:4px">contributor</span>{% endif %}
        · {{ txn.submitted_at.strftime('%b %d, %Y at %I:%M %p') if txn.submitted_at else '' }}</p>
   </div>
   <div class="flex gap-8 flex-wrap">
     <form method="POST" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button name="action" value="approve" class="btn btn-success btn-sm">✓ Approve</button></form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button name="action" value="approve" class="btn btn-success btn-sm">✓ Approve</button>
+    </form>
     <form method="POST" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button name="action" value="flag" class="btn btn-ghost btn-sm">Flag</button></form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button name="action" value="flag" class="btn btn-ghost btn-sm">Flag</button>
+    </form>
     <form method="POST" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button name="action" value="mark_duplicate" class="btn btn-ghost btn-sm">Mark Duplicate</button></form>
-    <form method="POST" style="display:inline" onsubmit="return confirm('Inactivate this transaction? It will be hidden from all reports.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button name="action" value="mark_duplicate" class="btn btn-ghost btn-sm">Mark Duplicate</button>
+    </form>
+    <form method="POST" style="display:inline" onsubmit="return confirm('Inactivate this transaction?')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button name="action" value="inactivate" class="btn btn-danger btn-sm">Inactivate</button>
     </form>
-    <form method="POST" style="display:inline" onsubmit="return confirm('PERMANENTLY DELETE this transaction? This cannot be undone.')">
+    <form method="POST" style="display:inline" onsubmit="return confirm('PERMANENTLY DELETE this transaction? Cannot be undone.')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button name="action" value="delete" class="btn btn-danger btn-sm" style="background:rgba(239,68,68,.3)">Delete</button>
     </form>
   </div>
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 1fr 540px;gap:16px;align-items:start">
+<div style="display:grid;grid-template-columns:1fr 540px;gap:16px;align-items:start">
 
-  <!-- LEFT COLUMN: Order info + financials + line items + edit -->
-  <div style="grid-column:1/3;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  <!-- LEFT: single unified edit form -->
+  <form method="POST" id="editForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-    <!-- Order info -->
-    <div class="card">
+    <!-- Order Info -->
+    <div class="card" style="margin-bottom:14px">
       <div class="card-title">Order info</div>
-      <table style="width:100%"><tbody>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px;width:140px">Status</td><td>
-          {% if txn.review_status == 'Auto-approved' %}<span class="badge badge-success">Auto-approved</span>
-          {% elif txn.review_status == 'Pending' %}<span class="badge badge-warning">Pending</span>
-          {% elif txn.review_status == 'Flagged' %}<span class="badge badge-danger">Flagged</span>
-          {% else %}<span class="badge badge-muted">{{ txn.review_status }}</span>{% endif %}
-        </td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Purchase Date</td><td>{{ txn.purchase_date }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Person By</td><td>{{ txn.person_name or '—' }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Company</td><td>{{ txn.company_name or '—' }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Card</td><td class="mono">{{ txn.card_id or '—' }}</td></tr>
-        {% if txn.membership_number %}<tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Membership #</td><td class="mono">{{ txn.membership_number }}</td></tr>{% endif %}
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Order Type</td><td>{{ txn.order_type }}</td></tr>
-        {% if txn.notes %}<tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Notes</td><td style="font-size:13px">{{ txn.notes }}</td></tr>{% endif %}
-        {% if txn.is_duplicate %}<tr><td colspan="2"><span class="badge badge-danger">Duplicate</span></td></tr>{% endif %}
-      </tbody></table>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Retailer</label>
+          <select name="retailer">
+            {% for r in ['Amazon','Best Buy','Costco','Walmart','Apple','Other'] %}
+            <option value="{{ r }}" {{ 'selected' if txn.retailer==r }}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Order Number</label>
+          <input type="text" name="order_number" value="{{ txn.order_number or '' }}" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Purchase Date</label>
+          <input type="date" name="purchase_date" value="{{ txn.purchase_date|string if txn.purchase_date else '' }}">
+        </div>
+        <div class="form-group">
+          <label>Order Type</label>
+          <select name="order_type">
+            {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
+            <option value="{{ ot }}" {{ 'selected' if txn.order_type==ot }}>{{ ot }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Review Status</label>
+          <select name="review_status">
+            {% for rs in ['Pending','Auto-approved','Reviewed','Flagged','Needs Review'] %}
+            <option value="{{ rs }}" {{ 'selected' if txn.review_status==rs }}>{{ rs }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fulfillment Stage</label>
+          <select name="fulfillment_status">
+            {% for fs in ['uploaded','batched','pending','received','invoiced'] %}
+            <option value="{{ fs }}" {{ 'selected' if txn.fulfillment_status==fs }}>{{ fs|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
+          <input type="text" name="notes" maxlength="140" value="{{ txn.notes or '' }}" placeholder="Optional note">
+        </div>
+        <div class="form-group">
+          <label>Membership # <span style="font-size:11px;color:var(--muted)">(Costco)</span></label>
+          <input type="text" name="membership_number" value="{{ txn.membership_number or '' }}"
+                 placeholder="e.g. 111957620835" style="font-family:monospace">
+        </div>
+      </div>
+    </div>
+
+    <!-- Person, Company & Card -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title">Person, company & card</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Person By</label>
+          <select name="user_id">
+            {% for u in users %}
+            <option value="{{ u.user_id }}" {{ 'selected' if txn.user_id==u.user_id }}>{{ u.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Purchase Company</label>
+          <select name="company_id">
+            {% for c in companies %}
+            <option value="{{ c.company_id }}" {{ 'selected' if txn.company_id==c.company_id }}>{{ c.company_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Card Used</label>
+          <select name="card_id">
+            <option value="">— None —</option>
+            {% for c in cards %}
+            <option value="{{ c.card_id }}" {{ 'selected' if txn.card_id==c.card_id }}>
+              {{ c.card_id }} — {{ c.card_name }} ({{ "{:.1%}".format(c.cashback_rate) }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group"></div>
+      </div>
     </div>
 
     <!-- Financials -->
-    <div class="card">
+    <div class="card" style="margin-bottom:14px">
       <div class="card-title">Financials</div>
-      <table style="width:100%"><tbody>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px;width:160px">Price Total</td><td class="mono">${{ "{:,.2f}".format(txn.price_total or 0) }}</td></tr>
-        {% if txn.costco_taxes_paid %}<tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Costco Taxes</td><td class="mono">${{ "{:,.2f}".format(txn.costco_taxes_paid) }}</td></tr>{% endif %}
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Cash Back Rate</td><td>{{ "{:.1%}".format(txn.cashback_rate) if txn.cashback_rate else '—' }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Cash Back Value</td><td class="mono">${{ "{:,.2f}".format(txn.cashback_value or 0) }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Gross Paid (1%)</td><td class="mono text-success">${{ "{:,.2f}".format(txn.gross_paid_amount or 0) }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Net Paid (0.8%)</td><td class="mono">${{ "{:,.2f}".format(txn.net_paid_amount or 0) }}</td></tr>
-        <tr><td style="color:var(--muted);padding:6px 0;font-size:12px">Tax Withheld (0.2%)</td><td class="mono text-warning">${{ "{:,.2f}".format(txn.sales_payroll_tax_withheld or 0) }}</td></tr>
-      </tbody></table>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Price Total *</label>
+          <input type="number" name="price_total" step="0.01" value="{{ txn.price_total or '' }}" required>
+        </div>
+        <div class="form-group">
+          <label>Costco Taxes Paid</label>
+          <input type="number" name="costco_taxes" step="0.01" value="{{ txn.costco_taxes_paid or '' }}" placeholder="Costco only">
+        </div>
+      </div>
+      <!-- Computed financials read-only display -->
+      <div style="background:var(--surface2);border-radius:8px;padding:12px;margin-top:4px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        {% set fin = [
+          ('Cash Back Rate', "{:.1%}".format(txn.cashback_rate) if txn.cashback_rate else '—'),
+          ('Cash Back Value', "${:,.2f}".format(txn.cashback_value or 0)),
+          ('Gross Paid (1%)', "${:,.2f}".format(txn.gross_paid_amount or 0)),
+          ('Net Paid (0.8%)', "${:,.2f}".format(txn.net_paid_amount or 0)),
+          ('Tax Withheld (0.2%)', "${:,.2f}".format(txn.sales_payroll_tax_withheld or 0)),
+        ] %}
+        {% for label, val in fin %}
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">{{ label }}</div>
+          <div style="font-size:13px;font-family:var(--mono)">{{ val }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">* Computed financials above auto-recalculate on save based on Price Total and Card.</div>
     </div>
 
-    <!-- Line items -->
-    {% if items %}
-    <div class="card" style="grid-column:1/3">
-      <div class="card-title">Line items</div>
-      <div><table><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit</th><th>Total</th></tr></thead>
-      <tbody>{% for i in items %}
-      <tr><td>{{ i.item_description }}</td><td class="mono">{{ i.sku_model_color or '—' }}</td><td>{{ i.quantity }}</td><td class="mono">${{ "{:,.2f}".format(i.unit_price) }}</td><td class="mono">${{ "{:,.2f}".format(i.line_total) }}</td></tr>
-      {% endfor %}</tbody></table></div>
-    </div>
-    {% endif %}
-
-    <!-- Edit form -->
-    <div class="card" style="grid-column:1/3">
-      <div class="card-title">Edit transaction</div>
-      <form method="POST" action="{{ url_for('admin.review_submission', tid=txn.transaction_id, back=back_url) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="form-row">
-          <div class="form-group"><label>Person By</label>
-            <select name="user_id">
-              {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if txn.user_id==u.user_id }}>{{ u.username }}</option>{% endfor %}
-            </select>
+    <!-- Line Items — fully editable -->
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin:0">Line items</div>
+        <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
+      </div>
+      <div id="items-container">
+        {% for item in items %}
+        {% set idx = loop.index0 %}
+        <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
+          <button type="button" onclick="removeItem({{ idx }})"
+                  style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+          <div class="form-row" style="margin-bottom:8px">
+            <div class="form-group" style="margin-bottom:0;flex:3">
+              <label style="font-size:11px">Description</label>
+              <input type="text" name="item_description[]" value="{{ item.item_description }}" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label style="font-size:11px">SKU</label>
+              <input type="text" name="item_sku[]" value="{{ item.sku_model_color or '' }}" style="font-size:12px;font-family:monospace">
+            </div>
           </div>
-          <div class="form-group"><label>Card</label>
-            <select name="card_id">
-              <option value="">— None —</option>
-              {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if txn.card_id==c.card_id }}>{{ c.card_id }} — {{ c.card_name }} ({{ "{:.1%}".format(c.cashback_rate) }})</option>{% endfor %}
-            </select>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Company</label>
-            <select name="company_id">
-              {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if txn.company_id==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="form-group"><label>Order Type</label>
-            <select name="order_type">
-              {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
-              <option value="{{ ot }}" {{ 'selected' if txn.order_type==ot }}>{{ ot }}</option>{% endfor %}
-            </select>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:11px">Qty</label>
+              <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:11px">Unit Price</label>
+              <input type="number" name="item_unit_price[]" value="{{ item.unit_price }}" step="0.01" min="0" style="font-size:12px">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:11px">Line Total</label>
+              <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px">
+            </div>
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-group"><label>Price Total</label>
-            <input type="number" name="price_total" step="0.01" value="{{ txn.price_total }}">
-          </div>
-          <div class="form-group"><label>Notes</label>
-            <input type="text" name="notes" maxlength="140" value="{{ txn.notes or '' }}" placeholder="Optional note">
-          </div>
-        </div>
-        {% if txn.retailer == 'Costco' %}
-        <div class="form-row">
-          <div class="form-group"><label>Membership # <span style="font-size:11px;color:var(--muted)">(Costco)</span></label>
-            <input type="text" name="membership_number" value="{{ txn.membership_number or '' }}" placeholder="e.g. 111957620835" style="font-family:monospace">
-          </div>
-          <div class="form-group"></div>
-        </div>
+        {% endfor %}
+        {% if not items %}
+        <div id="no-items-msg" style="color:var(--muted);font-size:13px;padding:8px 0">No line items. Add them above.</div>
         {% endif %}
-        <button type="submit" name="action" value="edit" class="btn btn-primary">Save Changes</button>
-      </form>
+      </div>
     </div>
 
-  </div><!-- end left columns -->
+    <button type="submit" name="action" value="edit" class="btn btn-primary" style="padding:10px 28px">
+      Save All Changes
+    </button>
+    <span style="font-size:12px;color:var(--muted);margin-left:12px">All sections save together</span>
+  </form>
 
-  <!-- RIGHT COLUMN: PDF Preview sticky -->
+  <!-- RIGHT: PDF Preview sticky -->
   <div style="position:sticky;top:20px;height:calc(100vh - 40px);display:flex;flex-direction:column">
     <div class="card" style="padding:12px;flex:1;display:flex;flex-direction:column;overflow:hidden">
       <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Invoice PDF</div>
@@ -161,17 +251,45 @@
 
 </div>
 
+<script>
+let itemCount = {{ items|length }};
+
+function addItem() {
+  document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
+  const idx = itemCount++;
+  const div = document.createElement('div');
+  div.className = 'item-row'; div.id = 'item-' + idx;
+  div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
+  div.innerHTML = `
+    <button type="button" onclick="removeItem(${idx})"
+            style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+    <div class="form-row" style="margin-bottom:8px">
+      <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
+        <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">SKU</label>
+        <input type="text" name="item_sku[]" placeholder="SKU" style="font-size:12px;font-family:monospace"></div>
+    </div>
+    <div class="form-row" style="margin-bottom:0">
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+        <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
+        <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
+        <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
+    </div>`;
+  document.getElementById('items-container').appendChild(div);
+}
+
+function removeItem(idx) {
+  const el = document.getElementById('item-' + idx);
+  if (el) el.remove();
+}
+</script>
+
 <style>
 @media(max-width:1100px){
-  div[style*="grid-template-columns:1fr 1fr 540px"]{
-    grid-template-columns:1fr !important;
-  }
-  div[style*="position:sticky;top:20px"]{
-    display:none;
-  }
-  div[style*="grid-column:1/3"]{
-    grid-column:1 !important;
-  }
+  div[style*="grid-template-columns:1fr 540px"]{grid-template-columns:1fr !important}
+  div[style*="position:sticky;top:20px"]{display:none}
 }
 </style>
 {% endblock %}
