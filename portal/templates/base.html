@@ -208,6 +208,14 @@ select option{background:var(--surface2)}
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         New Invoice
       </a>
+      <div class="nav-section">Deal Scan</div>
+      <a href="{{ url_for('deals.deals_page') }}"
+         class="{{ 'active' if request.endpoint == 'deals.deals_page' }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        Deal Blaster
+      </a>
       <div class="nav-section">Financials</div>
       <a href="{{ url_for('admin.payroll') }}" class="{{ 'active' if request.endpoint == 'admin.payroll' }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
