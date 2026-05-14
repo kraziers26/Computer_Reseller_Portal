@@ -3,6 +3,11 @@ from flask import Flask
 from flask_login import LoginManager
 from .db import get_db
 from .models import User
+# At the top with other imports
+from .services.scheduler import init_scheduler
+
+# Inside create_app(), after app.register_blueprint lines, before return app
+init_scheduler(app)
 
 login_manager = LoginManager()
 
