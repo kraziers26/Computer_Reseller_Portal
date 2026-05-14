@@ -3,10 +3,9 @@ from flask import Flask
 from flask_login import LoginManager
 from .db import get_db
 from .models import User
-from .routes.deals import deals_bp
-app.register_blueprint(deals_bp)
 
 login_manager = LoginManager()
+
 
 def create_app():
     app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -26,6 +25,7 @@ def create_app():
     from .routes.manage    import manage_bp
     from .routes.receiving  import receiving_bp
     from .routes.invoicing  import invoicing_bp
+    from .routes.deals     import deals_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(upload_bp)
@@ -33,12 +33,13 @@ def create_app():
     app.register_blueprint(manage_bp)
     app.register_blueprint(receiving_bp)
     app.register_blueprint(invoicing_bp)
+    app.register_blueprint(deals_bp)
 
-    # ── Security ──────────────────────────────────────────────────────────────
+    # ── Security (must be after blueprints so CSRF & Talisman cover all routes) ──
     from .security import init_security
     init_security(app)
 
-    # ── Scheduler ─────────────────────────────────────────────────────────────
+    # ── Scheduler (Deal Blaster background jobs) ──────────────────────────────
     from .services.scheduler import init_scheduler
     init_scheduler(app)
 
