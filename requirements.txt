@@ -14,3 +14,4 @@ resend==0.7.2
 pypdf==4.3.1
 reportlab==4.2.2
 requests>=2.31.0
+APScheduler==3.10.4
