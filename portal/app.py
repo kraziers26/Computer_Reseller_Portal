@@ -3,6 +3,8 @@ from flask import Flask
 from flask_login import LoginManager
 from .db import get_db
 from .models import User
+from .routes.deals import deals_bp
+app.register_blueprint(deals_bp)
 
 login_manager = LoginManager()
 
