@@ -1,0 +1,559 @@
+{% extends 'base.html' %}
+{% block title %}Deal Blaster — ComputerReseller Portal{% endblock %}
+
+{% block content %}
+<style>
+/* ── Deal Blaster page styles ── */
+.db-scanbar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px;flex-wrap:wrap}
+.db-scanbar-info{flex:1;font-size:12px;color:var(--muted)}
+.db-scanbar-info b{color:var(--text)}
+.db-sched-badge{font-size:11px;padding:3px 9px;border-radius:20px;background:rgba(34,197,94,.12);color:#4ade80;font-weight:500;white-space:nowrap}
+
+/* Schedule panel */
+.db-sched-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.db-sched-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.db-sched-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.db-sched-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px}
+.db-sched-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.db-sched-name{font-size:12px;font-weight:600;color:var(--text)}
+.db-sched-detail{font-size:11px;color:var(--muted);line-height:1.65;margin-bottom:8px}
+.db-sched-detail span{color:var(--text)}
+.db-sched-btns{display:flex;gap:6px;flex-wrap:wrap}
+
+/* Filters */
+.db-filters{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:14px}
+.db-frow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.db-frow:last-child{margin-bottom:0}
+.db-flabel{font-size:11px;color:var(--muted);min-width:60px;flex-shrink:0;font-weight:500}
+.db-pill{padding:3px 10px;border-radius:20px;border:1px solid var(--border2);font-size:11px;color:var(--muted);cursor:pointer;background:transparent;white-space:nowrap;transition:all .12s;font-family:var(--font)}
+.db-pill:hover{border-color:var(--accent);color:var(--text)}
+.db-pill.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.db-pill.ms{background:rgba(79,110,247,.18);border-color:var(--accent);color:var(--accent2)}
+.db-price-inputs{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.db-price-inputs input{width:80px;padding:4px 8px;font-size:11px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text)}
+.db-score-row{display:flex;align-items:center;gap:8px;margin-left:auto}
+.db-score-row span{font-size:11px;color:var(--muted)}
+.db-score-row input{width:90px;accent-color:var(--accent)}
+.db-score-val{font-size:12px;font-weight:600;color:var(--text);min-width:20px}
+
+/* Main layout */
+.db-main{display:flex;gap:14px;align-items:flex-start}
+.db-panel{flex:1;min-width:0}
+.db-meta{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.db-count{font-size:12px;color:var(--muted)}
+.db-count b{color:var(--text)}
+
+/* Deal cards */
+.db-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.db-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;cursor:pointer;position:relative;transition:border-color .12s}
+.db-card:hover{border-color:var(--border2)}
+.db-card.sel{border-color:var(--accent);background:rgba(79,110,247,.06)}
+.db-card-ck{position:absolute;top:8px;right:8px;width:13px;height:13px;accent-color:var(--accent);cursor:pointer}
+.db-brand{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.db-name{font-size:11px;font-weight:500;color:var(--text);line-height:1.35;margin-bottom:4px;padding-right:18px}
+.db-spec{font-size:10px;color:var(--muted);margin-bottom:6px;line-height:1.4}
+.db-prices{display:flex;align-items:baseline;gap:6px;margin-bottom:4px}
+.db-price{font-size:14px;font-weight:600;color:var(--text)}
+.db-orig{font-size:11px;color:var(--hint);text-decoration:line-through}
+.db-foot{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.db-off{font-size:11px;color:var(--success);font-weight:500}
+.db-score-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:8px}
+.db-score-hi{background:rgba(34,197,94,.15);color:#4ade80}
+.db-score-md{background:rgba(245,158,11,.15);color:#fbbf24}
+.db-link{border-top:1px solid var(--border);padding-top:6px}
+.db-link a{font-size:10px;color:var(--info);text-decoration:none;display:flex;align-items:center;gap:4px}
+.db-link a:hover{text-decoration:underline}
+.db-empty{font-size:12px;color:var(--muted);text-align:center;padding:24px;grid-column:span 2}
+.db-loading{font-size:12px;color:var(--muted);text-align:center;padding:24px;grid-column:span 2;display:none}
+
+/* Composer panel */
+.db-composer{width:226px;flex-shrink:0;display:flex;flex-direction:column;gap:8px}
+.db-comp-header{display:flex;align-items:center;justify-content:space-between}
+.db-comp-title{font-size:13px;font-weight:600;color:var(--text)}
+.db-comp-sel{font-size:11px;color:var(--muted)}
+.db-comp-hint{font-size:11px;color:var(--hint)}
+.db-comp-textarea{width:100%;min-height:300px;resize:vertical;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;color:var(--text);font-family:var(--font);font-size:11px;line-height:1.6;outline:none}
+.db-comp-textarea:focus{border-color:var(--accent)}
+.db-comp-footer{display:flex;align-items:center;justify-content:space-between;margin-top:2px}
+.db-char-count{font-size:11px;color:var(--hint)}
+.db-retailer-tabs{display:flex;gap:5px;margin-bottom:14px;flex-wrap:wrap}
+.db-rtab{padding:4px 12px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;background:transparent;color:var(--muted);font-family:var(--font);transition:all .12s}
+.db-rtab.on{background:var(--surface2);color:var(--text);border-color:var(--border2);font-weight:500}
+.db-rtab.dim{opacity:.3;cursor:not-allowed;pointer-events:none}
+</style>
+
+<div class="page-header">
+  <div class="page-header-row">
+    <div>
+      <h1>⚡ Deal Blaster</h1>
+      <p>Scan Best Buy for scored deals, select what you like, and copy a WhatsApp message.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Retailer tabs -->
+<div class="db-retailer-tabs">
+  <button class="db-rtab on">Best Buy</button>
+  <button class="db-rtab dim">Costco</button>
+  <button class="db-rtab dim">Amazon</button>
+  <button class="db-rtab dim">Walmart</button>
+</div>
+
+<!-- Scan bar -->
+<div class="db-scanbar">
+  <div class="db-scanbar-info">
+    Last pulled: <b id="db-last-pull">—</b> &nbsp;·&nbsp; <b id="db-deal-count">—</b> active deals
+  </div>
+  <span class="db-sched-badge" id="db-sched-badge">— schedules</span>
+  <button class="btn btn-primary btn-sm" id="db-run-btn" onclick="runScan()">
+    ▶ Run Now
+  </button>
+  <button class="btn btn-ghost btn-sm" onclick="toggleSchedules()">
+    📅 Schedules <span id="db-sched-arrow">▾</span>
+  </button>
+</div>
+
+<!-- Schedules panel (collapsed by default) -->
+<div id="db-sched-panel" class="db-sched-panel" style="display:none">
+  <div class="db-sched-header">
+    <span style="font-size:13px;font-weight:600;color:var(--text)">Saved Scan Schedules</span>
+    <button class="btn btn-ghost btn-sm">+ Add Schedule</button>
+  </div>
+  <div class="db-sched-cards" id="db-sched-cards">
+    <div style="font-size:12px;color:var(--muted);padding:8px">Loading schedules...</div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="db-filters">
+  <div class="db-frow">
+    <span class="db-flabel">Brand</span>
+    <button class="db-pill" data-g="brand" data-v="Apple">Apple</button>
+    <button class="db-pill" data-g="brand" data-v="ASUS">ASUS</button>
+    <button class="db-pill" data-g="brand" data-v="HP">HP</button>
+    <button class="db-pill" data-g="brand" data-v="Dell">Dell</button>
+    <button class="db-pill" data-g="brand" data-v="Lenovo">Lenovo</button>
+    <button class="db-pill" data-g="brand" data-v="Samsung">Samsung</button>
+    <button class="db-pill" data-g="brand" data-v="MSI">MSI</button>
+    <button class="db-pill" data-g="brand" data-v="Acer">Acer</button>
+  </div>
+  <div class="db-frow">
+    <span class="db-flabel">Category</span>
+    <button class="db-pill on" data-g="cat" data-v="all">All</button>
+    <button class="db-pill" data-g="cat" data-v="gaming">Gaming Laptops</button>
+    <button class="db-pill" data-g="cat" data-v="macbook">MacBooks</button>
+    <button class="db-pill" data-g="cat" data-v="laptop">Laptops</button>
+    <button class="db-pill" data-g="cat" data-v="desktop">Desktops</button>
+    <button class="db-pill" data-g="cat" data-v="monitor">Monitors</button>
+    <button class="db-pill" data-g="cat" data-v="aio">All-in-One</button>
+  </div>
+  <div class="db-frow">
+    <span class="db-flabel">Price</span>
+    <div class="db-price-inputs">
+      $<input type="number" id="db-pmin" placeholder="0" min="0" oninput="filterDeals()">
+      to
+      $<input type="number" id="db-pmax" placeholder="3000" min="0" oninput="filterDeals()">
+    </div>
+    <div class="db-score-row">
+      <span>Min score</span>
+      <input type="range" id="db-score" min="0" max="13" value="7"
+             oninput="document.getElementById('db-score-val').textContent=this.value;filterDeals()">
+      <b class="db-score-val" id="db-score-val">7</b>
+    </div>
+  </div>
+  <div class="db-frow">
+    <span class="db-flabel">Processor</span>
+    <button class="db-pill" data-g="cpu" data-v="Apple M">Apple M</button>
+    <button class="db-pill" data-g="cpu" data-v="Intel">Intel</button>
+    <button class="db-pill" data-g="cpu" data-v="AMD">AMD</button>
+  </div>
+  <div class="db-frow">
+    <span class="db-flabel">Memory</span>
+    <button class="db-pill" data-g="ram" data-v="8GB">8 GB</button>
+    <button class="db-pill" data-g="ram" data-v="16GB">16 GB</button>
+    <button class="db-pill" data-g="ram" data-v="32GB">32 GB</button>
+    <button class="db-pill" data-g="ram" data-v="64GB">64 GB+</button>
+  </div>
+</div>
+
+<!-- Main: deals + composer -->
+<div class="db-main">
+  <div class="db-panel">
+    <div class="db-meta">
+      <div class="db-count"><b id="db-visible-count">0</b> deals &nbsp;·&nbsp; <b id="db-sel-count">0</b> selected</div>
+      <button class="btn btn-ghost btn-sm" onclick="clearSelection()">Clear selection</button>
+    </div>
+    <div class="db-grid" id="db-grid">
+      <div class="db-loading" id="db-loading" style="display:block">Loading deals...</div>
+      <div class="db-empty" id="db-empty" style="display:none">No deals match your filters — try lowering the min score or running a new scan.</div>
+    </div>
+  </div>
+
+  <div class="db-composer">
+    <div class="db-comp-header">
+      <span class="db-comp-title">Message</span>
+      <span class="db-comp-sel" id="db-comp-sel">Select deals ←</span>
+    </div>
+    <span class="db-comp-hint">Edit freely — copy to WhatsApp or broadcast list</span>
+    <textarea class="db-comp-textarea" id="db-textarea"
+              placeholder="Select deals on the left to build your message..."
+              oninput="updateCharCount()"></textarea>
+    <div class="db-comp-footer">
+      <span class="db-char-count" id="db-char-count">0 chars</span>
+      <button class="btn btn-primary btn-sm" id="db-copy-btn" onclick="copyMessage()" disabled>
+        📋 Copy
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let ALL_DEALS   = [];
+let selectedIds = new Set();
+let activeCat   = 'all';
+let brands      = new Set();
+let cpus        = new Set();
+let rams        = new Set();
+let schedOpen   = false;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadStatus();
+  loadDeals();
+  loadSchedules();
+  bindPills();
+});
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/deals/status');
+    const d = await r.json();
+    if (!d.ok) return;
+
+    document.getElementById('db-deal-count').textContent = d.deal_count ?? 0;
+    document.getElementById('db-sched-badge').textContent =
+      `${d.active_schedules ?? 0} schedule${d.active_schedules !== 1 ? 's' : ''} active`;
+
+    if (d.last_run) {
+      const ago = timeAgo(d.last_run.run_at);
+      document.getElementById('db-last-pull').textContent =
+        `${ago} · ${d.last_run.deals_found} found`;
+    } else {
+      document.getElementById('db-last-pull').textContent = 'never';
+    }
+  } catch(e) {
+    console.error('Status load failed:', e);
+  }
+}
+
+async function loadDeals() {
+  document.getElementById('db-loading').style.display = 'block';
+  document.getElementById('db-empty').style.display   = 'none';
+  document.getElementById('db-grid').querySelectorAll('.db-card').forEach(c => c.remove());
+
+  try {
+    const r = await fetch('/api/deals');
+    const d = await r.json();
+    if (d.ok) {
+      ALL_DEALS = d.deals || [];
+      filterDeals();
+    } else {
+      showEmpty('Failed to load deals. Try running a scan.');
+    }
+  } catch(e) {
+    showEmpty('Could not reach the server. Please try again.');
+  } finally {
+    document.getElementById('db-loading').style.display = 'none';
+  }
+}
+
+async function loadSchedules() {
+  try {
+    const r = await fetch('/api/deals/schedules');
+    const d = await r.json();
+    if (!d.ok) return;
+    renderSchedules(d.schedules);
+  } catch(e) {
+    console.error('Schedules load failed:', e);
+  }
+}
+
+async function runScan(schedId = null) {
+  const btn = document.getElementById('db-run-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning...';
+
+  try {
+    const url  = schedId ? `/api/deals/run/${schedId}` : '/api/deals/run';
+    const body = schedId ? {} : buildFilterPayload();
+    const r    = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await loadDeals();
+      await loadStatus();
+    } else {
+      alert('Scan failed: ' + (d.error || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Scan request failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '▶ Run Now';
+  }
+}
+
+async function toggleScheduleActive(schedId, isActive) {
+  try {
+    const r = await fetch(`/api/deals/schedules/${schedId}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({is_active: isActive})
+    });
+    const d = await r.json();
+    if (d.ok) loadSchedules();
+  } catch(e) {
+    console.error('Toggle schedule failed:', e);
+  }
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+function buildFilterPayload() {
+  const payload = {};
+  if (brands.size > 0)    payload.brands     = [...brands];
+  if (activeCat !== 'all') payload.categories = [activeCat];
+  if (cpus.size > 0)      payload.cpu        = [...cpus];
+  if (rams.size > 0)      payload.ram        = [...rams];
+  const pmin = parseFloat(document.getElementById('db-pmin').value);
+  const pmax = parseFloat(document.getElementById('db-pmax').value);
+  if (!isNaN(pmin) && pmin > 0)    payload.price_min = pmin;
+  if (!isNaN(pmax) && pmax > 0)    payload.price_max = pmax;
+  payload.min_score = parseInt(document.getElementById('db-score').value) || 0;
+  return payload;
+}
+
+function filterDeals() {
+  const minScore = parseInt(document.getElementById('db-score').value) || 0;
+  const pmin     = parseFloat(document.getElementById('db-pmin').value) || 0;
+  const pmax     = parseFloat(document.getElementById('db-pmax').value) || 99999;
+
+  const filtered = ALL_DEALS.filter(d => {
+    if (brands.size > 0 && !brands.has(d.brand))         return false;
+    if (activeCat !== 'all' && d.category !== activeCat) return false;
+    if (d.sale_price < pmin || d.sale_price > pmax)      return false;
+    if (cpus.size > 0 && !Array.from(cpus).some(c => (d.cpu||'').toLowerCase().includes(c.toLowerCase()))) return false;
+    if (rams.size > 0 && !rams.has(d.memory))            return false;
+    if (d.score < minScore)                              return false;
+    return true;
+  });
+
+  renderDeals(filtered);
+}
+
+function bindPills() {
+  document.querySelectorAll('.db-pill[data-g="cat"]').forEach(p => {
+    p.addEventListener('click', () => {
+      document.querySelectorAll('.db-pill[data-g="cat"]').forEach(x => x.classList.remove('on'));
+      p.classList.add('on');
+      activeCat = p.dataset.v;
+      filterDeals();
+    });
+  });
+  document.querySelectorAll('.db-pill[data-g="brand"]').forEach(p => {
+    p.addEventListener('click', () => {
+      brands.has(p.dataset.v) ? brands.delete(p.dataset.v) : brands.add(p.dataset.v);
+      p.classList.toggle('ms', brands.has(p.dataset.v));
+      filterDeals();
+    });
+  });
+  document.querySelectorAll('.db-pill[data-g="cpu"]').forEach(p => {
+    p.addEventListener('click', () => {
+      cpus.has(p.dataset.v) ? cpus.delete(p.dataset.v) : cpus.add(p.dataset.v);
+      p.classList.toggle('ms', cpus.has(p.dataset.v));
+      filterDeals();
+    });
+  });
+  document.querySelectorAll('.db-pill[data-g="ram"]').forEach(p => {
+    p.addEventListener('click', () => {
+      rams.has(p.dataset.v) ? rams.delete(p.dataset.v) : rams.add(p.dataset.v);
+      p.classList.toggle('ms', rams.has(p.dataset.v));
+      filterDeals();
+    });
+  });
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderDeals(deals) {
+  const grid = document.getElementById('db-grid');
+  grid.querySelectorAll('.db-card').forEach(c => c.remove());
+
+  document.getElementById('db-visible-count').textContent = deals.length;
+
+  if (!deals.length) {
+    showEmpty(ALL_DEALS.length === 0
+      ? 'No deals yet — hit Run Now to pull from Best Buy.'
+      : 'No deals match your filters.');
+    return;
+  }
+
+  document.getElementById('db-empty').style.display = 'none';
+
+  deals.forEach(d => {
+    const disc = Math.round((d.regular_price - d.sale_price) / d.regular_price * 100);
+    const sel  = selectedIds.has(d.id);
+    const card = document.createElement('div');
+    card.className = `db-card${sel ? ' sel' : ''}`;
+    card.dataset.id = d.id;
+    card.onclick = () => toggleDeal(d.id);
+    card.innerHTML = `
+      <input class="db-card-ck" type="checkbox" ${sel ? 'checked' : ''}
+             onclick="event.stopPropagation();toggleDeal(${d.id})">
+      <div class="db-brand">${d.brand || '—'}</div>
+      <div class="db-name">${d.name}</div>
+      <div class="db-spec">${d.cpu || ''}${d.cpu && d.memory ? ' · ' : ''}${d.memory || ''}</div>
+      <div class="db-prices">
+        <span class="db-price">$${d.sale_price.toLocaleString()}</span>
+        <span class="db-orig">$${d.regular_price.toLocaleString()}</span>
+      </div>
+      <div class="db-foot">
+        <span class="db-off">−${disc}% off</span>
+        <span class="db-score-badge ${d.score >= 10 ? 'db-score-hi' : 'db-score-md'}">${d.score}/13</span>
+      </div>
+      ${d.url ? `<div class="db-link"><a href="${d.url}" target="_blank" onclick="event.stopPropagation()">View on Best Buy ↗</a></div>` : ''}
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function renderSchedules(schedules) {
+  const container = document.getElementById('db-sched-cards');
+  if (!schedules.length) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px">No schedules yet.</div>';
+    return;
+  }
+  container.innerHTML = schedules.map(s => `
+    <div class="db-sched-card">
+      <div class="db-sched-top">
+        <span class="db-sched-name">${s.name}</span>
+        <span class="badge ${s.is_active ? 'badge-success' : 'badge-muted'}">
+          ${s.is_active ? 'Active' : 'Paused'}
+        </span>
+      </div>
+      <div class="db-sched-detail">
+        <div>Trigger: <span>${s.trigger_type === 'cron' ? s.cron_expression : `Every ${s.interval_hours}h`}</span></div>
+        <div>Mode: <span>${s.mode}</span>${s.alert_threshold ? ` · Alert ≥ <span>${s.alert_threshold}</span>` : ''}</div>
+        <div>Last run: <span>${s.last_run_at ? timeAgo(s.last_run_at) : 'never'}</span></div>
+      </div>
+      <div class="db-sched-btns">
+        <button class="btn btn-ghost btn-sm" onclick="runScan(${s.id})">▶ Run Now</button>
+        <button class="btn btn-ghost btn-sm"
+                onclick="toggleScheduleActive(${s.id}, ${!s.is_active})">
+          ${s.is_active ? 'Pause' : 'Resume'}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showEmpty(msg) {
+  const el = document.getElementById('db-empty');
+  el.textContent = msg;
+  el.style.display = 'block';
+  document.getElementById('db-loading').style.display = 'none';
+}
+
+// ── Selection & message ───────────────────────────────────────────────────────
+function toggleDeal(id) {
+  selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id);
+  // Re-render just the toggled card
+  document.querySelectorAll('.db-card').forEach(c => {
+    const cid = parseInt(c.dataset.id);
+    c.classList.toggle('sel', selectedIds.has(cid));
+    const ck = c.querySelector('.db-card-ck');
+    if (ck) ck.checked = selectedIds.has(cid);
+  });
+  document.getElementById('db-sel-count').textContent = selectedIds.size;
+  updateMessage();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.db-card').forEach(c => {
+    c.classList.remove('sel');
+    const ck = c.querySelector('.db-card-ck');
+    if (ck) ck.checked = false;
+  });
+  document.getElementById('db-sel-count').textContent = 0;
+  updateMessage();
+}
+
+function updateMessage() {
+  const n    = selectedIds.size;
+  const ta   = document.getElementById('db-textarea');
+  const btn  = document.getElementById('db-copy-btn');
+  const info = document.getElementById('db-comp-sel');
+
+  info.textContent = n > 0 ? `${n} selected` : 'Select deals ←';
+
+  if (!n) {
+    ta.value = '';
+    updateCharCount();
+    btn.disabled = true;
+    return;
+  }
+
+  const items = ALL_DEALS.filter(d => selectedIds.has(d.id));
+  let msg = `Hey [Name] 👋\n\nFound some great deals today!\n\n`;
+  items.forEach(d => {
+    const disc = Math.round((d.regular_price - d.sale_price) / d.regular_price * 100);
+    msg += `📦 *${d.name}*\n💰 $${d.sale_price.toLocaleString()} (was $${d.regular_price.toLocaleString()} · ${disc}% off)\n\n`;
+  });
+  msg += `Interested in any of these? I can source them for you! 🚀\n\n– Ron @ iGamer Corp 🇦🇪`;
+
+  ta.value = msg;
+  updateCharCount();
+  btn.disabled = false;
+}
+
+function updateCharCount() {
+  const len = document.getElementById('db-textarea').value.length;
+  document.getElementById('db-char-count').textContent = `${len} chars`;
+}
+
+function copyMessage() {
+  const ta  = document.getElementById('db-textarea');
+  const btn = document.getElementById('db-copy-btn');
+  navigator.clipboard.writeText(ta.value).then(() => {
+    btn.textContent = '✓ Copied!';
+    btn.classList.add('btn-success');
+    btn.classList.remove('btn-primary');
+    setTimeout(() => {
+      btn.textContent = '📋 Copy';
+      btn.classList.remove('btn-success');
+      btn.classList.add('btn-primary');
+    }, 2000);
+  });
+}
+
+// ── Schedules toggle ──────────────────────────────────────────────────────────
+function toggleSchedules() {
+  schedOpen = !schedOpen;
+  document.getElementById('db-sched-panel').style.display = schedOpen ? '' : 'none';
+  document.getElementById('db-sched-arrow').textContent   = schedOpen ? '▴' : '▾';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function timeAgo(isoString) {
+  const diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
+  if (diff < 60)         return `${diff}s ago`;
+  if (diff < 3600)       return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400)      return `${Math.floor(diff/3600)}h ago`;
+  return                        `${Math.floor(diff/86400)}d ago`;
+}
+</script>
+{% endblock %}
