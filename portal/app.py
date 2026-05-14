@@ -3,14 +3,8 @@ from flask import Flask
 from flask_login import LoginManager
 from .db import get_db
 from .models import User
-# At the top with other imports
-from .services.scheduler import init_scheduler
-
-# Inside create_app(), after app.register_blueprint lines, before return app
-init_scheduler(app)
 
 login_manager = LoginManager()
-
 
 def create_app():
     app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -38,8 +32,12 @@ def create_app():
     app.register_blueprint(receiving_bp)
     app.register_blueprint(invoicing_bp)
 
-    # ── Security (must be after blueprints so CSRF & Talisman cover all routes) ──
+    # ── Security ──────────────────────────────────────────────────────────────
     from .security import init_security
     init_security(app)
+
+    # ── Scheduler ─────────────────────────────────────────────────────────────
+    from .services.scheduler import init_scheduler
+    init_scheduler(app)
 
     return app
