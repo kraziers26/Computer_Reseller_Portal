@@ -241,6 +241,107 @@ def get_schedules():
             conn.close()
 
 
+@deals_bp.route('/api/deals/schedules', methods=['POST'])
+@login_required
+def create_schedule():
+    """
+    Create a new scan schedule.
+    Body: {
+        "name": "Morning Scan",
+        "trigger_type": "cron" | "score_alert",
+        "cron_expression": "0 8 * * *",   (cron only)
+        "interval_hours": 2,               (score_alert only)
+        "alert_threshold": 11,             (score_alert only)
+        "filters": { "categories": [...], "min_score": 9, ... },
+        "mode": "collect" | "notify" | "both"
+    }
+    """
+    from psycopg.types.json import Json
+    conn = None
+    try:
+        data = request.get_json(silent=True) or {}
+
+        name         = (data.get('name') or '').strip()
+        trigger_type = data.get('trigger_type', 'cron')
+        mode         = data.get('mode', 'collect')
+        filters      = data.get('filters') or {}
+
+        if not name:
+            return jsonify({'ok': False, 'error': 'Name is required'}), 400
+        if trigger_type not in ('cron', 'score_alert'):
+            return jsonify({'ok': False, 'error': 'Invalid trigger_type'}), 400
+        if mode not in ('collect', 'notify', 'both'):
+            return jsonify({'ok': False, 'error': 'Invalid mode'}), 400
+
+        cron_expression = data.get('cron_expression') if trigger_type == 'cron' else None
+        interval_hours  = int(data.get('interval_hours') or 2) if trigger_type == 'score_alert' else None
+        alert_threshold = int(data.get('alert_threshold')) if data.get('alert_threshold') else None
+
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO scan_schedules
+                    (name, trigger_type, cron_expression, interval_hours,
+                     alert_threshold, filters, mode, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+                RETURNING id, name, trigger_type, cron_expression, interval_hours,
+                          alert_threshold, filters, mode, is_active, last_run_at
+            """, (
+                name, trigger_type, cron_expression, interval_hours,
+                alert_threshold, Json(filters), mode
+            ))
+            row = cur.fetchone()
+        conn.commit()
+
+        # Register with APScheduler immediately
+        from ..services.scheduler import add_job
+        add_job(dict(row))
+
+        return jsonify({'ok': True, 'schedule': {
+            'id':              row['id'],
+            'name':            row['name'],
+            'trigger_type':    row['trigger_type'],
+            'cron_expression': row['cron_expression'],
+            'interval_hours':  row['interval_hours'],
+            'alert_threshold': row['alert_threshold'],
+            'filters':         row['filters'] or {},
+            'mode':            row['mode'],
+            'is_active':       row['is_active'],
+            'last_run_at':     None,
+        }}), 201
+
+    except Exception as e:
+        logger.error(f"[/api/deals/schedules POST] {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@deals_bp.route('/api/deals/schedules/<int:sched_id>', methods=['DELETE'])
+@login_required
+def delete_schedule(sched_id):
+    """Delete a schedule and remove its APScheduler job."""
+    from ..services.scheduler import remove_job
+    conn = None
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM scan_schedules WHERE id = %s RETURNING id", (sched_id,))
+            row = cur.fetchone()
+        if not row:
+            return jsonify({'ok': False, 'error': 'Not found'}), 404
+        conn.commit()
+        remove_job(sched_id)
+        return jsonify({'ok': True})
+    except Exception as e:
+        logger.error(f"[/api/deals/schedules/{sched_id} DELETE] {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
 @deals_bp.route('/api/deals/schedules/<int:sched_id>', methods=['PUT'])
 @login_required
 def update_schedule(sched_id):
