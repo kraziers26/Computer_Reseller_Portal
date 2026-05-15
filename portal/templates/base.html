@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}ComputerReseller Invoices Portal{% endblock %}</title>
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -115,7 +116,14 @@ select option{background:var(--surface2)}
 .pagination a:hover{background:var(--surface2);color:var(--text)}
 .pagination .current{background:var(--accent);border-color:var(--accent);color:#fff}
 
-/* ── Misc ── */
+/* ── Department switcher ── */
+.dept-switcher{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:4px}
+.dept-btn{flex:1;padding:5px 8px;border-radius:var(--r-sm);font-size:11px;font-weight:500;cursor:pointer;border:1px solid transparent;font-family:var(--font);transition:all .15s;text-align:center;color:var(--muted);background:transparent}
+.dept-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.dept-btn:not(.active):hover{background:var(--surface2);color:var(--text)}
+.nav-dept{display:none}
+.nav-dept.visible{display:block}
+
 .divider{height:1px;background:var(--border);margin:20px 0}
 .text-muted{color:var(--muted)}
 .text-accent{color:var(--accent2)}
@@ -140,9 +148,14 @@ select option{background:var(--surface2)}
   <aside class="sidebar">
     <div class="logo">
       <div class="logo-icon">iG</div>
-      <div><div class="logo-text">CR Invoices Portal</div><div class="logo-sub">Invoice Management</div></div>
+      <div><div class="logo-text">CR Portal</div><div class="logo-sub" id="dept-logo-sub">Inventory & Processing</div></div>
+    </div>
+    <div class="dept-switcher">
+      <button class="dept-btn active" id="dept-inv-btn" onclick="switchDept('inv')">📦 Inventory</button>
+      <button class="dept-btn" id="dept-deal-btn" onclick="switchDept('deal')">🔍 Deal Scan</button>
     </div>
     <nav>
+      <div class="nav-dept visible" id="nav-inv">
       {% if current_user.is_contributor %}
       <div class="nav-section">Submit</div>
       <a href="{{ url_for('upload.upload') }}" class="{{ 'active' if request.endpoint in ('upload.upload','upload.batch_review','upload.batch_item_confirm','upload.batch_summary') }}">
@@ -275,6 +288,33 @@ select option{background:var(--surface2)}
       </a>
       </div>
       {% endif %}
+      </div><!-- /nav-inv -->
+
+      <!-- ── Deal Scan nav ── -->
+      <div class="nav-dept" id="nav-deal">
+        <div class="nav-section">Retailers</div>
+        <a href="{{ url_for('deals.deals_page') }}"
+           class="{{ 'active' if request.endpoint == 'deals.deals_page' }}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          Deal Blaster
+        </a>
+        <div class="nav-section">Coming Soon</div>
+        <a style="opacity:.4;pointer-events:none">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          </svg>
+          Contacts / CRM
+        </a>
+        <a style="opacity:.4;pointer-events:none">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+          Blast History
+        </a>
+      </div><!-- /nav-deal -->
+
     </nav>
     <div class="sidebar-footer">
       <div class="user-chip">
@@ -288,6 +328,26 @@ select option{background:var(--surface2)}
     </div>
   </aside>
   <script>
+  // ── Department switcher ───────────────────────────────────────────────────
+  function switchDept(dept) {
+    document.getElementById('nav-inv').classList.toggle('visible', dept === 'inv');
+    document.getElementById('nav-deal').classList.toggle('visible', dept === 'deal');
+    document.getElementById('dept-inv-btn').classList.toggle('active', dept === 'inv');
+    document.getElementById('dept-deal-btn').classList.toggle('active', dept === 'deal');
+    document.getElementById('dept-logo-sub').textContent =
+      dept === 'inv' ? 'Inventory & Processing' : 'Deal Scan / Suggestions';
+    try { localStorage.setItem('igamer_dept', dept); } catch(e) {}
+  }
+  (function() {
+    // Auto-switch to Deal Scan if on a deals page
+    var isDeal = window.location.pathname.startsWith('/deals');
+    var stored;
+    try { stored = localStorage.getItem('igamer_dept'); } catch(e) {}
+    var dept = isDeal ? 'deal' : (stored || 'inv');
+    if (dept === 'deal') switchDept('deal');
+  })();
+
+  // ── Manage section collapse ───────────────────────────────────────────────
   function toggleManage(){
     var l=document.getElementById('manage-links');
     var c=document.getElementById('manage-chevron');
