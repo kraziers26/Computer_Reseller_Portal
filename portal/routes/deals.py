@@ -241,7 +241,43 @@ def get_schedules():
             conn.close()
 
 
-@deals_bp.route('/api/deals/schedules', methods=['POST'])
+@deals_bp.route('/api/deals/search', methods=['POST'])
+@login_required
+def natural_language_search():
+    """
+    Parse a natural language query and run a targeted BB scan.
+    Body: { "query": "ASUS gaming laptop RTX 5070 32GB under $1200" }
+    Returns deals + what was parsed so the UI can show feedback.
+    """
+    from ..services.query_parser import parse_query, describe_filters
+    try:
+        data  = request.get_json(silent=True) or {}
+        query = (data.get('query') or '').strip()
+        if not query:
+            return jsonify({'ok': False, 'error': 'Query is required'}), 400
+
+        filters     = parse_query(query)
+        description = describe_filters(filters)
+
+        # Strip internal meta before passing to scanner
+        scan_filters = {k: v for k, v in filters.items() if k != '_parsed'}
+        result = run_manual_scan(filters=scan_filters)
+
+        return jsonify({
+            'ok':          result.get('ok', False),
+            'description': description,
+            'parsed':      filters.get('_parsed', {}),
+            'deals_found': result.get('deals_found', 0),
+            'new_deals':   result.get('new_deals', 0),
+            'error':       result.get('error'),
+        })
+
+    except Exception as e:
+        logger.error(f"[/api/deals/search] {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+
 @login_required
 def create_schedule():
     """
