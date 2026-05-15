@@ -290,7 +290,8 @@ async function runScan(schedId = null) {
     const body = schedId ? {} : buildFilterPayload();
     const r    = await fetch(url, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json',
+    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content},
       body: JSON.stringify(body)
     });
     const d = await r.json();
@@ -312,7 +313,8 @@ async function toggleScheduleActive(schedId, isActive) {
   try {
     const r = await fetch(`/api/deals/schedules/${schedId}`, {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json',
+    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content},
       body: JSON.stringify({is_active: isActive})
     });
     const d = await r.json();
