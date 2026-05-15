@@ -76,6 +76,16 @@
 .db-comp-textarea:focus{border-color:var(--accent)}
 .db-comp-footer{display:flex;align-items:center;justify-content:space-between;margin-top:2px}
 .db-char-count{font-size:11px;color:var(--hint)}
+/* ── Natural language search bar ── */
+.db-search-wrap{margin-bottom:14px}
+.db-search-bar{display:flex;gap:8px;align-items:center}
+.db-search-input{flex:1;padding:9px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-family:var(--font);font-size:13px;outline:none;transition:border-color .15s}
+.db-search-input:focus{border-color:var(--accent)}
+.db-search-input::placeholder{color:var(--hint)}
+.db-search-feedback{margin-top:7px;font-size:12px;color:var(--muted);display:none;padding:7px 10px;background:var(--surface2);border-radius:var(--r-sm);border-left:3px solid var(--accent)}
+.db-search-feedback.visible{display:block}
+.db-search-feedback .db-sf-label{color:var(--accent2);font-weight:500}
+/* ── Modal ── */
 .db-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:none;align-items:center;justify-content:center}
 .db-modal-overlay.open{display:flex}
 .db-modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
@@ -115,6 +125,22 @@
   <button class="db-rtab dim">Costco</button>
   <button class="db-rtab dim">Amazon</button>
   <button class="db-rtab dim">Walmart</button>
+</div>
+
+<!-- Natural language search -->
+<div class="db-search-wrap">
+  <div class="db-search-bar">
+    <input class="db-search-input" id="db-search-input" type="text"
+           placeholder="Describe what you're looking for... e.g. ASUS gaming laptop AMD Ryzen 9 32GB RTX 5070 under $1200"
+           onkeydown="if(event.key==='Enter') runNaturalSearch()">
+    <button class="btn btn-primary btn-sm" id="db-search-btn" onclick="runNaturalSearch()">
+      🔍 Search
+    </button>
+    <button class="btn btn-ghost btn-sm" onclick="clearSearch()" title="Clear search and show all deals">✕ Clear</button>
+  </div>
+  <div class="db-search-feedback" id="db-search-feedback">
+    <span class="db-sf-label" id="db-sf-label"></span>
+  </div>
 </div>
 
 <!-- Scan bar -->
@@ -579,7 +605,54 @@ function timeAgo(isoString) {
   return                        `${Math.floor(diff/86400)}d ago`;
 }
 
-// ── Schedule modal ────────────────────────────────────────────────────────────
+// ── Natural language search ───────────────────────────────────────────────────
+async function runNaturalSearch() {
+  const input   = document.getElementById('db-search-input');
+  const btn     = document.getElementById('db-search-btn');
+  const feedback = document.getElementById('db-search-feedback');
+  const label   = document.getElementById('db-sf-label');
+  const query   = input.value.trim();
+
+  if (!query) { input.focus(); return; }
+
+  btn.disabled = true; btn.textContent = '⏳ Searching...';
+  feedback.classList.remove('visible');
+
+  try {
+    const r = await fetch('/api/deals/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+      },
+      body: JSON.stringify({ query })
+    });
+    const d = await r.json();
+
+    if (d.ok) {
+      label.textContent = d.description + ` — ${d.deals_found} deal${d.deals_found !== 1 ? 's' : ''} found`;
+      feedback.classList.add('visible');
+      await loadDeals();
+      await loadStatus();
+    } else {
+      label.textContent = 'Search failed: ' + (d.error || 'unknown error');
+      feedback.classList.add('visible');
+    }
+  } catch(e) {
+    label.textContent = 'Request failed: ' + e.message;
+    feedback.classList.add('visible');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 Search';
+  }
+}
+
+function clearSearch() {
+  document.getElementById('db-search-input').value = '';
+  document.getElementById('db-search-feedback').classList.remove('visible');
+  loadDeals();
+}
+
+
 let selectedCats = new Set();
 
 function openAddScheduleModal() {
