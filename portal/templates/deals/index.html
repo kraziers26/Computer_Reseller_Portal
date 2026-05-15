@@ -223,6 +223,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDeals();
   loadSchedules();
   bindPills();
+
+  // Refresh scan bar every 30 seconds so "last pulled" stays current
+  setInterval(loadStatus, 30000);
 });
 
 // ── API calls ─────────────────────────────────────────────────────────────────
