@@ -3,6 +3,14 @@
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>Receiving</h1><p>Mark batched orders as received, missing, or partial</p></div>
+  <form method="POST" action="{{ url_for('receiving.sync_received') }}" style="margin-left:auto">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost btn-sm"
+            title="Fix transactions from closed sessions that are stuck in batched status"
+            onclick="return confirm('Sync all closed sessions to mark received orders as available for invoicing?')">
+      ⚙ Sync Received
+    </button>
+  </form>
 </div>
 
 {% if sessions %}
