@@ -13,17 +13,41 @@ receiving_bp = Blueprint('receiving', __name__, url_prefix='/receiving')
 @login_required
 @require_role('admin')
 def index():
-    with db_cursor() as (cur, _):
-        # Batched transactions not yet received — grouped by batch
+    with db_cursor() as (cur, conn):
+        # Auto-sync: fix any transactions stuck as batched in closed sessions
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status = 'received',
+                fulfillment_status_updated_at = NOW()
+            FROM receiving_items ri
+            JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+            WHERE ri.transaction_id = t.transaction_id
+              AND ri.receive_status  = 'received'
+              AND rs.status          = 'closed'
+              AND t.fulfillment_status = 'batched'
+              AND t.is_active = TRUE
+        """)
+        conn.commit()
+
+        # Batch list — received_count sourced from receiving_items to always
+        # match the session detail view.
         cur.execute("""
             SELECT t.print_batch_id AS batch_id,
-                   MIN(t.print_date)      AS batch_date,
-                   COUNT(*)               AS total_orders,
-                   COUNT(*) FILTER (WHERE t.fulfillment_status='batched')                    AS pending_count,
-                   COUNT(*) FILTER (WHERE t.fulfillment_status IN ('received','invoiced'))   AS received_count,
+                   MIN(t.print_date) AS batch_date,
+                   COUNT(DISTINCT t.transaction_id) AS total_orders,
+                   COUNT(DISTINCT t.transaction_id)
+                       FILTER (WHERE t.fulfillment_status = 'batched') AS pending_count,
+                   COUNT(DISTINCT ri_done.transaction_id) AS received_count,
                    STRING_AGG(DISTINCT c.company_name, ', ') AS companies
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN (
+                SELECT ri.transaction_id
+                FROM receiving_items ri
+                JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+                WHERE ri.receive_status = 'received'
+                  AND rs.status = 'closed'
+            ) ri_done ON ri_done.transaction_id = t.transaction_id
             WHERE t.print_batch_id IS NOT NULL
               AND t.is_active = TRUE
               AND t.fulfillment_status IN ('batched','received','invoiced')
