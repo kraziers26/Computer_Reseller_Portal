@@ -28,8 +28,7 @@ def index():
               AND t.is_active = TRUE
         """)
 
-        # Auto-sync 2: fix orphaned 'invoiced' transactions that have no
-        # invoice_items record (invoice was lost/deleted without releasing them)
+        # Auto-sync 2: fix orphaned 'invoiced' transactions that have no invoice record
         cur.execute("""
             UPDATE transactions t
             SET fulfillment_status = 'received',
@@ -41,6 +40,21 @@ def index():
                 WHERE ii.transaction_id = t.transaction_id
               )
         """)
+
+        # Auto-sync 3: retroactively push orphaned batch orders into the pending pool.
+        # For every closed session, find orders in its batch that never got a
+        # receiving_item record and insert them as 'pending' so they appear in
+        # the pending pool for confirmation.
+        cur.execute("""
+            SELECT rs.session_id, rs.batch_id
+            FROM receiving_sessions rs
+            WHERE rs.status = 'closed'
+              AND rs.batch_id IS NOT NULL
+        """)
+        closed_sessions = cur.fetchall()
+        for cs in closed_sessions:
+            _add_orphaned_batch_orders_to_session(cur, cs['session_id'], cs['batch_id'])
+
         conn.commit()
 
         # Batch list — received_count sourced from receiving_items to always
@@ -282,13 +296,66 @@ def mark_item(session_id):
 
 # ── Close session ─────────────────────────────────────────────────────────────
 
+def _add_orphaned_batch_orders_to_session(cur, session_id, batch_id):
+    """
+    Find any orders in batch_id that are not in this session and not already
+    properly invoiced, then insert them as 'pending' receiving_items so they
+    surface in the pending pool for manual confirmation.
+    Returns the count of orders added.
+    """
+    if not batch_id:
+        return 0
+
+    cur.execute("SELECT transaction_id FROM receiving_items WHERE session_id=%s", (session_id,))
+    existing_ids = [str(r['transaction_id']) for r in cur.fetchall()]
+    placeholder = existing_ids if existing_ids else ['00000000-0000-0000-0000-000000000000']
+
+    cur.execute("""
+        SELECT t.transaction_id FROM transactions t
+        WHERE t.print_batch_id = %s
+          AND t.is_active = TRUE
+          AND t.transaction_id != ALL(%s::uuid[])
+          AND NOT EXISTS (
+            SELECT 1 FROM invoice_items ii
+            WHERE ii.transaction_id = t.transaction_id
+          )
+    """, (batch_id, placeholder))
+    orphans = cur.fetchall()
+
+    for txn in orphans:
+        item_id = str(uuid.uuid4())
+        cur.execute(
+            "INSERT INTO receiving_items (item_id, session_id, transaction_id, receive_status) "
+            "VALUES (%s,%s,%s,'pending')",
+            (item_id, session_id, str(txn['transaction_id'])))
+        cur.execute(
+            "SELECT item_id AS transaction_item_id, quantity FROM transaction_items "
+            "WHERE transaction_id=%s",
+            (str(txn['transaction_id']),))
+        for li in cur.fetchall():
+            cur.execute(
+                "INSERT INTO receiving_item_lines "
+                "(item_id, transaction_item_id, ordered_qty, received_qty) "
+                "VALUES (%s,%s,%s,0)",
+                (item_id, str(li['transaction_item_id']), li['quantity'] or 0))
+
+    return len(orphans)
+
+
 @receiving_bp.route('/session/<session_id>/close', methods=['POST'])
 @login_required
 @require_role('admin')
 def close_session(session_id):
     with db_cursor() as (cur, conn):
-        # Confirm received items on the transactions table (in case mark_item()
-        # was skipped or didn't commit — this is the authoritative close-time sync)
+        # Get batch_id so we can check for orphaned orders
+        cur.execute("SELECT batch_id FROM receiving_sessions WHERE session_id=%s", (session_id,))
+        row = cur.fetchone()
+        batch_id = row['batch_id'] if row else None
+
+        # Push any batch orders not in this session into the pending pool
+        orphan_count = _add_orphaned_batch_orders_to_session(cur, session_id, batch_id)
+
+        # Confirm received items on the transactions table
         cur.execute("""
             UPDATE transactions t
             SET fulfillment_status='received',
@@ -300,7 +367,8 @@ def close_session(session_id):
               AND t.fulfillment_status NOT IN ('invoiced')
         """, (session_id,))
 
-        # Move missing/partial/pending items back to batched pool
+        # Move missing/partial/pending items back to batched so they stay
+        # visible for tracking (pending pool queries by receive_status, not this)
         cur.execute("""
             UPDATE transactions t
             SET fulfillment_status='batched',
@@ -310,11 +378,18 @@ def close_session(session_id):
               AND ri.session_id = %s
               AND ri.receive_status IN ('missing','partial','pending')
         """, (session_id,))
+
         cur.execute(
             "UPDATE receiving_sessions SET status='closed' WHERE session_id=%s",
             (session_id,))
 
-    flash('Session closed. Missing and partial items remain in the receiving pool.', 'success')
+    if orphan_count:
+        flash(
+            f'Session closed. {orphan_count} order(s) from this batch were missing '
+            f'from the session and have been sent to the Pending Pool for confirmation.',
+            'warning')
+    else:
+        flash('Session closed. Missing and partial items remain in the pending pool.', 'success')
     return redirect(url_for('receiving.index'))
 
 
