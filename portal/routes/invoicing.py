@@ -154,7 +154,21 @@ def new_invoice():
     if request.method == 'POST':
         return _save_invoice(existing_id=None)
 
-    with db_cursor() as (cur, _):
+    with db_cursor() as (cur, conn):
+        # Release orphaned 'invoiced' transactions that have no invoice_items record
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status = 'received',
+                fulfillment_status_updated_at = NOW()
+            WHERE t.fulfillment_status = 'invoiced'
+              AND t.is_active = TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM invoice_items ii
+                WHERE ii.transaction_id = t.transaction_id
+              )
+        """)
+        conn.commit()
+
         orders, order_items = _load_received_orders(cur)
         cur.execute("SELECT company_id, company_name, company_short_code FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
         companies = cur.fetchall()
