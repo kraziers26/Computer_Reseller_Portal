@@ -434,9 +434,35 @@ def all_submissions():
             " / 86400 >= %s")
         params.append(f_stuck_days)
 
-    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+    f_no_items = request.args.get('no_items', '')
 
-    with db_cursor() as (cur, _):
+    with db_cursor() as (cur, conn):
+        # Auto-flag any active orders that have no qualifying line items
+        # and aren't already in a terminal review state
+        cur.execute("""
+            UPDATE transactions
+            SET review_status = 'Needs Review'
+            WHERE is_active = TRUE
+              AND review_status NOT IN ('Flagged', 'Duplicate', 'Reviewed')
+              AND NOT EXISTS (
+                SELECT 1 FROM transaction_items ti
+                WHERE ti.transaction_id = transactions.transaction_id
+                  AND ti.unit_price >= 1.0
+              )
+        """)
+        conn.commit()
+
+        if f_no_items:
+            conditions.append("""
+                NOT EXISTS (
+                    SELECT 1 FROM transaction_items ti
+                    WHERE ti.transaction_id = t.transaction_id
+                      AND ti.unit_price >= 1.0
+                )
+            """)
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
         cur.execute(f"""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.order_type,
@@ -448,7 +474,12 @@ def all_submissions():
                    ROUND(COALESCE(t.cashback_value,0)::numeric,2)    AS cashback,
                    sub.username AS submitter_name,
                    per.username AS person_name,
-                   c.company_name, t.notes
+                   c.company_name, t.notes,
+                   NOT EXISTS (
+                       SELECT 1 FROM transaction_items ti
+                       WHERE ti.transaction_id = t.transaction_id
+                         AND ti.unit_price >= 1.0
+                   ) AS no_items
             FROM transactions t
             LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
             LEFT JOIN dim_users per    ON t.user_id    = per.user_id
@@ -490,7 +521,7 @@ def all_submissions():
                                     'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
                                     'card':f_card,'person_by':f_person,'order_number':f_order,
                                     'role':f_role,'fulfillment':f_fulfillment,
-                                    'stuck_days':f_stuck_days})
+                                    'stuck_days':f_stuck_days,'no_items':f_no_items})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
