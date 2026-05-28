@@ -312,10 +312,15 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
       Sold by: Amazon.com  /  Vendido por: Amazon.com
       [Supplied by: Other / Proporcionado por: Otro]
       [Return or replace items: ...]
-      N              ← quantity (standalone digit)
+      N              ← quantity (standalone digit, may render as N) or (N) in some PDFs)
       $unit_price    ← or US$unit_price
 
     The quantity digit appears BEFORE or AFTER "Sold by" depending on layout.
+
+    FIX 2026-05: Spanish invoices use "Entregado el DD de mes" (not "Llega el")
+    as the delivery section header, and "Tu paquete se dejó..." as the delivery
+    note. Both are now handled. Circled quantity badges that render as "(N)" or
+    "N)" are also normalised.
     """
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
@@ -333,16 +338,22 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
         r'^(Sold by:|Vendido por:|Supplied by:|Proporcionado por:)', re.IGNORECASE)
     return_pat = re.compile(r'^(Return or replace|Devolver)', re.IGNORECASE)
 
-    # Find the item section start — skip past delivery header AND any delivery notes
+    # ── FIX 1: added "Entregado" (Spanish past-tense delivery header) ──────────
+    # Before this fix only "Llega el" (future/arriving) was handled, so Spanish
+    # invoices for already-delivered orders never advanced item_start and the
+    # entire page header bled into item descriptions.
     item_start = 0
     for i, ln in enumerate(lines):
-        if re.match(r'(Delivered|Arriving|Llega el|Your package)', ln, re.IGNORECASE):
+        if re.match(r'(Delivered|Arriving|Llega el|Entregado|Your package)', ln, re.IGNORECASE):
             item_start = i + 1
             break
 
-    # Also skip any additional delivery note lines (e.g. "Your package was left...")
+    # ── FIX 2: added "Tu paquete" (Spanish delivery note skip) ────────────────
+    # "Tu paquete se dejó cerca de la puerta de entrada o pórtico." was not in
+    # the English-only skip list and would end up prepended to item descriptions.
     while item_start < len(lines) and re.match(
-            r'(Your package|We.ll hold|Left at|Package was)', lines[item_start], re.IGNORECASE):
+            r'(Your package|We.ll hold|Left at|Package was|Tu paquete)',
+            lines[item_start], re.IGNORECASE):
         item_start += 1
 
     item_lines = lines[item_start:]
@@ -374,12 +385,16 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
         if unit_price == 0.0:
             continue
 
-        # Find quantity — standalone digit before or near price
+        # ── FIX 3: circled quantity badge normalisation ────────────────────────
+        # pdfplumber may render the circled ④ badge as bare "4", "4)", or "(4)"
+        # depending on the PDF renderer / font encoding. The old r'^\d+$' only
+        # matched the bare-digit form; the new pattern strips optional parens.
         quantity = 1
         desc_lines = []
         for ln in block[:-1]:  # exclude price line
-            if re.match(r'^\d+$', ln) and int(ln) <= 99:
-                quantity = int(ln)
+            qty_m = re.match(r'^\(?(\d+)\)?$', ln)
+            if qty_m and int(qty_m.group(1)) <= 99:
+                quantity = int(qty_m.group(1))
             elif sold_by_pat.match(ln) or return_pat.match(ln):
                 continue
             elif re.match(r'(Your package|Left at|Package was|Delivering|Estimated delivery)',
