@@ -19,14 +19,14 @@ def index():
             SELECT t.print_batch_id AS batch_id,
                    MIN(t.print_date)      AS batch_date,
                    COUNT(*)               AS total_orders,
-                   COUNT(*) FILTER (WHERE t.fulfillment_status='batched')  AS pending_count,
-                   COUNT(*) FILTER (WHERE t.fulfillment_status='received') AS received_count,
+                   COUNT(*) FILTER (WHERE t.fulfillment_status='batched')                    AS pending_count,
+                   COUNT(*) FILTER (WHERE t.fulfillment_status IN ('received','invoiced'))   AS received_count,
                    STRING_AGG(DISTINCT c.company_name, ', ') AS companies
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
             WHERE t.print_batch_id IS NOT NULL
               AND t.is_active = TRUE
-              AND t.fulfillment_status IN ('batched','received')
+              AND t.fulfillment_status IN ('batched','received','invoiced')
             GROUP BY t.print_batch_id
             ORDER BY batch_date DESC
         """)
