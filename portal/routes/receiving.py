@@ -14,7 +14,7 @@ receiving_bp = Blueprint('receiving', __name__, url_prefix='/receiving')
 @require_role('admin')
 def index():
     with db_cursor() as (cur, conn):
-        # Auto-sync: fix any transactions stuck as batched in closed sessions
+        # Auto-sync 1: fix transactions stuck as 'batched' after a closed session
         cur.execute("""
             UPDATE transactions t
             SET fulfillment_status = 'received',
@@ -26,6 +26,20 @@ def index():
               AND rs.status          = 'closed'
               AND t.fulfillment_status = 'batched'
               AND t.is_active = TRUE
+        """)
+
+        # Auto-sync 2: fix orphaned 'invoiced' transactions that have no
+        # invoice_items record (invoice was lost/deleted without releasing them)
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status = 'received',
+                fulfillment_status_updated_at = NOW()
+            WHERE t.fulfillment_status = 'invoiced'
+              AND t.is_active = TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM invoice_items ii
+                WHERE ii.transaction_id = t.transaction_id
+              )
         """)
         conn.commit()
 
