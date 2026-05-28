@@ -288,47 +288,90 @@ def _save_invoice(existing_id=None):
 
         # Build line items — one per order line, no cross-order consolidation.
         # Each transaction's items are listed separately for individual PDF tracking.
+        # Step 1: get all qualifying line items
         cur.execute("""
             SELECT t.transaction_id, t.order_number, t.retailer,
+                   t.price_total,
                    ti.item_description, ti.sku_model_color,
                    ti.quantity, ti.unit_price
             FROM transactions t
             LEFT JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
-            WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
               AND ti.unit_price >= %s
+            WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
             ORDER BY t.retailer, t.order_number, ti.item_description
-        """, (txn_ids, MIN_ITEM_PRICE))
-        raw_items = cur.fetchall()
+        """, (MIN_ITEM_PRICE, txn_ids))
+        raw_rows = cur.fetchall()
+
+        # Step 2: group by transaction so we can detect orders with no items
+        from collections import defaultdict
+        txn_lines = defaultdict(list)
+        txn_meta  = {}
+        for row in raw_rows:
+            tid = str(row['transaction_id'])
+            txn_meta[tid] = {
+                'transaction_id': tid,
+                'order_number':   row['order_number'] or '',
+                'retailer':       row['retailer'] or '',
+                'price_total':    float(row['price_total'] or 0),
+            }
+            if row['item_description'] is not None:   # LEFT JOIN produced a real item row
+                txn_lines[tid].append(row)
 
         subtotal = 0.0
         line_items = []
-        for i, item in enumerate(raw_items):
-            desc  = (item['item_description'] or item['retailer'] or '').strip()
-            sku   = item['sku_model_color'] or ''
-            price = float(item['unit_price'] or 0)
-            qty   = int(item['quantity'] or 1)
-            order_ref = item['order_number'] or ''
+        sort_idx = 0
+        for tid in txn_ids:                           # preserve selected order
+            meta  = txn_meta.get(tid)
+            if not meta:
+                continue
+            lines = txn_lines.get(tid, [])
+            order_ref = meta['order_number']
 
-            item_markup = float(request.form.get(f'markup_{i}', markup_pct))
-            unit_price  = round(price * (1 + item_markup / 100), 2)
-            line_total  = round(unit_price * qty, 2)
-            subtotal   += line_total
-
-            # Prefix description with order number for per-order PDF tracking
-            display_desc = f"[{order_ref}] {desc}" if order_ref else desc
-
-            line_items.append({
-                'item_id':        str(uuid.uuid4()),
-                'transaction_id': str(item['transaction_id']),
-                'description':    display_desc,
-                'sku':            sku,
-                'qty':            qty,
-                'unit_cost':      price,
-                'markup_pct':     item_markup,
-                'unit_price':     unit_price,
-                'line_total':     line_total,
-                'sort_order':     i,
-            })
+            if lines:
+                for row in lines:
+                    desc  = (row['item_description'] or row['retailer'] or '').strip()
+                    price = float(row['unit_price'] or 0)
+                    qty   = int(row['quantity'] or 1)
+                    item_markup = float(request.form.get(f'markup_{sort_idx}', markup_pct))
+                    unit_price  = round(price * (1 + item_markup / 100), 2)
+                    line_total  = round(unit_price * qty, 2)
+                    subtotal   += line_total
+                    display_desc = f"[{order_ref}] {desc}" if order_ref else desc
+                    line_items.append({
+                        'item_id':        str(uuid.uuid4()),
+                        'transaction_id': tid,
+                        'description':    display_desc,
+                        'sku':            row['sku_model_color'] or '',
+                        'qty':            qty,
+                        'unit_cost':      price,
+                        'markup_pct':     item_markup,
+                        'unit_price':     unit_price,
+                        'line_total':     line_total,
+                        'sort_order':     sort_idx,
+                    })
+                    sort_idx += 1
+            else:
+                # No qualifying line items — fall back to order total as one line
+                price = meta['price_total']
+                item_markup = float(request.form.get(f'markup_{sort_idx}', markup_pct))
+                unit_price  = round(price * (1 + item_markup / 100), 2)
+                line_total  = unit_price              # qty = 1
+                subtotal   += line_total
+                desc = f"Order {order_ref}" if order_ref else meta['retailer']
+                display_desc = f"[{order_ref}] {desc}" if order_ref else desc
+                line_items.append({
+                    'item_id':        str(uuid.uuid4()),
+                    'transaction_id': tid,
+                    'description':    display_desc,
+                    'sku':            '',
+                    'qty':            1,
+                    'unit_cost':      price,
+                    'markup_pct':     item_markup,
+                    'unit_price':     unit_price,
+                    'line_total':     round(line_total, 2),
+                    'sort_order':     sort_idx,
+                })
+                sort_idx += 1
 
         subtotal = round(subtotal, 2)
         total    = round(subtotal + other_amount, 2)
