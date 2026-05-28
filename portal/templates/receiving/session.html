@@ -216,4 +216,31 @@ function updateKPIs() {
   if (cards[4]) cards[4].querySelector('[style*="font-size:20px"]').textContent = pending;
 }
 </script>
+
+{% if missing_from_session %}
+<div style="margin-top:20px;border:1px solid #f59e0b;border-radius:8px;padding:16px;background:rgba(245,158,11,.06)">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+    <span style="font-size:14px">⚠</span>
+    <span style="font-size:12px;font-weight:600;color:#f59e0b;text-transform:uppercase;letter-spacing:.5px">
+      {{ missing_from_session|length }} order{{ 's' if missing_from_session|length != 1 }} in this print batch were not in this session
+    </span>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
+    These orders belong to batch <strong>{{ sess.batch_id }}</strong> but were not captured when this session was started.
+    Start a new receiving session for this batch to process them.
+  </div>
+  {% for o in missing_from_session %}
+  <div style="padding:8px 10px;border-radius:6px;background:var(--surface2);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+    <div>
+      <span style="font-family:var(--mono);font-size:12px;font-weight:500">{{ o.order_number }}</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px">{{ o.retailer }} · {{ o.person_name or '—' }} · {{ o.company_name or '—' }}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-family:var(--mono);font-size:12px">${{ "{:,.2f}".format(o.price_total or 0) }}</span>
+      <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(107,114,128,.15);color:var(--muted)">{{ o.fulfillment_status }}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 {% endblock %}
