@@ -43,6 +43,127 @@ EN_MONTHS = {
 }
 
 
+# ── Spanish → English product description translator ─────────────────────────
+# Covers the vocabulary that commonly appears in Amazon tech/electronics titles.
+# Brand names, model numbers, and spec values (digits, units, acronyms) are
+# left untouched. Phrases are sorted longest-first so multi-word entries always
+# match before their component words are consumed.
+
+_ES_PHRASES: list[tuple[str, str]] = [
+    # Multi-word phrases
+    ("para juegos",             "Gaming"),
+    ("para portátil",           "Laptop"),
+    ("para laptop",             "Laptop"),
+    ("de escritorio",           "Desktop"),
+    ("disco duro",              "Hard Drive"),
+    ("tarjeta gráfica",         "Graphics Card"),
+    ("tarjeta de video",        "Video Card"),
+    ("tarjeta de sonido",       "Sound Card"),
+    ("unidad de estado sólido", "Solid State Drive"),
+    ("placa base",              "Motherboard"),
+    ("placa madre",             "Motherboard"),
+    ("fuente de alimentación",  "Power Supply"),
+    ("tasa de refresco",        "Refresh Rate"),
+    ("tiempo de respuesta",     "Response Time"),
+    ("duración de batería",     "Battery Life"),
+    ("carga rápida",            "Fast Charging"),
+    ("carga inalámbrica",       "Wireless Charging"),
+    ("resistente al agua",      "Water Resistant"),
+    ("a prueba de agua",        "Waterproof"),
+    ("compatible con",          "Compatible with"),
+    ("funciona con",            "Works with"),
+    ("control remoto",          "Remote Control"),
+    ("gris espacial",           "Space Gray"),
+    ("espacial gris",           "Space Gray"),
+    ("azul medianoche",         "Midnight Blue"),
+    ("blanco estrella",         "Starlight"),
+    ("velocidad de",            "Speed"),
+    ("más de",                  "over"),
+    ("hasta",                   "up to"),
+    ("incluye",                 "includes"),
+    ("núcleos",                 "Cores"),
+    ("subprocesos",             "Threads"),
+    ("pulgadas",                "inches"),
+    # Single words
+    ("procesador",    "Processor"),
+    ("pantalla",      "Display"),
+    ("teclado",       "Keyboard"),
+    ("ratón",         "Mouse"),
+    ("memoria",       "Memory"),
+    ("almacenamiento","Storage"),
+    ("batería",       "Battery"),
+    ("cargador",      "Charger"),
+    ("adaptador",     "Adapter"),
+    ("portátil",      "Laptop"),
+    ("auriculares",   "Headphones"),
+    ("audífonos",     "Earphones"),
+    ("altavoz",       "Speaker"),
+    ("parlante",      "Speaker"),
+    ("cámara",        "Camera"),
+    ("micrófono",     "Microphone"),
+    ("impresora",     "Printer"),
+    ("escáner",       "Scanner"),
+    ("televisor",     "TV"),
+    ("controlador",   "Controller"),
+    ("mando",         "Controller"),
+    ("consola",       "Console"),
+    ("tableta",       "Tablet"),
+    ("inalámbrico",   "Wireless"),
+    ("inalámbrica",   "Wireless"),
+    ("plateado",      "Silver"),
+    ("plateada",      "Silver"),
+    ("dorado",        "Gold"),
+    ("dorada",        "Gold"),
+    ("negro",         "Black"),
+    ("negra",         "Black"),
+    ("blanco",        "White"),
+    ("blanca",        "White"),
+    ("gris",          "Gray"),
+    ("rojo",          "Red"),
+    ("roja",          "Red"),
+    ("azul",          "Blue"),
+    ("verde",         "Green"),
+    ("amarillo",      "Yellow"),
+    ("naranja",       "Orange"),
+    ("rosa",          "Pink"),
+    ("morado",        "Purple"),
+    ("violeta",       "Purple"),
+    # Short connectors — must come last so content words match first
+    ("con",  "with"),
+    ("para", "for"),
+    ("y",    "and"),
+    ("o",    "or"),
+    ("en",   "in"),
+    ("de",   ""),   # spec connector: "SSD Gen 4 de 1TB" → "SSD Gen 4 1TB"
+]
+
+def _build_translate_re() -> tuple[re.Pattern, dict[str, str]]:
+    sorted_phrases = sorted(_ES_PHRASES, key=lambda t: len(t[0]), reverse=True)
+    pattern = '|'.join(
+        r'(?<!\w)' + re.escape(phrase) + r'(?!\w)'
+        for phrase, _ in sorted_phrases
+    )
+    phrase_map = {phrase.lower(): english for phrase, english in sorted_phrases}
+    return re.compile(pattern, re.IGNORECASE), phrase_map
+
+_TRANSLATE_RE, _PHRASE_MAP = _build_translate_re()
+
+
+def translate_es_to_en(text: str) -> str:
+    """
+    Translate Spanish Amazon product description fragments to English using
+    a static phrase map. Brand names, model numbers, and spec values are
+    preserved unchanged. Collapses any double-spaces left by empty replacements
+    (e.g. "de" → "").
+    """
+    def _replace(m: re.Match) -> str:
+        return _PHRASE_MAP.get(m.group(0).lower(), m.group(0))
+
+    translated = _TRANSLATE_RE.sub(_replace, text)
+    return re.sub(r' {2,}', ' ', translated).strip()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def parse_amount(s: str) -> float:
     """Parse US$1,797.00 or $1,797.00 into float."""
     s = re.sub(r'US\$|,', '', s.strip())
@@ -84,14 +205,14 @@ def detect_format(text: str) -> str:
     return 'A_en'
 
 
-# ── Order number ─────────────────────────────────────────────────────────────
+# ── Order number ──────────────────────────────────────────────────────────────
 def parse_order_number(text: str, invoice: AmazonInvoice):
     patterns = [
-        r'N\.º de pedido\s+([\d-]+)',             # A_es: N.º de pedido 112-...
-        r'Order #\s*([\d-]+)',                     # B: Order #111-...
-        r'order number:\s*([\d-]+)',               # B: Amazon.com order number:
-        r'Order #?\s*([\d]{3}-[\d]+-[\d]+)',       # generic
-        r'orderID=([\d-]+)',                       # URL fallback
+        r'N\.º de pedido\s+([\d-]+)',
+        r'Order #\s*([\d-]+)',
+        r'order number:\s*([\d-]+)',
+        r'Order #?\s*([\d]{3}-[\d]+-[\d]+)',
+        r'orderID=([\d-]+)',
         r'Order\s+#\s*([\d]{3}-[\d]+-[\d]+)',
     ]
     for p in patterns:
@@ -137,11 +258,10 @@ def parse_date(text: str, invoice: AmazonInvoice):
 
 # ── Card last 4 ───────────────────────────────────────────────────────────────
 def parse_card(text: str, invoice: AmazonInvoice):
-    # Standard same-line patterns
     patterns = [
-        r'termina en (\d{4})',                                    # A_es: Visa que termina en 8299
-        r'ending in\s*(\d{4})',                                   # A_en: Visa ending in 4360
-        r'Last digits:\s*(\d{4})',                                # B: Last digits: 1029
+        r'termina en (\d{4})',
+        r'ending in\s*(\d{4})',
+        r'Last digits:\s*(\d{4})',
         r'(?:Visa|Mastercard|Amex|American Express|Discover).*?(\d{4})\b',
         r'Card ending in (\d{4})',
     ]
@@ -151,25 +271,19 @@ def parse_card(text: str, invoice: AmazonInvoice):
             invoice.card_last4 = m.group(1)
             return
 
-    # Cross-line fallback: pdfplumber merges columns so "ending in" may appear
-    # mid-line and the 4-digit card number may land on the next line mixed with
-    # address/total text  e.g. "MIAMI, FL 33174-2025 1003 Total before tax..."
+    # Cross-line fallback: pdfplumber merges columns so card number may wrap
     lines_list = text.splitlines()
     for i, ln in enumerate(lines_list):
         if not re.search(r'ending in', ln, re.IGNORECASE):
             continue
-        # Try same line first — digits immediately after "ending in"
         m = re.search(r'ending in[^0-9]{0,20}?([0-9]{4})(?![0-9])', ln, re.IGNORECASE)
         if m:
             invoice.card_last4 = m.group(1)
             return
-        # Next 1-2 lines — card number wrapped due to column merging
         for j in range(i + 1, min(i + 3, len(lines_list))):
             nxt = lines_list[j]
-            # Collect all standalone 4-digit numbers (space-bounded, not part of longer num)
             candidates = re.findall(r'(?<=[\s,])([0-9]{4})(?=[\s])', nxt)
             for cand in candidates:
-                # Skip year-like values (1990–2029) which come from zip+year combos
                 if re.match(r'(19[0-9]{2}|20[012][0-9])', cand):
                     continue
                 invoice.card_last4 = cand
@@ -181,35 +295,33 @@ def parse_card(text: str, invoice: AmazonInvoice):
 
 # ── Price total ───────────────────────────────────────────────────────────────
 def parse_total(text: str, invoice: AmazonInvoice):
-    # Special case: Rewards order — Grand Total is $0.00, use Item(s) Subtotal
+    # Rewards order — Grand Total is $0.00, use Item(s) Subtotal
     rewards_m = re.search(r'Rewards Points:\s*-[US\$]*([\d,]+\.\d{2})', text)
     if rewards_m:
-        # Grand Total is offset — use Item(s) Subtotal as actual charge basis
         sub_m = re.search(r'Item\(?s\)? Subtotal:\s*[US\$]*([\d,]+\.\d{2})', text)
         if sub_m:
             invoice.price_total = parse_amount(sub_m.group(1))
             return
 
-    # Format B: "Order Total: $X" at top
+    # Format B
     m = re.search(r'Order Total:\s*\$?([\d,]+\.\d{2})', text)
     if m:
         invoice.price_total = parse_amount(m.group(1))
         return
 
-    # Format A_es: "Total (I.V.A. Incluido): US$X"
+    # Format A_es
     m = re.search(r'Total \(I\.V\.A\. Incluido\):\s*(US\$[\d,]+\.\d{2})', text)
     if m:
         invoice.price_total = parse_amount(m.group(1))
         return
 
-    # Format A_en: "Grand Total: $X"
+    # Format A_en
     m = re.search(r'Grand Total:\s*\$?([\d,]+\.\d{2})', text)
     if m:
         val = parse_amount(m.group(1))
         if val > 0:
             invoice.price_total = val
             return
-        # Grand Total is $0 (rewards) — fall through to subtotal
         sub_m = re.search(r'Item\(?s\)? Subtotal:\s*\$?([\d,]+\.\d{2})', text)
         if sub_m:
             invoice.price_total = parse_amount(sub_m.group(1))
@@ -224,22 +336,13 @@ def parse_items_format_b(text: str, invoice: AmazonInvoice):
     """
     Format B (Final Details): Items use "N of: description ... $price" pattern.
     Multiple shipment blocks possible — same item in multiple shipments = consolidate.
-
-    Structure per item:
-      4 of: Alienware 16 Aurora Gaming Laptop...   $899.99
-      ...continuation lines...
-      Sold by: Amazon.com
-      Condition: New
     """
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
-    # Find "Items Ordered" section headers and "Payment information" as end boundary
     payment_idx = next((i for i, ln in enumerate(lines)
                         if re.match(r'Payment information', ln, re.IGNORECASE)), len(lines))
-
     items_section_lines = lines[:payment_idx]
 
-    # Find all item start lines: "N of: description ... $price"
     item_pattern = re.compile(r'^(\d+) of:\s+(.+?)\s+\$([\d,]+\.\d{2})$')
 
     raw_items = []
@@ -252,7 +355,6 @@ def parse_items_format_b(text: str, invoice: AmazonInvoice):
             desc_part = m.group(2).strip()
             unit_price = parse_amount(m.group(3))
 
-            # Collect continuation description lines (until Sold by / Condition / Shipping)
             j = i + 1
             while j < len(items_section_lines):
                 next_ln = items_section_lines[j]
@@ -261,18 +363,15 @@ def parse_items_format_b(text: str, invoice: AmazonInvoice):
                     r'Shipping Speed:|-----|Business Price|Delivered by)',
                     next_ln, re.IGNORECASE):
                     break
-                # Check if it's another item line
                 if item_pattern.match(next_ln):
                     break
                 desc_part += ' ' + next_ln.strip()
                 j += 1
 
             desc_part = re.sub(r'\s+', ' ', desc_part).strip()
-            # Strip any trailing noise that slipped through
             desc_part = re.sub(
                 r'\s*(Sold by.*|Business Price.*|Condition:.*|Delivered by.*)$',
                 '', desc_part, flags=re.IGNORECASE).strip()
-            # Strip leading "Delivered by Amazon" or similar prefixes
             desc_part = re.sub(
                 r'^(Delivered by \S+\s*)', '', desc_part, flags=re.IGNORECASE).strip()
             line_total = round(unit_price * quantity, 2)
@@ -288,7 +387,6 @@ def parse_items_format_b(text: str, invoice: AmazonInvoice):
         else:
             i += 1
 
-    # Consolidate same item across multiple shipment blocks
     seen = {}
     for item in raw_items:
         key = (item.item_description[:80], item.unit_price)
@@ -312,15 +410,14 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
       Sold by: Amazon.com  /  Vendido por: Amazon.com
       [Supplied by: Other / Proporcionado por: Otro]
       [Return or replace items: ...]
-      N              ← quantity (standalone digit, may render as N) or (N) in some PDFs)
+      N              ← quantity; may render as bare "4", "4)", or "(4)"
       $unit_price    ← or US$unit_price
 
-    The quantity digit appears BEFORE or AFTER "Sold by" depending on layout.
-
-    FIX 2026-05: Spanish invoices use "Entregado el DD de mes" (not "Llega el")
-    as the delivery section header, and "Tu paquete se dejó..." as the delivery
-    note. Both are now handled. Circled quantity badges that render as "(N)" or
-    "N)" are also normalised.
+    Changes (2026-05):
+      FIX 1 — Added "Entregado" to delivery header detection (Spanish past-tense).
+      FIX 2 — Added "Tu paquete" to delivery note skip list (Spanish delivery note).
+      FIX 3 — Quantity regex now handles "(N)" and "N)" badge renderings.
+      NEW   — A_es item descriptions are translated to English via translate_es_to_en().
     """
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
@@ -333,24 +430,19 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
         cleaned.append(ln)
     lines = cleaned
 
-    # Sold-by patterns in both languages
     sold_by_pat = re.compile(
         r'^(Sold by:|Vendido por:|Supplied by:|Proporcionado por:)', re.IGNORECASE)
     return_pat = re.compile(r'^(Return or replace|Devolver)', re.IGNORECASE)
 
-    # ── FIX 1: added "Entregado" (Spanish past-tense delivery header) ──────────
-    # Before this fix only "Llega el" (future/arriving) was handled, so Spanish
-    # invoices for already-delivered orders never advanced item_start and the
-    # entire page header bled into item descriptions.
+    # FIX 1: "Entregado" added — Spanish past-tense delivery header was missing,
+    # causing item_start to stay at 0 and header lines to bleed into descriptions.
     item_start = 0
     for i, ln in enumerate(lines):
         if re.match(r'(Delivered|Arriving|Llega el|Entregado|Your package)', ln, re.IGNORECASE):
             item_start = i + 1
             break
 
-    # ── FIX 2: added "Tu paquete" (Spanish delivery note skip) ────────────────
-    # "Tu paquete se dejó cerca de la puerta de entrada o pórtico." was not in
-    # the English-only skip list and would end up prepended to item descriptions.
+    # FIX 2: "Tu paquete" added — Spanish delivery note was not being skipped.
     while item_start < len(lines) and re.match(
             r'(Your package|We.ll hold|Left at|Package was|Tu paquete)',
             lines[item_start], re.IGNORECASE):
@@ -358,12 +450,9 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
 
     item_lines = lines[item_start:]
 
-    # Group into item blocks split by price lines
-    # Each block: description lines + sold_by + optional return + qty digit + price
     blocks = []
     current_block = []
     for ln in item_lines:
-        # Price line signals end of item block
         if re.match(r'^(US\$|\$)[\d,]+\.\d{2}$', ln):
             current_block.append(ln)
             blocks.append(current_block)
@@ -377,7 +466,6 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
         if not block:
             continue
 
-        # Extract price (last line of block)
         price_line = block[-1] if re.match(r'^(US\$|\$)', block[-1]) else None
         if not price_line:
             continue
@@ -385,13 +473,10 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
         if unit_price == 0.0:
             continue
 
-        # ── FIX 3: circled quantity badge normalisation ────────────────────────
-        # pdfplumber may render the circled ④ badge as bare "4", "4)", or "(4)"
-        # depending on the PDF renderer / font encoding. The old r'^\d+$' only
-        # matched the bare-digit form; the new pattern strips optional parens.
+        # FIX 3: quantity badge may render as bare "4", "4)", or "(4)".
         quantity = 1
         desc_lines = []
-        for ln in block[:-1]:  # exclude price line
+        for ln in block[:-1]:
             qty_m = re.match(r'^\(?(\d+)\)?$', ln)
             if qty_m and int(qty_m.group(1)) <= 99:
                 quantity = int(qty_m.group(1))
@@ -405,12 +490,16 @@ def parse_items_format_a(text: str, invoice: AmazonInvoice, lang: str):
 
         item_description = ' '.join(desc_lines).strip()
         item_description = re.sub(r'\s+', ' ', item_description)
-        # Strip trailing seller/condition noise and leading "Delivered by" prefixes
         item_description = re.sub(
             r'\s*(Sold by.*|Business Price.*|Condition:.*|Delivered by Amazon.*)$',
             '', item_description, flags=re.IGNORECASE).strip()
         item_description = re.sub(
             r'^(Delivered by \S+\s*)', '', item_description, flags=re.IGNORECASE).strip()
+
+        # Translate Spanish descriptions to English
+        if item_description and lang == 'A_es':
+            item_description = translate_es_to_en(item_description)
+
         line_total = round(unit_price * quantity, 2)
 
         if item_description:
