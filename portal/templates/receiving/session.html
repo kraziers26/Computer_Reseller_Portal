@@ -60,7 +60,7 @@
           {% set d = item.days_in_status|float|round|int if item.days_in_status else 0 %}
           {% if d > 0 %}
           · <span style="color:{{ '#f87171' if d >= 14 else '#fbbf24' if d >= 7 else 'var(--muted)' }}">
-              {{ d }}d in batched{% if d >= 14 %} ⚠{% endif %}
+              {{ d }}d in {{ item.fulfillment_status or 'batched' }}{% if d >= 14 %} ⚠{% endif %}
             </span>
           {% endif %}
         </div>
