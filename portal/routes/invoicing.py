@@ -272,7 +272,8 @@ def _save_invoice(existing_id=None):
             invoice_id = str(uuid.uuid4())
             inv_number = get_next_invoice_number(cur, code)
 
-        # Build line items — skip < $1, consolidate duplicates by description+price
+        # Build line items — one per order line, no cross-order consolidation.
+        # Each transaction's items are listed separately for individual PDF tracking.
         cur.execute("""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    ti.item_description, ti.sku_model_color,
@@ -281,44 +282,34 @@ def _save_invoice(existing_id=None):
             LEFT JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
             WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
               AND ti.unit_price >= %s
-            ORDER BY ti.item_description, ti.unit_price
+            ORDER BY t.retailer, t.order_number, ti.item_description
         """, (txn_ids, MIN_ITEM_PRICE))
         raw_items = cur.fetchall()
 
-        # Consolidate: same description + same unit_price → merge qty, keep first transaction_id
-        from collections import OrderedDict
-        merged = OrderedDict()
-        for item in raw_items:
-            desc  = (item['item_description'] or item['retailer'] or '').strip()
-            price = float(item['unit_price'] or 0)
-            key   = (desc.lower(), price)
-            if key in merged:
-                merged[key]['qty'] += int(item['quantity'] or 1)
-            else:
-                merged[key] = {
-                    'transaction_id': str(item['transaction_id']),
-                    'description':    desc,
-                    'sku':            item['sku_model_color'] or '',
-                    'qty':            int(item['quantity'] or 1),
-                    'unit_cost':      price,
-                }
-
         subtotal = 0.0
         line_items = []
-        for i, (key, item) in enumerate(merged.items()):
+        for i, item in enumerate(raw_items):
+            desc  = (item['item_description'] or item['retailer'] or '').strip()
+            sku   = item['sku_model_color'] or ''
+            price = float(item['unit_price'] or 0)
+            qty   = int(item['quantity'] or 1)
+            order_ref = item['order_number'] or ''
+
             item_markup = float(request.form.get(f'markup_{i}', markup_pct))
-            unit_cost   = item['unit_cost']
-            unit_price  = round(unit_cost * (1 + item_markup / 100), 2)
-            qty         = item['qty']
+            unit_price  = round(price * (1 + item_markup / 100), 2)
             line_total  = round(unit_price * qty, 2)
             subtotal   += line_total
+
+            # Prefix description with order number for per-order PDF tracking
+            display_desc = f"[{order_ref}] {desc}" if order_ref else desc
+
             line_items.append({
                 'item_id':        str(uuid.uuid4()),
-                'transaction_id': item['transaction_id'],
-                'description':    item['description'],
-                'sku':            item['sku'],
+                'transaction_id': str(item['transaction_id']),
+                'description':    display_desc,
+                'sku':            sku,
                 'qty':            qty,
-                'unit_cost':      unit_cost,
+                'unit_cost':      price,
                 'markup_pct':     item_markup,
                 'unit_price':     unit_price,
                 'line_total':     line_total,
