@@ -221,10 +221,24 @@ def mark_item(session_id):
 @require_role('admin')
 def close_session(session_id):
     with db_cursor() as (cur, conn):
-        # Move missing/partial items to new pending pool (remove from batch)
+        # Confirm received items on the transactions table (in case mark_item()
+        # was skipped or didn't commit — this is the authoritative close-time sync)
         cur.execute("""
             UPDATE transactions t
-            SET fulfillment_status='batched'
+            SET fulfillment_status='received',
+                fulfillment_status_updated_at=NOW()
+            FROM receiving_items ri
+            WHERE ri.transaction_id = t.transaction_id
+              AND ri.session_id = %s
+              AND ri.receive_status = 'received'
+              AND t.fulfillment_status NOT IN ('invoiced')
+        """, (session_id,))
+
+        # Move missing/partial/pending items back to batched pool
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status='batched',
+                fulfillment_status_updated_at=NOW()
             FROM receiving_items ri
             WHERE ri.transaction_id = t.transaction_id
               AND ri.session_id = %s
