@@ -63,7 +63,7 @@
           {% for o in orders %}
           {% set tid = o.transaction_id|string %}
           {% set items = order_items.get(tid, []) %}
-          {% if items %}
+          {% set no_items = items|length == 0 %}
           {% set is_preselected = tid in existing_txn_ids %}
           {% set item_search = items|map(attribute='item_description')|join(' ')|lower %}
           {% set sku_search = items|map(attribute='sku_model_color')|join(' ')|lower %}
@@ -101,15 +101,24 @@
                   </div>
                   {% endfor %}
                 </div>
+                {% else %}
+                <div style="margin-top:4px;padding:4px 8px;border-radius:4px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);display:inline-flex;align-items:center;gap:6px">
+                  <span style="font-size:10px;color:#f59e0b">⚠ No line items found — order total will be used as a single invoice line</span>
+                </div>
                 {% endif %}
               </div>
               <div style="text-align:right;flex-shrink:0">
                 <div style="font-family:var(--mono);font-size:13px;font-weight:500">${{ "{:,.2f}".format(o.price_total or 0) }}</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:2px">{{ items|length }} item{{ 's' if items|length != 1 }}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">
+                  {% if no_items %}
+                  <span style="color:#f59e0b">no items</span>
+                  {% else %}
+                  {{ items|length }} item{{ 's' if items|length != 1 }}
+                  {% endif %}
+                </div>
               </div>
             </div>
           </div>
-          {% endif %}
           {% endfor %}
         </div>
         <div id="noResults" style="display:none;text-align:center;padding:32px;color:var(--muted)">No orders match your search.</div>
