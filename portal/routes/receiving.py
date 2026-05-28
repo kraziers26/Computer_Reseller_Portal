@@ -360,3 +360,33 @@ def move_to_received():
         """, (item_ids,))
     flash(f'{len(item_ids)} order(s) moved to Received.', 'success')
     return redirect(url_for('receiving.pending_pool'))
+
+
+# ── One-time sync: fix transactions stuck in 'batched' after closed sessions ──
+
+@receiving_bp.route('/sync-received', methods=['POST'])
+@login_required
+@require_role('admin')
+def sync_received():
+    """
+    Retroactively fix any transactions whose receiving_item is marked 'received'
+    in a closed session but whose fulfillment_status was never updated from 'batched'.
+    Safe to run multiple times - only touches batched transactions.
+    """
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions t
+            SET fulfillment_status = 'received',
+                fulfillment_status_updated_at = NOW()
+            FROM receiving_items ri
+            JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+            WHERE ri.transaction_id = t.transaction_id
+              AND ri.receive_status  = 'received'
+              AND rs.status          = 'closed'
+              AND t.fulfillment_status = 'batched'
+              AND t.is_active = TRUE
+        """)
+        fixed = cur.rowcount
+
+    flash(f'Sync complete - {fixed} transaction(s) updated to Received.', 'success')
+    return redirect(url_for('receiving.index'))
