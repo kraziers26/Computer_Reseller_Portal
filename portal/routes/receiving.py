@@ -117,10 +117,18 @@ def start_session():
             "INSERT INTO receiving_sessions (session_id, batch_id, created_by) VALUES (%s,%s,%s)",
             (session_id, batch_id, current_user.id))
 
-        # Pull all batched transactions for this batch and create receiving_items
+        # Pull ALL transactions for this batch that haven't been properly invoiced.
+        # We intentionally ignore fulfillment_status here so no order can slip
+        # through (e.g. one that drifted to 'received' before the session started).
+        # Only exclude orders that already have invoice_items (truly invoiced).
         cur.execute("""
-            SELECT transaction_id FROM transactions
-            WHERE print_batch_id=%s AND is_active=TRUE AND fulfillment_status='batched'
+            SELECT t.transaction_id FROM transactions t
+            WHERE t.print_batch_id = %s
+              AND t.is_active = TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM invoice_items ii
+                WHERE ii.transaction_id = t.transaction_id
+              )
         """, (batch_id,))
         txns = cur.fetchall()
         for txn in txns:
@@ -196,10 +204,30 @@ def session(session_id):
         partial = sum(1 for i in items if i['receive_status'] == 'partial')
         pending = sum(1 for i in items if i['receive_status'] == 'pending')
 
+        # Find orders in the same print batch that were never added to this session
+        # (e.g. they were in a different status when the session was started)
+        session_txn_ids = [str(i['transaction_id']) for i in items]
+        missing_from_session = []
+        if sess['batch_id']:
+            cur.execute("""
+                SELECT t.transaction_id, t.order_number, t.retailer,
+                       t.price_total, t.fulfillment_status,
+                       u.username AS person_name, c.company_name
+                FROM transactions t
+                LEFT JOIN dim_users u ON t.user_id = u.user_id
+                LEFT JOIN dim_companies c ON t.company_id = c.company_id
+                WHERE t.print_batch_id = %s
+                  AND t.is_active = TRUE
+                  AND t.transaction_id != ALL(%s::uuid[])
+                ORDER BY t.order_number
+            """, (sess['batch_id'], session_txn_ids if session_txn_ids else ['00000000-0000-0000-0000-000000000000']))
+            missing_from_session = cur.fetchall()
+
     return render_template('receiving/session.html',
                            sess=sess, items=items, line_map=line_map,
                            total=total, rcvd=rcvd, missing=missing,
                            partial=partial, pending=pending,
+                           missing_from_session=missing_from_session,
                            session_id=session_id)
 
 
