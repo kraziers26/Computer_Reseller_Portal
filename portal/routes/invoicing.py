@@ -280,11 +280,32 @@ def _save_invoice(existing_id=None):
                 """, (list(released),))
             # Delete old items
             cur.execute("DELETE FROM invoice_items WHERE invoice_id=%s", (existing_id,))
-            invoice_id  = existing_id
-            inv_number  = request.form.get('invoice_number')
+            invoice_id = existing_id
+            custom_num = request.form.get('invoice_number', '').strip()
+            # Allow changing the number; validate uniqueness if changed
+            cur.execute("SELECT invoice_number FROM invoices WHERE invoice_id=%s", (existing_id,))
+            current_num = cur.fetchone()['invoice_number']
+            if custom_num and custom_num != current_num:
+                cur.execute("SELECT 1 FROM invoices WHERE invoice_number=%s AND invoice_id!=%s",
+                            (custom_num, existing_id))
+                if cur.fetchone():
+                    flash(f'Invoice number {custom_num} is already in use.', 'error')
+                    return redirect(url_for('invoicing.edit_invoice', invoice_id=existing_id))
+                inv_number = custom_num
+            else:
+                inv_number = current_num
         else:
             invoice_id = str(uuid.uuid4())
-            inv_number = get_next_invoice_number(cur, code)
+            custom_num = request.form.get('invoice_number', '').strip()
+            if custom_num:
+                # Validate uniqueness of custom number
+                cur.execute("SELECT 1 FROM invoices WHERE invoice_number=%s", (custom_num,))
+                if cur.fetchone():
+                    flash(f'Invoice number {custom_num} is already in use.', 'error')
+                    return redirect(url_for('invoicing.new_invoice'))
+                inv_number = custom_num
+            else:
+                inv_number = get_next_invoice_number(cur, code)
 
         # Build line items — one per order line, no cross-order consolidation.
         # Each transaction's items are listed separately for individual PDF tracking.
@@ -548,9 +569,13 @@ def view_invoice(invoice_id):
                     (str(invoice_id),))
         items = cur.fetchall()
 
+        cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
+        customers = cur.fetchall()
+
     code = (inv['company_short_code'] or 'SE').upper()
     co   = COMPANY_DATA.get(code, COMPANY_DATA['SE'])
-    return render_template('invoicing/view.html', inv=inv, items=items, co=co)
+    return render_template('invoicing/view.html', inv=inv, items=items, co=co,
+                           customers=customers)
 
 
 # ── Update Status ─────────────────────────────────────────────────────────────
@@ -588,6 +613,133 @@ def update_item_description(invoice_id):
             "UPDATE invoice_items SET item_description=%s WHERE item_id=%s AND invoice_id=%s",
             (new_desc, item_id, sid))
     return jsonify({'ok': True, 'description': new_desc})
+
+
+# ── Update invoice header fields (draft only) ─────────────────────────────────
+
+@invoicing_bp.route('/<uuid:invoice_id>/update-header', methods=['POST'])
+@login_required
+@require_role('admin')
+def update_header(invoice_id):
+    sid  = str(invoice_id)
+    data = request.get_json()
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT status, invoice_number FROM invoices WHERE invoice_id=%s", (sid,))
+        inv = cur.fetchone()
+        if not inv or inv['status'] != 'draft':
+            return jsonify({'error': 'Not editable'}), 400
+
+        allowed = ('invoice_number', 'invoice_date', 'customer_id',
+                   'other_label', 'other_amount')
+        updates, params = [], []
+
+        for field in allowed:
+            if field not in data:
+                continue
+            val = data[field]
+
+            if field == 'invoice_number':
+                val = (val or '').strip()
+                if not val:
+                    return jsonify({'error': 'Invoice number cannot be blank'}), 400
+                if val != inv['invoice_number']:
+                    cur.execute(
+                        "SELECT 1 FROM invoices WHERE invoice_number=%s AND invoice_id!=%s",
+                        (val, sid))
+                    if cur.fetchone():
+                        return jsonify({'error': f'{val} is already in use'}), 400
+
+            if field == 'other_amount':
+                try:
+                    val = round(float(val or 0), 2)
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'Invalid amount'}), 400
+
+            if field == 'customer_id' and not val:
+                val = None
+
+            updates.append(f"{field}=%s")
+            params.append(val)
+
+        if not updates:
+            return jsonify({'error': 'Nothing to update'}), 400
+
+        # Recalculate total if other_amount changed
+        if 'other_amount' in data:
+            cur.execute("SELECT subtotal FROM invoices WHERE invoice_id=%s", (sid,))
+            subtotal = float(cur.fetchone()['subtotal'] or 0)
+            new_total = round(subtotal + float(data['other_amount'] or 0), 2)
+            updates.append("total=%s")
+            params.append(new_total)
+
+        params.append(sid)
+        cur.execute(f"UPDATE invoices SET {', '.join(updates)} WHERE invoice_id=%s", params)
+
+        # Return fresh values for the UI to update
+        cur.execute("""
+            SELECT i.invoice_number, i.invoice_date, i.other_label,
+                   i.other_amount, i.subtotal, i.total,
+                   cu.customer_name
+            FROM invoices i
+            LEFT JOIN dim_customers cu ON i.customer_id = cu.customer_id
+            WHERE i.invoice_id=%s
+        """, (sid,))
+        row = cur.fetchone()
+
+    return jsonify({
+        'ok':             True,
+        'invoice_number': row['invoice_number'],
+        'invoice_date':   str(row['invoice_date']),
+        'customer_name':  row['customer_name'] or '—',
+        'other_label':    row['other_label'] or 'OTHER',
+        'other_amount':   float(row['other_amount'] or 0),
+        'subtotal':       float(row['subtotal'] or 0),
+        'total':          float(row['total'] or 0),
+    })
+
+
+# ── Update line item price / qty (draft only) ──────────────────────────────────
+
+@invoicing_bp.route('/<uuid:invoice_id>/update-line', methods=['POST'])
+@login_required
+@require_role('admin')
+def update_line(invoice_id):
+    sid  = str(invoice_id)
+    data = request.get_json()
+    item_id = data.get('item_id')
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT status FROM invoices WHERE invoice_id=%s", (sid,))
+        inv = cur.fetchone()
+        if not inv or inv['status'] != 'draft':
+            return jsonify({'error': 'Not editable'}), 400
+
+        try:
+            unit_price = round(float(data.get('unit_price', 0)), 2)
+            quantity   = max(1, int(data.get('quantity', 1)))
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid value'}), 400
+
+        line_total = round(unit_price * quantity, 2)
+        cur.execute(
+            "UPDATE invoice_items SET unit_price=%s, quantity=%s, line_total=%s "
+            "WHERE item_id=%s AND invoice_id=%s",
+            (unit_price, quantity, line_total, item_id, sid))
+
+        # Recalculate invoice subtotal + total
+        cur.execute("SELECT COALESCE(SUM(line_total),0) AS s FROM invoice_items WHERE invoice_id=%s", (sid,))
+        subtotal = round(float(cur.fetchone()['s']), 2)
+        cur.execute("SELECT other_amount FROM invoices WHERE invoice_id=%s", (sid,))
+        other = float(cur.fetchone()['other_amount'] or 0)
+        total = round(subtotal + other, 2)
+        cur.execute("UPDATE invoices SET subtotal=%s, total=%s WHERE invoice_id=%s",
+                    (subtotal, total, sid))
+
+    return jsonify({
+        'ok':         True,
+        'line_total': f"{line_total:,.2f}",
+        'subtotal':   f"{subtotal:,.2f}",
+        'total':      f"{total:,.2f}",
+    })
 
 
 # ── Export Excel ──────────────────────────────────────────────────────────────
