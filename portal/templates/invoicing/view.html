@@ -11,6 +11,9 @@
     <a href="{{ url_for('invoicing.export_excel', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">⬇ Excel</a>
     <a href="{{ url_for('invoicing.export_pdf',   invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">⬇ PDF</a>
     {% if inv.status == 'draft' %}
+    <a href="{{ url_for('invoicing.edit_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">✏ Edit Orders</a>
+    {% endif %}
+    {% if inv.status == 'draft' %}
     <form method="POST" action="{{ url_for('invoicing.update_status', invoice_id=inv.invoice_id) }}" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="status" value="sent">
@@ -38,8 +41,27 @@
       <div style="font-size:12px;color:var(--muted);margin-top:5px;line-height:1.8">{{ co.addr.replace('\n','<br>')|safe }}</div>
     </div>
     <div style="text-align:right">
+      {% if inv.status == 'draft' %}
+      <div style="font-size:20px;font-weight:600;color:var(--text);letter-spacing:-.3px">INVOICE #<span
+           class="hdr-editable" data-field="invoice_number" data-value="{{ inv.invoice_number }}"
+           contenteditable="true" spellcheck="false"
+           style="outline:none;cursor:text;border-radius:3px;padding:1px 4px;margin:-1px -4px;transition:background .15s"
+           onmouseenter="this.style.background='var(--surface2)'"
+           onmouseleave="if(document.activeElement!==this)this.style.background=''"
+           onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+           onblur="saveHeader(this)"
+           onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+           >{{ inv.invoice_number }}</span></div>
+      <div style="font-size:13px;color:var(--muted);margin-top:4px">
+        <input type="date" class="hdr-input" data-field="invoice_date"
+               value="{{ inv.invoice_date }}"
+               style="background:transparent;border:none;color:var(--muted);font-size:13px;font-family:inherit;cursor:pointer;padding:0;width:130px"
+               onchange="saveHeaderInput(this)">
+      </div>
+      {% else %}
       <div style="font-size:20px;font-weight:600;color:var(--text);letter-spacing:-.3px">INVOICE #{{ inv.invoice_number }}</div>
       <div style="font-size:13px;color:var(--muted);margin-top:4px">{{ inv.invoice_date }}</div>
+      {% endif %}
       <div style="margin-top:8px">
         {% if inv.status=='draft' %}<span style="background:rgba(251,191,36,.15);color:#fbbf24;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Draft</span>
         {% elif inv.status=='sent' %}<span style="background:rgba(139,92,246,.12);color:#8b5cf6;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Sent</span>
@@ -54,7 +76,17 @@
   <!-- To -->
   <div style="padding:16px 36px">
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">To</div>
+    {% if inv.status == 'draft' %}
+    <select id="customerInlineSelect" data-field="customer_id"
+            style="background:transparent;border:none;color:var(--text);font-size:15px;font-weight:500;font-family:inherit;cursor:pointer;padding:0;max-width:300px"
+            onchange="saveHeaderSelect(this)">
+      {% for c in customers %}
+      <option value="{{ c.customer_id }}" {{ 'selected' if inv.customer_id|string == c.customer_id|string }}>{{ c.customer_name }}</option>
+      {% endfor %}
+    </select>
+    {% else %}
     <div style="font-size:15px;font-weight:500;color:var(--text)">{{ inv.customer_name or '—' }}</div>
+    {% endif %}
   </div>
 
   <!-- Line items -->
@@ -88,9 +120,31 @@
           {% endif %}
           {% if item.sku %}<div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">{{ item.sku }}</div>{% endif %}
         </td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.unit_price or 0) }}</td>
-        <td style="padding:10px 10px;text-align:right">{{ item.quantity }}</td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(item.line_total or 0) }}</td>
+        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">
+          {% if inv.status == 'draft' %}
+          $<span class="line-editable" data-field="unit_price" data-item-id="{{ item.item_id }}"
+                contenteditable="true" spellcheck="false"
+                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
+                onmouseenter="this.style.background='var(--surface2)'"
+                onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                onblur="saveLine(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+                >{{ "{:,.2f}".format(item.unit_price or 0) }}</span>
+          {% else %}${{ "{:,.2f}".format(item.unit_price or 0) }}{% endif %}
+        </td>
+        <td style="padding:10px 10px;text-align:right">
+          {% if inv.status == 'draft' %}
+          <span class="line-editable" data-field="quantity" data-item-id="{{ item.item_id }}"
+                contenteditable="true" spellcheck="false"
+                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:20px;text-align:right"
+                onmouseenter="this.style.background='var(--surface2)'"
+                onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                onblur="saveLine(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+                >{{ item.quantity }}</span>
+          {% else %}{{ item.quantity }}{% endif %}
+        </td>
+        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)" id="lt-{{ item.item_id }}">${{ "{:,.2f}".format(item.line_total or 0) }}</td>
         {% if inv.status == 'draft' %}
         <td style="padding:10px 6px;text-align:center;width:32px">
           <button onclick="removeItem('{{ item.item_id }}','{{ "{:,.2f}".format(item.line_total or 0) }}')"
@@ -108,12 +162,37 @@
   <!-- Totals -->
   <div style="display:flex;justify-content:flex-end;padding:4px 36px 16px">
     <table style="width:240px;font-size:13px;border-collapse:collapse">
-      <tr><td style="padding:5px 8px;color:var(--muted)">SUBTOTAL</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(inv.subtotal or 0) }}</td></tr>
+      <tr><td style="padding:5px 8px;color:var(--muted)">SUBTOTAL</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)" id="inv-subtotal">${{ "{:,.2f}".format(inv.subtotal or 0) }}</td></tr>
       <tr><td style="padding:5px 8px;color:var(--muted)">TAX RATE</td><td style="padding:5px 8px;text-align:right">0.00%</td></tr>
-      <tr><td style="padding:5px 8px;color:var(--muted)">{{ inv.other_label or 'OTHER' }}</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(inv.other_amount or 0) }}</td></tr>
+      <tr>
+        <td style="padding:5px 8px;color:var(--muted)">
+          {% if inv.status == 'draft' %}
+          <span class="hdr-editable" data-field="other_label"
+                contenteditable="true" spellcheck="false"
+                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s"
+                onmouseenter="this.style.background='var(--surface2)'"
+                onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                onblur="saveHeader(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+                >{{ inv.other_label or 'OTHER' }}</span>
+          {% else %}{{ inv.other_label or 'OTHER' }}{% endif %}
+        </td>
+        <td style="padding:5px 8px;text-align:right;font-family:var(--mono)" id="other-amount-cell">
+          {% if inv.status == 'draft' %}
+          $<span class="hdr-editable" data-field="other_amount"
+                contenteditable="true" spellcheck="false"
+                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
+                onmouseenter="this.style.background='var(--surface2)'"
+                onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                onblur="saveHeader(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+                >{{ "{:,.2f}".format(inv.other_amount or 0) }}</span>
+          {% else %}${{ "{:,.2f}".format(inv.other_amount or 0) }}{% endif %}
+        </td>
+      </tr>
       <tr style="border-top:0.5px solid var(--border)">
         <td style="padding:10px 8px 6px;font-weight:600;color:var(--text)">TOTAL</td>
-        <td style="padding:10px 8px 6px;text-align:right;font-family:var(--mono);font-weight:600;font-size:15px">${{ "{:,.2f}".format(inv.total or 0) }}</td>
+        <td style="padding:10px 8px 6px;text-align:right;font-family:var(--mono);font-weight:600;font-size:15px" id="inv-total">${{ "{:,.2f}".format(inv.total or 0) }}</td>
       </tr>
     </table>
   </div>
@@ -212,4 +291,86 @@ function showFlash(msg, isError=false){
   <div style="font-size:13px;color:var(--text)">{{ inv.notes }}</div>
 </div>
 {% endif %}
+
+<script>
+const INV_ID   = "{{ inv.invoice_id }}";
+const CSRF     = "{{ csrf_token() }}";
+const HDR_URL  = `/invoicing/${INV_ID}/update-header`;
+const LINE_URL = `/invoicing/${INV_ID}/update-line`;
+
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken': CSRF},
+    body: JSON.stringify(body)
+  });
+  return r.json();
+}
+
+// ── Header fields (invoice number, date, other label, other amount) ──────────
+async function saveHeader(el) {
+  const field = el.dataset.field;
+  let val = el.innerText.trim();
+  if (field === 'other_amount') val = parseFloat(val.replace(/,/g,'')) || 0;
+
+  const res = await post(HDR_URL, {[field]: val});
+  if (res.error) {
+    alert(res.error);
+    el.innerText = el.dataset.value || el.innerText;
+    return;
+  }
+  el.dataset.value = val;
+  // Update visible totals
+  if (res.total !== undefined) {
+    document.getElementById('inv-subtotal').innerText = '$' + res.subtotal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+    document.getElementById('inv-total').innerText    = '$' + res.total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+  }
+  if (res.invoice_number) {
+    document.querySelectorAll('.inv-number-display').forEach(e => e.innerText = res.invoice_number);
+  }
+  el.style.background = 'rgba(16,185,129,.12)';
+  setTimeout(() => el.style.background = '', 800);
+}
+
+// ── Date input (uses onchange not onblur) ────────────────────────────────────
+async function saveHeaderInput(el) {
+  const field = el.dataset.field;
+  const res   = await post(HDR_URL, {[field]: el.value});
+  if (res.error) { alert(res.error); return; }
+}
+
+// ── Customer dropdown ────────────────────────────────────────────────────────
+async function saveHeaderSelect(el) {
+  const field = el.dataset.field;
+  const res   = await post(HDR_URL, {[field]: el.value || null});
+  if (res.error) { alert(res.error); return; }
+  document.getElementById('customer-display').innerText = res.customer_name || '—';
+  el.style.color = '#10b981';
+  setTimeout(() => el.style.color = '', 800);
+}
+
+// ── Line item price / qty ────────────────────────────────────────────────────
+async function saveLine(el) {
+  const field  = el.dataset.field;
+  const itemId = el.dataset.itemId;
+  // Find sibling field in same row
+  const row    = el.closest('tr');
+  const priceEl = row.querySelector('[data-field="unit_price"]');
+  const qtyEl   = row.querySelector('[data-field="quantity"]');
+
+  const unit_price = parseFloat((priceEl.innerText || '0').replace(/,/g,'')) || 0;
+  const quantity   = parseInt(qtyEl.innerText)  || 1;
+
+  const res = await post(LINE_URL, {item_id: itemId, unit_price, quantity});
+  if (res.error) { alert(res.error); return; }
+
+  document.getElementById('lt-' + itemId).innerText = '$' + res.line_total;
+  document.getElementById('inv-subtotal').innerText  = '$' + res.subtotal;
+  document.getElementById('inv-total').innerText     = '$' + res.total;
+
+  el.style.background = 'rgba(16,185,129,.12)';
+  setTimeout(() => el.style.background = '', 800);
+}
+</script>
+
 {% endblock %}
