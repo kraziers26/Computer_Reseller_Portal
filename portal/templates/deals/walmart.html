@@ -1,0 +1,363 @@
+{% extends 'base.html' %}
+{% block title %}Walmart Deals — ComputerReseller Portal{% endblock %}
+
+{% block content %}
+<style>
+/* Reuse all .db-* classes from base Deal Blaster — no new CSS needed */
+/* Walmart yellow accent for score badges and highlights */
+.wm-accent { color: #fbbf24; }
+.wm-badge  { background: rgba(251,191,36,.15); color: #fbbf24; }
+</style>
+
+<div class="page-header">
+  <div class="page-header-row">
+    <div>
+      <h1>🛒 Walmart Deal Blaster</h1>
+      <p>Scan Walmart for scored deals, select what you like, and copy a WhatsApp message.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Retailer tabs -->
+<div class="db-retailer-tabs">
+  <a href="{{ url_for('deals.deals_page') }}" class="db-rtab">Best Buy</a>
+  <button class="db-rtab on">Walmart</button>
+  <button class="db-rtab dim">Costco</button>
+  <button class="db-rtab dim">Amazon</button>
+</div>
+
+<!-- Scan bar -->
+<div class="db-scanbar">
+  <div class="db-scanbar-info">
+    Last pulled: <b id="wm-last-pull">—</b> &nbsp;·&nbsp; <b id="wm-deal-count">—</b> active deals
+  </div>
+  <button class="btn btn-primary btn-sm" id="wm-run-btn" onclick="runScan()">
+    ▶ Run Now
+  </button>
+</div>
+
+<!-- Filters -->
+<div class="db-filters">
+  <div class="db-frow">
+    <span class="db-flabel">Category</span>
+    <button class="db-pill on"  data-cat=""                onclick="toggleCat(this)">All</button>
+    <button class="db-pill"     data-cat="gaming_laptops"  onclick="toggleCat(this)">Gaming Laptops</button>
+    <button class="db-pill"     data-cat="gaming_desktops" onclick="toggleCat(this)">Gaming Desktops</button>
+    <button class="db-pill"     data-cat="macbooks"        onclick="toggleCat(this)">MacBooks</button>
+    <button class="db-pill"     data-cat="laptops"         onclick="toggleCat(this)">Windows Laptops</button>
+    <button class="db-pill"     data-cat="aio"             onclick="toggleCat(this)">All-in-One</button>
+  </div>
+  <div class="db-frow">
+    <span class="db-flabel">Price</span>
+    <div class="db-price-inputs">
+      $<input type="number" id="wm-min-price" placeholder="0"    min="0"   style="width:70px">
+      – $<input type="number" id="wm-max-price" placeholder="5000" min="0" style="width:70px">
+    </div>
+    <span class="db-flabel" style="margin-left:12px">Min off</span>
+    <div class="db-price-inputs">
+      <input type="number" id="wm-min-discount" placeholder="5" min="0" max="90" style="width:55px">%
+    </div>
+    <div class="db-score-row" style="margin-left:auto">
+      <span>Min score</span>
+      <input type="range" id="wm-min-score" min="0" max="13" value="0" oninput="document.getElementById('wm-score-val').textContent=this.value">
+      <span class="db-score-val" id="wm-score-val">0</span>
+    </div>
+  </div>
+</div>
+
+<!-- Main layout -->
+<div class="db-main">
+  <!-- Deal cards -->
+  <div class="db-panel">
+    <div class="db-meta">
+      <span class="db-count"><b id="wm-visible-count">0</b> deals shown</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="selectAll()">Select All</button>
+        <button class="btn btn-ghost btn-sm" onclick="clearSel()">Clear</button>
+        <button class="btn btn-ghost btn-sm" onclick="applyFilters()">🔄 Filter</button>
+      </div>
+    </div>
+    <div class="db-grid" id="wm-grid">
+      <div class="db-loading" id="wm-loading" style="display:none">Scanning Walmart…</div>
+      <div class="db-empty" id="wm-empty">Run a scan to load deals.</div>
+    </div>
+  </div>
+
+  <!-- WhatsApp composer -->
+  <div class="db-composer">
+    <div class="card">
+      <div class="db-comp-header">
+        <span class="db-comp-title">📱 WhatsApp</span>
+        <span class="db-comp-sel"><b id="wm-sel-count">0</b> selected</span>
+      </div>
+      <div style="margin-top:8px">
+        <div class="db-comp-hint" style="margin-bottom:6px;font-size:11px;color:var(--hint)">
+          Select deals → compose message below
+        </div>
+        <textarea class="db-comp-textarea" id="wm-composer" placeholder="Select deals from the grid to compose a WhatsApp message…" rows="14"></textarea>
+        <div class="db-comp-footer">
+          <span class="db-char-count" id="wm-char-count">0 chars</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="clearComposer()">Clear</button>
+            <button class="btn btn-primary btn-sm" onclick="copyComposer()">📋 Copy</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let allDeals    = [];
+let selectedIds = new Set();
+let activeCat   = '';
+
+const CSRF = () => document.querySelector('meta[name="csrf-token"]').content;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async function init() {
+  await loadStatus();
+  await loadDeals();
+})();
+
+// ── Status bar ────────────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/walmart/deals/status');
+    const d = await r.json();
+    if (!d.ok) return;
+    document.getElementById('wm-deal-count').textContent = d.deal_count ?? '0';
+    if (d.last_run?.run_at) {
+      const dt = new Date(d.last_run.run_at);
+      document.getElementById('wm-last-pull').textContent =
+        dt.toLocaleString('en-US', { month:'short', day:'numeric',
+          hour:'numeric', minute:'2-digit', hour12:true });
+    }
+  } catch(e) { console.warn('status error', e); }
+}
+
+// ── Load deals from DB ────────────────────────────────────────────────────────
+async function loadDeals() {
+  try {
+    const params = buildParams();
+    const r = await fetch('/api/walmart/deals?' + new URLSearchParams(params));
+    const d = await r.json();
+    if (!d.ok) return;
+    allDeals = d.deals;
+    renderGrid(allDeals);
+  } catch(e) { console.warn('load deals error', e); }
+}
+
+function buildParams() {
+  const p = {};
+  if (activeCat)    p.categories   = activeCat;
+  const minP = document.getElementById('wm-min-price').value;
+  const maxP = document.getElementById('wm-max-price').value;
+  const minD = document.getElementById('wm-min-discount').value;
+  const minS = document.getElementById('wm-min-score').value;
+  if (minP) p.min_price    = minP;
+  if (maxP) p.max_price    = maxP;
+  if (minD) p.min_discount = minD;
+  if (minS && minS !== '0') p.min_score = minS;
+  return p;
+}
+
+function applyFilters() { loadDeals(); }
+
+// ── Category filter pills ─────────────────────────────────────────────────────
+function toggleCat(btn) {
+  document.querySelectorAll('[data-cat]').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  activeCat = btn.dataset.cat;
+  loadDeals();
+}
+
+// ── Run scan ──────────────────────────────────────────────────────────────────
+async function runScan() {
+  const btn = document.getElementById('wm-run-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning…';
+
+  const loading = document.getElementById('wm-loading');
+  const empty   = document.getElementById('wm-empty');
+  loading.style.display = 'block';
+  empty.style.display   = 'none';
+
+  try {
+    const payload = {};
+    if (activeCat) payload.categories = [activeCat];
+    const minD = document.getElementById('wm-min-discount').value;
+    if (minD) payload.min_discount = parseFloat(minD);
+
+    const r = await fetch('/api/walmart/deals/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF() },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+
+    if (d.ok) {
+      await loadStatus();
+      await loadDeals();
+    } else {
+      alert('Scan failed: ' + (d.error || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Scan error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Run Now';
+    loading.style.display = 'none';
+  }
+}
+
+// ── Render grid ───────────────────────────────────────────────────────────────
+function renderGrid(deals) {
+  const grid = document.getElementById('wm-grid');
+  const empty = document.getElementById('wm-empty');
+
+  // Clear existing cards (keep loading + empty divs)
+  Array.from(grid.children).forEach(c => {
+    if (!c.id) c.remove();
+  });
+
+  document.getElementById('wm-visible-count').textContent = deals.length;
+
+  if (!deals.length) {
+    empty.textContent = 'No deals match your filters.';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  deals.forEach(deal => {
+    const card = document.createElement('div');
+    card.className = 'db-card' + (selectedIds.has(deal.id) ? ' sel' : '');
+    card.dataset.id = deal.id;
+
+    const scoreClass = deal.score >= 9 ? 'db-score-hi' : 'db-score-md';
+    const offPct     = deal.discount_pct ? deal.discount_pct.toFixed(0) : '0';
+    const catLabel   = {
+      gaming_laptops:  'Gaming Laptop',
+      gaming_desktops: 'Gaming Desktop',
+      macbooks:        'MacBook',
+      laptops:         'Windows Laptop',
+      aio:             'All-in-One',
+    }[deal.category] || deal.category;
+
+    card.innerHTML = `
+      <input type="checkbox" class="db-card-ck" ${selectedIds.has(deal.id) ? 'checked' : ''}>
+      <div class="db-brand">${escHtml(deal.brand || catLabel)}</div>
+      <div class="db-name">${escHtml(deal.name)}</div>
+      <div class="db-spec">${catLabel}${deal.in_stock ? '' : ' · <span style="color:var(--danger)">Out of stock</span>'}</div>
+      <div class="db-prices">
+        <span class="db-price">$${deal.sale_price.toFixed(2)}</span>
+        ${deal.reg_price > deal.sale_price
+          ? `<span class="db-orig">$${deal.reg_price.toFixed(2)}</span>`
+          : ''}
+      </div>
+      <div class="db-foot">
+        <span class="db-off">-${offPct}% off</span>
+        <span class="db-score-badge ${scoreClass}">⚡ ${deal.score}</span>
+      </div>
+      <div class="db-link">
+        <a href="${escHtml(deal.url)}" target="_blank" rel="noopener">
+          🔗 View on Walmart ↗
+        </a>
+      </div>
+    `;
+
+    card.addEventListener('click', e => {
+      if (e.target.type === 'checkbox') return;
+      toggleCard(card, deal);
+    });
+    card.querySelector('.db-card-ck').addEventListener('change', () => {
+      toggleCard(card, deal);
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+function toggleCard(card, deal) {
+  if (selectedIds.has(deal.id)) {
+    selectedIds.delete(deal.id);
+    card.classList.remove('sel');
+    card.querySelector('.db-card-ck').checked = false;
+  } else {
+    selectedIds.add(deal.id);
+    card.classList.add('sel');
+    card.querySelector('.db-card-ck').checked = true;
+  }
+  updateComposer();
+}
+
+function selectAll() {
+  allDeals.forEach(d => selectedIds.add(d.id));
+  document.querySelectorAll('.db-card').forEach(c => {
+    c.classList.add('sel');
+    c.querySelector('.db-card-ck').checked = true;
+  });
+  updateComposer();
+}
+
+function clearSel() {
+  selectedIds.clear();
+  document.querySelectorAll('.db-card').forEach(c => {
+    c.classList.remove('sel');
+    c.querySelector('.db-card-ck').checked = false;
+  });
+  updateComposer();
+}
+
+// ── WhatsApp composer ─────────────────────────────────────────────────────────
+function updateComposer() {
+  const sel = allDeals.filter(d => selectedIds.has(d.id));
+  document.getElementById('wm-sel-count').textContent = sel.length;
+
+  if (!sel.length) {
+    document.getElementById('wm-composer').value = '';
+    document.getElementById('wm-char-count').textContent = '0 chars';
+    return;
+  }
+
+  const lines = ['🛒 *Walmart Deals*\n'];
+  sel.forEach(d => {
+    const offPct = d.discount_pct ? d.discount_pct.toFixed(0) : '0';
+    lines.push(
+      `*${d.name}*\n` +
+      `💰 $${d.sale_price.toFixed(2)}` +
+      (d.reg_price > d.sale_price ? ` ~~$${d.reg_price.toFixed(2)}~~` : '') +
+      ` (-${offPct}%)\n`
+    );
+  });
+
+  const msg = lines.join('\n');
+  document.getElementById('wm-composer').value = msg;
+  document.getElementById('wm-char-count').textContent = msg.length + ' chars';
+}
+
+function clearComposer() {
+  clearSel();
+}
+
+function copyComposer() {
+  const txt = document.getElementById('wm-composer').value;
+  if (!txt) return;
+  navigator.clipboard.writeText(txt).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => btn.textContent = orig, 1800);
+  });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}
