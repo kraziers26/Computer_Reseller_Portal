@@ -76,7 +76,8 @@
 .db-comp-textarea:focus{border-color:var(--accent)}
 .db-comp-footer{display:flex;align-items:center;justify-content:space-between;margin-top:2px}
 .db-char-count{font-size:11px;color:var(--hint)}
-/* ── Natural language search bar ── */
+
+/* Natural language search bar */
 .db-search-wrap{margin-bottom:14px}
 .db-search-bar{display:flex;gap:8px;align-items:center}
 .db-search-input{flex:1;padding:9px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-family:var(--font);font-size:13px;outline:none;transition:border-color .15s}
@@ -85,7 +86,8 @@
 .db-search-feedback{margin-top:7px;font-size:12px;color:var(--muted);display:none;padding:7px 10px;background:var(--surface2);border-radius:var(--r-sm);border-left:3px solid var(--accent)}
 .db-search-feedback.visible{display:block}
 .db-search-feedback .db-sf-label{color:var(--accent2);font-weight:500}
-/* ── Modal ── */
+
+/* Modal */
 .db-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:none;align-items:center;justify-content:center}
 .db-modal-overlay.open{display:flex}
 .db-modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
@@ -104,32 +106,38 @@
 .db-cat-pill{padding:3px 9px;border-radius:20px;border:1px solid var(--border);font-size:11px;color:var(--muted);cursor:pointer;background:transparent;font-family:var(--font)}
 .db-cat-pill.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+
+/* Retailer tabs */
 .db-retailer-tabs{display:flex;gap:5px;margin-bottom:14px;flex-wrap:wrap}
 .db-rtab{padding:4px 12px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;background:transparent;color:var(--muted);font-family:var(--font);transition:all .12s;text-decoration:none;display:inline-flex;align-items:center}
 .db-rtab.on{background:var(--surface2);color:var(--text);border-color:var(--border2);font-weight:500}
 .db-rtab.dim{opacity:.3;cursor:not-allowed;pointer-events:none}
 .db-rtab:not(.on):not(.dim):hover{border-color:var(--accent);color:var(--text)}
+
+/* Walmart category filter row (hidden for BB, shown for WM) */
+.db-frow-wm{display:none}
+.db-frow-wm.visible{display:flex}
 </style>
 
 <div class="page-header">
   <div class="page-header-row">
     <div>
-      <h1>⚡ Deal Blaster</h1>
-      <p>Scan Best Buy for scored deals, select what you like, and copy a WhatsApp message.</p>
+      <h1 id="db-page-title">⚡ Deal Blaster</h1>
+      <p id="db-page-sub">Scan Best Buy for scored deals, select what you like, and copy a WhatsApp message.</p>
     </div>
   </div>
 </div>
 
 <!-- Retailer tabs -->
 <div class="db-retailer-tabs">
-  <button class="db-rtab on">Best Buy</button>
-  <a href="{{ url_for('walmart_deals.walmart_deals_page') }}" class="db-rtab">Walmart</a>
+  <button class="db-rtab on" id="rtab-bb"  onclick="switchRetailer('bb')">Best Buy</button>
+  <button class="db-rtab"    id="rtab-wm"  onclick="switchRetailer('wm')">Walmart</button>
   <button class="db-rtab dim">Costco</button>
   <button class="db-rtab dim">Amazon</button>
 </div>
 
-<!-- Natural language search -->
-<div class="db-search-wrap">
+<!-- Natural language search (Best Buy only) -->
+<div class="db-search-wrap" id="db-search-section">
   <div class="db-search-bar">
     <input class="db-search-input" id="db-search-input" type="text"
            placeholder="Describe what you're looking for... e.g. ASUS gaming laptop AMD Ryzen 9 32GB RTX 5070 under $1200"
@@ -149,16 +157,16 @@
   <div class="db-scanbar-info">
     Last pulled: <b id="db-last-pull">—</b> &nbsp;·&nbsp; <b id="db-deal-count">—</b> active deals
   </div>
-  <span class="db-sched-badge" id="db-sched-badge">— schedules</span>
+  <span class="db-sched-badge" id="db-sched-badge" style="display:none">— schedules</span>
   <button class="btn btn-primary btn-sm" id="db-run-btn" onclick="runScan()">
     ▶ Run Now
   </button>
-  <button class="btn btn-ghost btn-sm" onclick="toggleSchedules()">
+  <button class="btn btn-ghost btn-sm" id="db-sched-toggle-btn" onclick="toggleSchedules()" style="display:none">
     📅 Schedules <span id="db-sched-arrow">▾</span>
   </button>
 </div>
 
-<!-- Schedules panel (collapsed by default) -->
+<!-- Schedules panel (Best Buy only, collapsed by default) -->
 <div id="db-sched-panel" class="db-sched-panel" style="display:none">
   <div class="db-sched-header">
     <span style="font-size:13px;font-weight:600;color:var(--text)">Saved Scan Schedules</span>
@@ -171,6 +179,7 @@
 
 <!-- Filters -->
 <div class="db-filters">
+  <!-- Brand (shared) -->
   <div class="db-frow">
     <span class="db-flabel">Brand</span>
     <button class="db-pill" data-g="brand" data-v="Apple">Apple</button>
@@ -182,7 +191,8 @@
     <button class="db-pill" data-g="brand" data-v="MSI">MSI</button>
     <button class="db-pill" data-g="brand" data-v="Acer">Acer</button>
   </div>
-  <div class="db-frow">
+  <!-- Category — Best Buy -->
+  <div class="db-frow" id="db-frow-bb-cat">
     <span class="db-flabel">Category</span>
     <button class="db-pill on" data-g="cat" data-v="all">All</button>
     <button class="db-pill" data-g="cat" data-v="gaming">Gaming Laptops</button>
@@ -192,6 +202,17 @@
     <button class="db-pill" data-g="cat" data-v="monitor">Monitors</button>
     <button class="db-pill" data-g="cat" data-v="aio">All-in-One</button>
   </div>
+  <!-- Category — Walmart (same keys as wm_fetcher CATEGORIES) -->
+  <div class="db-frow db-frow-wm" id="db-frow-wm-cat">
+    <span class="db-flabel">Category</span>
+    <button class="db-pill on" data-g="wmcat" data-v="all">All</button>
+    <button class="db-pill" data-g="wmcat" data-v="gaming_laptops">Gaming Laptops</button>
+    <button class="db-pill" data-g="wmcat" data-v="gaming_desktops">Gaming Desktops</button>
+    <button class="db-pill" data-g="wmcat" data-v="macbooks">MacBooks</button>
+    <button class="db-pill" data-g="wmcat" data-v="laptops">Windows Laptops</button>
+    <button class="db-pill" data-g="wmcat" data-v="aio">All-in-One</button>
+  </div>
+  <!-- Price + score (shared) -->
   <div class="db-frow">
     <span class="db-flabel">Price</span>
     <div class="db-price-inputs">
@@ -206,13 +227,15 @@
       <b class="db-score-val" id="db-score-val">7</b>
     </div>
   </div>
-  <div class="db-frow">
+  <!-- Processor (Best Buy only) -->
+  <div class="db-frow" id="db-frow-cpu">
     <span class="db-flabel">Processor</span>
     <button class="db-pill" data-g="cpu" data-v="Apple M">Apple M</button>
     <button class="db-pill" data-g="cpu" data-v="Intel">Intel</button>
     <button class="db-pill" data-g="cpu" data-v="AMD">AMD</button>
   </div>
-  <div class="db-frow">
+  <!-- Memory (Best Buy only) -->
+  <div class="db-frow" id="db-frow-ram">
     <span class="db-flabel">Memory</span>
     <button class="db-pill" data-g="ram" data-v="8GB">8 GB</button>
     <button class="db-pill" data-g="ram" data-v="16GB">16 GB</button>
@@ -257,32 +280,82 @@
 let ALL_DEALS   = [];
 let selectedIds = new Set();
 let activeCat   = 'all';
+let activeWmCat = 'all';
 let brands      = new Set();
 let cpus        = new Set();
 let rams        = new Set();
 let schedOpen   = false;
+let activeRetailer = 'bb'; // 'bb' | 'wm'
+
+const CSRF = () => document.querySelector('meta[name="csrf-token"]').content;
+
+// ── Retailer switcher ─────────────────────────────────────────────────────────
+function switchRetailer(r) {
+  activeRetailer = r;
+  const isBB = r === 'bb';
+
+  // Tab highlight
+  document.getElementById('rtab-bb').classList.toggle('on', isBB);
+  document.getElementById('rtab-wm').classList.toggle('on', !isBB);
+
+  // Page header
+  document.getElementById('db-page-title').textContent = isBB ? '⚡ Deal Blaster' : '🛒 Walmart Deal Blaster';
+  document.getElementById('db-page-sub').textContent   = isBB
+    ? 'Scan Best Buy for scored deals, select what you like, and copy a WhatsApp message.'
+    : 'Scan Walmart for scored deals, select what you like, and copy a WhatsApp message.';
+
+  // Natural search (BB only)
+  document.getElementById('db-search-section').style.display = isBB ? '' : 'none';
+
+  // Schedules button (BB only)
+  document.getElementById('db-sched-badge').style.display        = isBB ? '' : 'none';
+  document.getElementById('db-sched-toggle-btn').style.display   = isBB ? '' : 'none';
+  if (!isBB && schedOpen) toggleSchedules(); // close if open
+
+  // Category filter rows
+  document.getElementById('db-frow-bb-cat').style.display = isBB ? '' : 'none';
+  document.getElementById('db-frow-wm-cat').style.display = isBB ? 'none' : '';
+
+  // CPU / RAM rows (BB only)
+  document.getElementById('db-frow-cpu').style.display = isBB ? '' : 'none';
+  document.getElementById('db-frow-ram').style.display = isBB ? '' : 'none';
+
+  // Reset selections and reload
+  clearSelection();
+  ALL_DEALS = [];
+  loadStatus();
+  loadDeals();
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  loadStatus();
-  loadDeals();
-  loadSchedules();
+  // Check if arriving from /walmart-deals redirect
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('retailer') === 'walmart') {
+    switchRetailer('wm');
+  } else {
+    loadStatus();
+    loadDeals();
+    loadSchedules();
+  }
   bindPills();
-
-  // Refresh scan bar every 30 seconds so "last pulled" stays current
-  setInterval(loadStatus, 30000);
+  setInterval(() => { if (activeRetailer === 'bb') loadStatus(); }, 30000);
 });
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 async function loadStatus() {
   try {
-    const r = await fetch('/api/deals/status');
+    const url = activeRetailer === 'bb' ? '/api/deals/status' : '/api/walmart/deals/status';
+    const r = await fetch(url);
     const d = await r.json();
     if (!d.ok) return;
 
     document.getElementById('db-deal-count').textContent = d.deal_count ?? 0;
-    document.getElementById('db-sched-badge').textContent =
-      `${d.active_schedules ?? 0} schedule${d.active_schedules !== 1 ? 's' : ''} active`;
+
+    if (activeRetailer === 'bb') {
+      document.getElementById('db-sched-badge').textContent =
+        `${d.active_schedules ?? 0} schedule${d.active_schedules !== 1 ? 's' : ''} active`;
+    }
 
     if (d.last_run) {
       const ago = timeAgo(d.last_run.run_at);
@@ -291,9 +364,7 @@ async function loadStatus() {
     } else {
       document.getElementById('db-last-pull').textContent = 'never';
     }
-  } catch(e) {
-    console.error('Status load failed:', e);
-  }
+  } catch(e) { console.error('Status load failed:', e); }
 }
 
 async function loadDeals() {
@@ -302,8 +373,25 @@ async function loadDeals() {
   document.getElementById('db-grid').querySelectorAll('.db-card').forEach(c => c.remove());
 
   try {
-    const r = await fetch('/api/deals');
-    const d = await r.json();
+    let url, r, d;
+    if (activeRetailer === 'bb') {
+      r = await fetch('/api/deals');
+      d = await r.json();
+    } else {
+      const cat = activeWmCat !== 'all' ? `?categories=${activeWmCat}` : '';
+      r = await fetch('/api/walmart/deals' + cat);
+      d = await r.json();
+      // normalise field names to match BB shape
+      if (d.ok) {
+        d.deals = d.deals.map(x => ({
+          ...x,
+          regular_price: x.reg_price,
+          sale_price:    x.sale_price,
+          cpu:           '',
+          memory:        '',
+        }));
+      }
+    }
     if (d.ok) {
       ALL_DEALS = d.deals || [];
       filterDeals();
@@ -323,9 +411,7 @@ async function loadSchedules() {
     const d = await r.json();
     if (!d.ok) return;
     renderSchedules(d.schedules);
-  } catch(e) {
-    console.error('Schedules load failed:', e);
-  }
+  } catch(e) { console.error('Schedules load failed:', e); }
 }
 
 async function runScan(schedId = null) {
@@ -334,18 +420,28 @@ async function runScan(schedId = null) {
   btn.textContent = '⏳ Scanning...';
 
   try {
-    const url  = schedId ? `/api/deals/run/${schedId}` : '/api/deals/run';
-    const body = schedId ? {} : buildFilterPayload();
-    const r    = await fetch(url, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json',
-    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content},
-      body: JSON.stringify(body)
-    });
-    const d = await r.json();
+    let r, d;
+    if (activeRetailer === 'bb') {
+      const url  = schedId ? `/api/deals/run/${schedId}` : '/api/deals/run';
+      const body = schedId ? {} : buildBBFilterPayload();
+      r = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','X-CSRFToken':CSRF()},
+        body: JSON.stringify(body)
+      });
+    } else {
+      const body = activeWmCat !== 'all' ? {categories:[activeWmCat]} : {};
+      r = await fetch('/api/walmart/deals/run', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','X-CSRFToken':CSRF()},
+        body: JSON.stringify(body)
+      });
+    }
+    d = await r.json();
     if (d.ok) {
       await loadDeals();
       await loadStatus();
+      if (activeRetailer === 'bb') await loadSchedules();
     } else {
       alert('Scan failed: ' + (d.error || 'unknown error'));
     }
@@ -361,28 +457,25 @@ async function toggleScheduleActive(schedId, isActive) {
   try {
     const r = await fetch(`/api/deals/schedules/${schedId}`, {
       method: 'PUT',
-      headers: {'Content-Type': 'application/json',
-    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content},
+      headers: {'Content-Type':'application/json','X-CSRFToken':CSRF()},
       body: JSON.stringify({is_active: isActive})
     });
     const d = await r.json();
     if (d.ok) loadSchedules();
-  } catch(e) {
-    console.error('Toggle schedule failed:', e);
-  }
+  } catch(e) { console.error('Toggle schedule failed:', e); }
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────────
-function buildFilterPayload() {
+function buildBBFilterPayload() {
   const payload = {};
-  if (brands.size > 0)    payload.brands     = [...brands];
+  if (brands.size > 0)     payload.brands     = [...brands];
   if (activeCat !== 'all') payload.categories = [activeCat];
-  if (cpus.size > 0)      payload.cpu        = [...cpus];
-  if (rams.size > 0)      payload.ram        = [...rams];
+  if (cpus.size > 0)       payload.cpu        = [...cpus];
+  if (rams.size > 0)       payload.ram        = [...rams];
   const pmin = parseFloat(document.getElementById('db-pmin').value);
   const pmax = parseFloat(document.getElementById('db-pmax').value);
-  if (!isNaN(pmin) && pmin > 0)    payload.price_min = pmin;
-  if (!isNaN(pmax) && pmax > 0)    payload.price_max = pmax;
+  if (!isNaN(pmin) && pmin > 0) payload.price_min = pmin;
+  if (!isNaN(pmax) && pmax > 0) payload.price_max = pmax;
   payload.min_score = parseInt(document.getElementById('db-score').value) || 0;
   return payload;
 }
@@ -391,14 +484,17 @@ function filterDeals() {
   const minScore = parseInt(document.getElementById('db-score').value) || 0;
   const pmin     = parseFloat(document.getElementById('db-pmin').value) || 0;
   const pmax     = parseFloat(document.getElementById('db-pmax').value) || 99999;
+  const cat      = activeRetailer === 'bb' ? activeCat : activeWmCat;
 
   const filtered = ALL_DEALS.filter(d => {
-    if (brands.size > 0 && !brands.has(d.brand))         return false;
-    if (activeCat !== 'all' && d.category !== activeCat) return false;
-    if (d.sale_price < pmin || d.sale_price > pmax)      return false;
-    if (cpus.size > 0 && !Array.from(cpus).some(c => (d.cpu||'').toLowerCase().includes(c.toLowerCase()))) return false;
-    if (rams.size > 0 && !rams.has(d.memory))            return false;
-    if (d.score < minScore)                              return false;
+    if (brands.size > 0 && !brands.has(d.brand))       return false;
+    if (cat !== 'all' && d.category !== cat)            return false;
+    if (d.sale_price < pmin || d.sale_price > pmax)    return false;
+    if (activeRetailer === 'bb') {
+      if (cpus.size > 0 && !Array.from(cpus).some(c => (d.cpu||'').toLowerCase().includes(c.toLowerCase()))) return false;
+      if (rams.size > 0 && !rams.has(d.memory))         return false;
+    }
+    if (d.score < minScore) return false;
     return true;
   });
 
@@ -406,6 +502,7 @@ function filterDeals() {
 }
 
 function bindPills() {
+  // BB categories
   document.querySelectorAll('.db-pill[data-g="cat"]').forEach(p => {
     p.addEventListener('click', () => {
       document.querySelectorAll('.db-pill[data-g="cat"]').forEach(x => x.classList.remove('on'));
@@ -414,6 +511,16 @@ function bindPills() {
       filterDeals();
     });
   });
+  // WM categories
+  document.querySelectorAll('.db-pill[data-g="wmcat"]').forEach(p => {
+    p.addEventListener('click', () => {
+      document.querySelectorAll('.db-pill[data-g="wmcat"]').forEach(x => x.classList.remove('on'));
+      p.classList.add('on');
+      activeWmCat = p.dataset.v;
+      loadDeals();
+    });
+  });
+  // Brand (shared)
   document.querySelectorAll('.db-pill[data-g="brand"]').forEach(p => {
     p.addEventListener('click', () => {
       brands.has(p.dataset.v) ? brands.delete(p.dataset.v) : brands.add(p.dataset.v);
@@ -421,6 +528,7 @@ function bindPills() {
       filterDeals();
     });
   });
+  // CPU
   document.querySelectorAll('.db-pill[data-g="cpu"]').forEach(p => {
     p.addEventListener('click', () => {
       cpus.has(p.dataset.v) ? cpus.delete(p.dataset.v) : cpus.add(p.dataset.v);
@@ -428,6 +536,7 @@ function bindPills() {
       filterDeals();
     });
   });
+  // RAM
   document.querySelectorAll('.db-pill[data-g="ram"]').forEach(p => {
     p.addEventListener('click', () => {
       rams.has(p.dataset.v) ? rams.delete(p.dataset.v) : rams.add(p.dataset.v);
@@ -441,40 +550,44 @@ function bindPills() {
 function renderDeals(deals) {
   const grid = document.getElementById('db-grid');
   grid.querySelectorAll('.db-card').forEach(c => c.remove());
-
   document.getElementById('db-visible-count').textContent = deals.length;
 
   if (!deals.length) {
     showEmpty(ALL_DEALS.length === 0
-      ? 'No deals yet — hit Run Now to pull from Best Buy.'
+      ? `No deals yet — hit Run Now to pull from ${activeRetailer === 'bb' ? 'Best Buy' : 'Walmart'}.`
       : 'No deals match your filters.');
     return;
   }
-
   document.getElementById('db-empty').style.display = 'none';
 
+  const retailerLabel = activeRetailer === 'bb' ? 'Best Buy' : 'Walmart';
+
   deals.forEach(d => {
-    const disc = Math.round((d.regular_price - d.sale_price) / d.regular_price * 100);
-    const sel  = selectedIds.has(d.id);
-    const card = document.createElement('div');
+    const regPrice = d.regular_price || d.reg_price || d.sale_price;
+    const disc  = regPrice > d.sale_price ? Math.round((regPrice - d.sale_price) / regPrice * 100) : 0;
+    const sel   = selectedIds.has(d.id);
+    const card  = document.createElement('div');
     card.className = `db-card${sel ? ' sel' : ''}`;
     card.dataset.id = d.id;
     card.onclick = () => toggleDeal(d.id);
+    const specLine = d.cpu || d.memory
+      ? `${d.cpu || ''}${d.cpu && d.memory ? ' · ' : ''}${d.memory || ''}`
+      : (d.category || '');
     card.innerHTML = `
       <input class="db-card-ck" type="checkbox" ${sel ? 'checked' : ''}
              onclick="event.stopPropagation();toggleDeal(${d.id})">
       <div class="db-brand">${d.brand || '—'}</div>
       <div class="db-name">${d.name}</div>
-      <div class="db-spec">${d.cpu || ''}${d.cpu && d.memory ? ' · ' : ''}${d.memory || ''}</div>
+      <div class="db-spec">${specLine}</div>
       <div class="db-prices">
         <span class="db-price">$${d.sale_price.toLocaleString()}</span>
-        <span class="db-orig">$${d.regular_price.toLocaleString()}</span>
+        ${regPrice > d.sale_price ? `<span class="db-orig">$${regPrice.toLocaleString()}</span>` : ''}
       </div>
       <div class="db-foot">
-        <span class="db-off">−${disc}% off</span>
+        <span class="db-off">${disc > 0 ? `−${disc}% off` : ''}</span>
         <span class="db-score-badge ${d.score >= 10 ? 'db-score-hi' : 'db-score-md'}">${d.score}/13</span>
       </div>
-      ${d.url ? `<div class="db-link"><a href="${d.url}" target="_blank" onclick="event.stopPropagation()">View on Best Buy ↗</a></div>` : ''}
+      ${d.url ? `<div class="db-link"><a href="${d.url}" target="_blank" onclick="event.stopPropagation()">View on ${retailerLabel} ↗</a></div>` : ''}
     `;
     grid.appendChild(card);
   });
@@ -520,7 +633,6 @@ function showEmpty(msg) {
 // ── Selection & message ───────────────────────────────────────────────────────
 function toggleDeal(id) {
   selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id);
-  // Re-render just the toggled card
   document.querySelectorAll('.db-card').forEach(c => {
     const cid = parseInt(c.dataset.id);
     c.classList.toggle('sel', selectedIds.has(cid));
@@ -560,8 +672,11 @@ function updateMessage() {
   const items = ALL_DEALS.filter(d => selectedIds.has(d.id));
   let msg = `Hey [Name] 👋\n\nFound some great deals today!\n\n`;
   items.forEach(d => {
-    const disc = Math.round((d.regular_price - d.sale_price) / d.regular_price * 100);
-    msg += `📦 *${d.name}*\n💰 $${d.sale_price.toLocaleString()} (was $${d.regular_price.toLocaleString()} · ${disc}% off)\n\n`;
+    const regPrice = d.regular_price || d.reg_price || d.sale_price;
+    const disc = regPrice > d.sale_price ? Math.round((regPrice - d.sale_price) / regPrice * 100) : 0;
+    msg += `📦 *${d.name}*\n💰 $${d.sale_price.toLocaleString()}`;
+    if (disc > 0) msg += ` (was $${regPrice.toLocaleString()} · ${disc}% off)`;
+    msg += `\n\n`;
   });
   msg += `Interested in any of these? I can source them for you! 🚀\n\n– Ron @ iGamer Corp 🇦🇪`;
 
@@ -571,8 +686,8 @@ function updateMessage() {
 }
 
 function updateCharCount() {
-  const len = document.getElementById('db-textarea').value.length;
-  document.getElementById('db-char-count').textContent = `${len} chars`;
+  document.getElementById('db-char-count').textContent =
+    `${document.getElementById('db-textarea').value.length} chars`;
 }
 
 function copyMessage() {
@@ -590,29 +705,20 @@ function copyMessage() {
   });
 }
 
-// ── Schedules toggle ──────────────────────────────────────────────────────────
+// ── Schedules ─────────────────────────────────────────────────────────────────
 function toggleSchedules() {
   schedOpen = !schedOpen;
   document.getElementById('db-sched-panel').style.display = schedOpen ? '' : 'none';
   document.getElementById('db-sched-arrow').textContent   = schedOpen ? '▴' : '▾';
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function timeAgo(isoString) {
-  const diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
-  if (diff < 60)         return `${diff}s ago`;
-  if (diff < 3600)       return `${Math.floor(diff/60)}m ago`;
-  if (diff < 86400)      return `${Math.floor(diff/3600)}h ago`;
-  return                        `${Math.floor(diff/86400)}d ago`;
-}
-
-// ── Natural language search ───────────────────────────────────────────────────
+// ── Natural search (BB only) ──────────────────────────────────────────────────
 async function runNaturalSearch() {
-  const input   = document.getElementById('db-search-input');
-  const btn     = document.getElementById('db-search-btn');
+  const input    = document.getElementById('db-search-input');
+  const btn      = document.getElementById('db-search-btn');
   const feedback = document.getElementById('db-search-feedback');
-  const label   = document.getElementById('db-sf-label');
-  const query   = input.value.trim();
+  const label    = document.getElementById('db-sf-label');
+  const query    = input.value.trim();
 
   if (!query) { input.focus(); return; }
 
@@ -622,14 +728,10 @@ async function runNaturalSearch() {
   try {
     const r = await fetch('/api/deals/search', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
-      },
+      headers: {'Content-Type':'application/json','X-CSRFToken':CSRF()},
       body: JSON.stringify({ query })
     });
     const d = await r.json();
-
     if (d.ok) {
       label.textContent = d.description + ` — ${d.deals_found} deal${d.deals_found !== 1 ? 's' : ''} found`;
       feedback.classList.add('visible');
@@ -653,7 +755,16 @@ function clearSearch() {
   loadDeals();
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function timeAgo(isoString) {
+  const diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
+  if (diff < 60)    return `${diff}s ago`;
+  if (diff < 3600)  return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return                   `${Math.floor(diff/86400)}d ago`;
+}
 
+// ── Schedule modal ────────────────────────────────────────────────────────────
 let selectedCats = new Set();
 
 function openAddScheduleModal() {
@@ -674,9 +785,9 @@ document.querySelectorAll('.db-cat-pill').forEach(p => {
   });
 });
 async function saveSchedule() {
-  const name    = document.getElementById('m-name').value.trim();
-  const trigger = document.getElementById('m-trigger').value;
-  const mode    = document.getElementById('m-mode').value;
+  const name     = document.getElementById('m-name').value.trim();
+  const trigger  = document.getElementById('m-trigger').value;
+  const mode     = document.getElementById('m-mode').value;
   const minScore = parseInt(document.getElementById('m-min-score').value) || 0;
 
   if (!name) { alert('Please enter a schedule name.'); return; }
@@ -693,7 +804,7 @@ async function saveSchedule() {
     const [hour, minute] = time.split(':');
     payload.cron_expression = `${minute} ${hour} * * ${days}`;
   } else {
-    payload.interval_hours  = parseInt(document.getElementById('m-interval').value) || 2;
+    payload.interval_hours = parseInt(document.getElementById('m-interval').value) || 2;
     const thresh = document.getElementById('m-alert-threshold').value;
     if (thresh) payload.alert_threshold = parseInt(thresh);
   }
@@ -704,10 +815,7 @@ async function saveSchedule() {
   try {
     const r = await fetch('/api/deals/schedules', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
-      },
+      headers: {'Content-Type':'application/json','X-CSRFToken':CSRF()},
       body: JSON.stringify(payload)
     });
     const d = await r.json();
@@ -715,7 +823,6 @@ async function saveSchedule() {
       closeModal();
       loadSchedules();
       loadStatus();
-      // Reset form
       document.getElementById('m-name').value = '';
       selectedCats.clear();
       document.querySelectorAll('.db-cat-pill').forEach(p => p.classList.remove('on'));
@@ -728,13 +835,12 @@ async function saveSchedule() {
     btn.disabled = false; btn.textContent = 'Save Schedule';
   }
 }
-// Close modal on overlay click
 document.getElementById('db-sched-modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 </script>
 
-<!-- ── Add Schedule Modal ── -->
+<!-- Add Schedule Modal -->
 <div class="db-modal-overlay" id="db-sched-modal">
   <div class="db-modal">
     <div class="db-modal-title">
