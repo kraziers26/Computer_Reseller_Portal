@@ -105,9 +105,10 @@
 .db-cat-pill.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
 .db-retailer-tabs{display:flex;gap:5px;margin-bottom:14px;flex-wrap:wrap}
-.db-rtab{padding:4px 12px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;background:transparent;color:var(--muted);font-family:var(--font);transition:all .12s}
+.db-rtab{padding:4px 12px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;background:transparent;color:var(--muted);font-family:var(--font);transition:all .12s;text-decoration:none;display:inline-flex;align-items:center}
 .db-rtab.on{background:var(--surface2);color:var(--text);border-color:var(--border2);font-weight:500}
 .db-rtab.dim{opacity:.3;cursor:not-allowed;pointer-events:none}
+.db-rtab:not(.on):not(.dim):hover{border-color:var(--accent);color:var(--text)}
 </style>
 
 <div class="page-header">
@@ -122,9 +123,9 @@
 <!-- Retailer tabs -->
 <div class="db-retailer-tabs">
   <button class="db-rtab on">Best Buy</button>
+  <a href="{{ url_for('walmart_deals.walmart_deals_page') }}" class="db-rtab">Walmart</a>
   <button class="db-rtab dim">Costco</button>
   <button class="db-rtab dim">Amazon</button>
-  <button class="db-rtab dim">Walmart</button>
 </div>
 
 <!-- Natural language search -->
