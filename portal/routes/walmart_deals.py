@@ -31,7 +31,8 @@ walmart_deals_bp = Blueprint('walmart_deals', __name__)
 @walmart_deals_bp.route('/walmart-deals')
 @login_required
 def walmart_deals_page():
-    return render_template('deals/walmart.html')
+    from flask import redirect, url_for
+    return redirect(url_for('deals.deals_page') + '?retailer=walmart')
 
 
 # ── Deals feed ────────────────────────────────────────────────────────────────
