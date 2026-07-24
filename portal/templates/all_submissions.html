@@ -70,13 +70,6 @@ function clearAll() {
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Line Items</div>
-        <select name="no_items" style="width:100%" onchange="this.form.submit()">
-          <option value="">All orders</option>
-          <option value="1" {{ 'selected' if filters.no_items }}>⚠ Missing items only</option>
-        </select>
-      </div>
-      <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
         <select name="retailer" style="width:100%" onchange="this.form.submit()">
           <option value="">All retailers</option>
@@ -127,7 +120,7 @@ function clearAll() {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0;white-space:nowrap">
           <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Dups only
         </label>
-        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.role or filters.stuck_days or filters.fulfillment %}
+        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.batch or filters.role or filters.stuck_days or filters.fulfillment %}
         <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
         {% endif %}
       </div>
@@ -189,7 +182,6 @@ function clearAll() {
           <a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}"
              style="color:var(--accent2)">{{ r.order_number }}</a>
           {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
-          {% if r.no_items %}<span style="background:rgba(245,158,11,.2);color:#f59e0b;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px" title="No line items found — needs review">⚠ no items</span>{% endif %}
         </td>
         <td style="padding:7px 10px;white-space:nowrap">{{ r.retailer }}</td>
         <td style="padding:7px 10px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
