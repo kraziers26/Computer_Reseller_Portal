@@ -261,7 +261,7 @@ function quickAddCard() {
     csrf_token: document.querySelector('#quickAddCardForm [name="csrf_token"]').value,
   };
   btn.disabled = true; btn.textContent = 'Saving...';
-  fetch("{{ url_for('manage.new_card_ajax') }}", {
+  fetch("{{ url_for('manage.new_card') }}", {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(data)
   }).then(r=>r.json()).then(d=>{
