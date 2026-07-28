@@ -23,6 +23,7 @@
 .ct-badge-partial{background:rgba(56,189,248,.15);color:#38bdf8}
 .ct-badge-full{background:rgba(34,197,94,.15);color:#4ade80}
 .ct-stale{color:#f87171;font-weight:600}
+#ctCreateBatchBtn:disabled{opacity:.4;cursor:not-allowed}
 
 /* Modal (shared pattern with deals module) */
 .db-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:none;align-items:center;justify-content:center}
@@ -38,10 +39,14 @@
 .db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
 
 #ctBatchBar{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);
-  padding:12px 16px;margin-top:12px;display:none;align-items:center;justify-content:space-between;gap:16px;
+  padding:12px 16px;margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:16px;
   box-shadow:0 -4px 16px rgba(0,0,0,.25)}
-#ctBatchBar.visible{display:flex}
 </style>
+
+<div class="card" style="margin-bottom:12px;padding:10px 16px;font-size:12px;color:var(--muted)">
+  ☑ Check orders below (anything not already Full), name a batch, and click <strong style="color:var(--text)">Create request batch</strong> —
+  it'll download the Costco-format Excel and mark those orders Pending.
+</div>
 
 <!-- Filters -->
 <div class="card" style="margin-bottom:16px">
@@ -210,12 +215,12 @@
   </div>
 </div>
 
-<!-- Sticky batch-creation bar -->
+<!-- Sticky batch-creation bar (always visible; button disables until orders are selected) -->
 <div id="ctBatchBar">
   <div><span id="ctSelCount">0</span> orders selected · <span id="ctSelTotal">$0.00</span> total tax</div>
   <div style="display:flex;gap:8px;align-items:center">
     <input type="text" id="ctBatchName" placeholder="Batch name (e.g. July Costco follow-up)" style="width:260px">
-    <button type="button" class="btn btn-primary btn-sm" onclick="ctSubmitBatch()">Create request batch</button>
+    <button type="button" class="btn btn-primary btn-sm" id="ctCreateBatchBtn" disabled onclick="ctSubmitBatch()">Create request batch</button>
   </div>
 </div>
 
@@ -250,12 +255,11 @@ function ctToggleAll(master){
 }
 function ctUpdateBar(){
   const checked = Array.from(document.querySelectorAll('input[name="txn_ids"]:checked'));
-  const bar = document.getElementById('ctBatchBar');
-  if (checked.length === 0){ bar.classList.remove('visible'); return; }
-  bar.classList.add('visible');
+  const btn = document.getElementById('ctCreateBatchBtn');
   document.getElementById('ctSelCount').textContent = checked.length;
   const total = checked.reduce((s,cb) => s + parseFloat(cb.dataset.amount || 0), 0);
   document.getElementById('ctSelTotal').textContent = '$' + total.toFixed(2);
+  btn.disabled = checked.length === 0;
 }
 function ctSubmitBatch(){
   const name = document.getElementById('ctBatchName').value.trim();
