@@ -13,7 +13,7 @@
 
 <style>
 @media print {
-  .sidebar, .page-header .flex, .card:first-of-type, #ctBatchBar { display:none!important }
+  .sidebar, .page-header .flex, .ct-hint, .ct-filters, #ctBatchBar { display:none!important }
   body { background:#fff; color:#000 }
   table { font-size:10px }
 }
@@ -38,18 +38,21 @@
 .db-mrow input:focus,.db-mrow select:focus{border-color:var(--accent)}
 .db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
 
-#ctBatchBar{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);
-  padding:12px 16px;margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:16px;
+#ctBatchBar{position:fixed;bottom:0;left:220px;right:0;z-index:500;background:var(--surface);border-top:1px solid var(--border2);
+  padding:12px 32px;display:flex;align-items:center;justify-content:space-between;gap:16px;
   box-shadow:0 -4px 16px rgba(0,0,0,.25)}
+.main{padding-bottom:80px}
+@media(max-width:768px){ #ctBatchBar{left:0;padding:12px 16px} }
 </style>
 
-<div class="card" style="margin-bottom:12px;padding:10px 16px;font-size:12px;color:var(--muted)">
+<div class="card ct-hint" style="margin-bottom:12px;padding:10px 16px;font-size:12px;color:var(--muted)">
   ☑ Check orders below (anything not already Full), name a batch, and click <strong style="color:var(--text)">Create request batch</strong> —
-  it'll download the Costco-format Excel and mark those orders Pending.
+  the bar for this stays pinned at the bottom of your screen so you can scroll the table freely.
+  It'll download the Costco-format Excel and mark those orders Pending.
 </div>
 
 <!-- Filters -->
-<div class="card" style="margin-bottom:16px">
+<div class="card ct-filters" style="margin-bottom:16px">
   <form method="GET">
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;align-items:end">
       <div>
