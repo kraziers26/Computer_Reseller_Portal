@@ -1195,6 +1195,8 @@ def serve_transaction_pdf(tid):
                      mimetype='application/pdf',
                      download_name=f'invoice-{tid[:8]}.pdf')
 
+STALE_DAYS = 30
+
 @admin_bp.route('/costco-taxes')
 @login_required
 @require_role('admin')
@@ -1204,6 +1206,8 @@ def costco_taxes():
     f_company    = request.args.get('company', type=int)
     f_person     = request.args.get('person_by', type=int)
     f_membership = request.args.get('membership', '')
+    f_status     = request.args.get('status', '')
+    f_order      = request.args.get('order_number', '').strip()
 
     conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
     params = []
@@ -1217,6 +1221,15 @@ def costco_taxes():
         conditions.append("t.user_id = %s"); params.append(f_person)
     if f_membership:
         conditions.append("t.membership_number = %s"); params.append(f_membership)
+    if f_order:
+        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
+    if f_status == 'unrequested':
+        conditions.append("t.costco_refund_status IS NULL")
+    elif f_status == 'stale':
+        conditions.append("t.costco_refund_status IN ('Pending','Partial')")
+        conditions.append("t.costco_last_activity_at < NOW() - INTERVAL '%s days'" % STALE_DAYS)
+    elif f_status in ('Pending', 'Partial', 'Full'):
+        conditions.append("t.costco_refund_status = %s"); params.append(f_status)
 
     where = 'WHERE ' + ' AND '.join(conditions)
 
@@ -1230,7 +1243,15 @@ def costco_taxes():
                 ROUND(SUM(COALESCE(t.gross_paid_amount,0))::numeric, 2)        AS total_gross_paid,
                 ROUND(SUM(COALESCE(t.cashback_value,0))::numeric, 2)           AS total_cashback,
                 COUNT(DISTINCT t.membership_number) FILTER
-                    (WHERE t.membership_number IS NOT NULL)                     AS unique_memberships
+                    (WHERE t.membership_number IS NOT NULL)                     AS unique_memberships,
+                COUNT(*) FILTER (WHERE t.costco_refund_status IS NULL)          AS unrequested_count,
+                COUNT(*) FILTER (WHERE t.costco_refund_status = 'Pending')      AS pending_count,
+                COUNT(*) FILTER (WHERE t.costco_refund_status = 'Partial')      AS partial_count,
+                COUNT(*) FILTER (WHERE t.costco_refund_status = 'Full')         AS full_count,
+                COUNT(*) FILTER (WHERE t.costco_refund_status IN ('Pending','Partial')
+                                   AND t.costco_last_activity_at < NOW() - INTERVAL '{STALE_DAYS} days') AS stale_count,
+                ROUND(SUM(COALESCE(t.costco_taxes_paid,0) - COALESCE(t.costco_refund_amount,0))
+                      ::numeric, 2) FILTER (WHERE t.costco_refund_status IS DISTINCT FROM 'Full') AS outstanding_tax
             FROM transactions t {where}
         """, params)
         metrics = cur.fetchone()
@@ -1246,8 +1267,22 @@ def costco_taxes():
                    ROUND(COALESCE(t.cashback_value,0)::numeric,2)        AS cashback,
                    (t.invoice_pdf IS NOT NULL)                           AS has_pdf,
                    t.invoice_file_path,
-                   per.username AS person_name, c.company_name,
-                   t.review_status
+                   per.username AS person_name, c.company_name, t.company_id,
+                   t.review_status,
+                   t.costco_refund_status, t.costco_refund_amount,
+                   t.costco_last_requested_at, t.costco_last_activity_at,
+                   ROUND((COALESCE(t.costco_taxes_paid,0) - COALESCE(t.costco_refund_amount,0))::numeric, 2) AS missing_amount,
+                   CASE WHEN t.costco_last_activity_at IS NOT NULL
+                        THEN EXTRACT(DAY FROM NOW() - t.costco_last_activity_at)::int
+                        ELSE NULL END AS days_waiting,
+                   (SELECT b.batch_name FROM costco_tax_batch_items bi
+                      JOIN costco_tax_batches b ON bi.batch_id = b.batch_id
+                     WHERE bi.transaction_id = t.transaction_id
+                     ORDER BY b.created_at DESC LIMIT 1)                 AS last_batch_name,
+                   (SELECT b.batch_id FROM costco_tax_batch_items bi
+                      JOIN costco_tax_batches b ON bi.batch_id = b.batch_id
+                     WHERE bi.transaction_id = t.transaction_id
+                     ORDER BY b.created_at DESC LIMIT 1)                 AS last_batch_id
             FROM transactions t
             LEFT JOIN dim_users per    ON t.user_id    = per.user_id
             LEFT JOIN dim_companies c  ON t.company_id = c.company_id
@@ -1271,8 +1306,276 @@ def costco_taxes():
     return render_template('costco_taxes.html',
                            metrics=metrics, transactions=transactions,
                            years=years, companies=companies, users=users, memberships=memberships,
+                           stale_days=STALE_DAYS,
                            filters={'month':f_month,'year':f_year,'company':f_company,
-                                    'person_by':f_person,'membership':f_membership})
+                                    'person_by':f_person,'membership':f_membership,
+                                    'status':f_status,'order_number':f_order})
+
+
+@admin_bp.route('/costco-taxes/batch/create', methods=['POST'])
+@login_required
+@require_role('admin')
+def costco_tax_batch_create():
+    from ..security import audit
+    from flask_login import current_user
+    import uuid as _uuid
+
+    txn_ids    = request.form.getlist('txn_ids')
+    batch_name = request.form.get('batch_name', '').strip()
+    company_id = request.form.get('company_id', type=int)
+
+    if not txn_ids or not batch_name:
+        flash('Pick at least one order and give the batch a name.', 'danger')
+        return redirect(url_for('admin.costco_taxes'))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            SELECT transaction_id, order_number, costco_taxes_paid, costco_refund_amount,
+                   costco_refund_status
+            FROM transactions
+            WHERE transaction_id = ANY(%s::uuid[]) AND retailer = 'Costco'
+        """, (txn_ids,))
+        rows = cur.fetchall()
+
+        eligible = [r for r in rows if r['costco_refund_status'] != 'Full']
+        if not eligible:
+            flash('None of the selected orders are eligible (already fully refunded).', 'danger')
+            return redirect(url_for('admin.costco_taxes'))
+
+        batch_id = str(_uuid.uuid4())
+        total_requested = 0.0
+        item_rows = []
+        for r in eligible:
+            tax_paid = float(r['costco_taxes_paid'] or 0)
+            refunded = float(r['costco_refund_amount'] or 0)
+            amount_requested = round(tax_paid - refunded, 2)
+            if amount_requested <= 0:
+                continue
+            total_requested += amount_requested
+            item_rows.append((batch_id, str(r['transaction_id']), amount_requested))
+
+        if not item_rows:
+            flash('Selected orders have nothing outstanding to request.', 'danger')
+            return redirect(url_for('admin.costco_taxes'))
+
+        cur.execute("""
+            INSERT INTO costco_tax_batches
+                (batch_id, batch_name, company_id, created_by, order_count, total_requested)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (batch_id, batch_name, company_id, current_user.id if current_user.is_authenticated else None,
+              len(item_rows), round(total_requested, 2)))
+
+        cur.executemany("""
+            INSERT INTO costco_tax_batch_items (batch_id, transaction_id, amount_requested)
+            VALUES (%s, %s, %s)
+        """, item_rows)
+
+        included_ids = [r[1] for r in item_rows]
+        cur.execute("""
+            UPDATE transactions
+            SET costco_refund_status = COALESCE(costco_refund_status, 'Pending'),
+                costco_last_requested_at = NOW(),
+                costco_last_activity_at = NOW()
+            WHERE transaction_id = ANY(%s::uuid[])
+        """, (included_ids,))
+
+    audit('costco_batch_created', 'costco_tax_batch', batch_id,
+          detail=f"'{batch_name}' — {len(item_rows)} orders, ${total_requested:,.2f} requested")
+    flash(f"Batch '{batch_name}' created — {len(item_rows)} orders, ${total_requested:,.2f} requested.", 'success')
+    return redirect(url_for('admin.costco_tax_batch_download', batch_id=batch_id))
+
+
+@admin_bp.route('/costco-taxes/batch/<batch_id>/download')
+@login_required
+@require_role('admin')
+def costco_tax_batch_download(batch_id):
+    import io
+    from flask import send_file as sf, abort
+    import openpyxl
+    from openpyxl.styles import Font
+
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT b.batch_name, b.created_at, c.company_name
+            FROM costco_tax_batches b
+            LEFT JOIN dim_companies c ON b.company_id = c.company_id
+            WHERE b.batch_id = %s
+        """, (batch_id,))
+        batch = cur.fetchone()
+        if not batch:
+            abort(404)
+
+        cur.execute("""
+            SELECT t.membership_number, per.username AS person_name, t.purchase_date,
+                   t.order_number, t.costco_ship_city, t.costco_ship_state,
+                   bi.amount_requested
+            FROM costco_tax_batch_items bi
+            JOIN transactions t ON bi.transaction_id = t.transaction_id
+            LEFT JOIN dim_users per ON t.user_id = per.user_id
+            WHERE bi.batch_id = %s
+            ORDER BY t.purchase_date
+        """, (batch_id,))
+        rows = cur.fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Costco Tax Request'
+
+    title = f"{batch['company_name'] or ''} / {batch['batch_name']}".strip(' /')
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=12)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=7)
+
+    headers = ['Membership', 'Name', 'Date', 'Order', 'Ship to City', 'Ship to State', 'Pending Tax']
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=col, value=h)
+        cell.font = Font(bold=True)
+
+    total = 0.0
+    for ri, r in enumerate(rows, 3):
+        amt = float(r['amount_requested'] or 0)
+        total += amt
+        vals = [r['membership_number'] or '', r['person_name'] or '',
+                r['purchase_date'], r['order_number'],
+                r['costco_ship_city'] or 'Doral', r['costco_ship_state'] or 'FL', amt]
+        for ci, v in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            if ci == 7:
+                cell.number_format = '$#,##0.00'
+
+    tr = len(rows) + 3
+    ws.cell(row=tr, column=1, value='Total to be refunded').font = Font(bold=True)
+    ws.cell(row=tr, column=7, value=round(total, 2)).font = Font(bold=True)
+    ws.cell(row=tr, column=7).number_format = '$#,##0.00'
+
+    widths = [16, 20, 12, 14, 16, 14, 14]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[ws.cell(row=2, column=i).column_letter].width = w
+
+    fname = f"costco_tax_request_{batch['batch_name']}.xlsx".replace(' ', '_')
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    return sf(buf, as_attachment=True, download_name=fname,
+              mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@admin_bp.route('/costco-taxes/batches')
+@login_required
+@require_role('admin')
+def costco_tax_batches():
+    f_company = request.args.get('company', type=int)
+    f_batch   = request.args.get('batch_name', '').strip()
+
+    conditions, params = [], []
+    if f_company:
+        conditions.append("b.company_id = %s"); params.append(f_company)
+    if f_batch:
+        conditions.append("b.batch_name ILIKE %s"); params.append(f'%{f_batch}%')
+    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT b.batch_id, b.batch_name, b.created_at, b.order_count, b.total_requested,
+                   c.company_name, u.username AS created_by,
+                   COUNT(*) FILTER (WHERE t.costco_refund_status = 'Full')    AS full_count,
+                   COUNT(*) FILTER (WHERE t.costco_refund_status = 'Partial') AS partial_count,
+                   COUNT(*) FILTER (WHERE t.costco_refund_status = 'Pending') AS pending_count
+            FROM costco_tax_batches b
+            LEFT JOIN dim_companies c ON b.company_id = c.company_id
+            LEFT JOIN dim_users u     ON b.created_by  = u.user_id
+            LEFT JOIN costco_tax_batch_items bi ON bi.batch_id = b.batch_id
+            LEFT JOIN transactions t ON bi.transaction_id = t.transaction_id
+            {where}
+            GROUP BY b.batch_id, b.batch_name, b.created_at, b.order_count, b.total_requested,
+                     c.company_name, u.username
+            ORDER BY b.created_at DESC
+        """, params)
+        batches = cur.fetchall()
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+
+    return render_template('costco_tax_batches.html', batches=batches, companies=companies,
+                           filters={'company': f_company, 'batch_name': f_batch})
+
+
+@admin_bp.route('/costco-taxes/batch/<batch_id>')
+@login_required
+@require_role('admin')
+def costco_tax_batch_detail(batch_id):
+    from flask import abort
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT b.batch_id, b.batch_name, b.created_at, b.total_requested,
+                   c.company_name, u.username AS created_by
+            FROM costco_tax_batches b
+            LEFT JOIN dim_companies c ON b.company_id = c.company_id
+            LEFT JOIN dim_users u     ON b.created_by  = u.user_id
+            WHERE b.batch_id = %s
+        """, (batch_id,))
+        batch = cur.fetchone()
+        if not batch:
+            abort(404)
+
+        cur.execute("""
+            SELECT t.transaction_id, t.order_number, t.purchase_date, per.username AS person_name,
+                   t.costco_taxes_paid, t.costco_refund_status, t.costco_refund_amount,
+                   bi.amount_requested,
+                   ROUND((COALESCE(t.costco_taxes_paid,0) - COALESCE(t.costco_refund_amount,0))::numeric,2) AS missing_amount,
+                   CASE WHEN t.costco_last_activity_at IS NOT NULL
+                        THEN EXTRACT(DAY FROM NOW() - t.costco_last_activity_at)::int
+                        ELSE NULL END AS days_waiting
+            FROM costco_tax_batch_items bi
+            JOIN transactions t ON bi.transaction_id = t.transaction_id
+            LEFT JOIN dim_users per ON t.user_id = per.user_id
+            WHERE bi.batch_id = %s
+            ORDER BY t.purchase_date
+        """, (batch_id,))
+        orders = cur.fetchall()
+
+    return render_template('costco_tax_batch_detail.html', batch=batch, orders=orders)
+
+
+@admin_bp.route('/costco-taxes/refund-update', methods=['POST'])
+@login_required
+@require_role('admin')
+def costco_tax_refund_update():
+    from ..security import audit
+    from flask import abort
+
+    tid          = request.form.get('transaction_id', '').strip()
+    amount_entry = request.form.get('amount_received', type=float)
+    return_to    = request.form.get('return_to') or url_for('admin.costco_taxes')
+
+    if not tid or amount_entry is None or amount_entry <= 0:
+        flash('Enter a refund amount greater than $0.', 'danger')
+        return redirect(return_to)
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            SELECT order_number, costco_taxes_paid, costco_refund_amount
+            FROM transactions WHERE transaction_id = %s AND retailer = 'Costco'
+        """, (tid,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+
+        tax_paid    = float(row['costco_taxes_paid'] or 0)
+        prior       = float(row['costco_refund_amount'] or 0)
+        new_total   = round(prior + amount_entry, 2)
+        new_status  = 'Full' if new_total >= tax_paid - 0.01 else 'Partial'
+        new_total   = min(new_total, tax_paid)
+
+        cur.execute("""
+            UPDATE transactions
+            SET costco_refund_amount = %s,
+                costco_refund_status = %s,
+                costco_last_activity_at = NOW()
+            WHERE transaction_id = %s
+        """, (new_total, new_status, tid))
+
+    audit('costco_refund_updated', 'transaction', tid,
+          detail=f"Order {row['order_number']}: +${amount_entry:,.2f} received "
+                 f"(${new_total:,.2f} of ${tax_paid:,.2f} total) -> {new_status}")
+    flash(f"Order {row['order_number']} updated — {new_status}.", 'success')
+    return redirect(return_to)
 
 
 @admin_bp.route('/audit-log')
@@ -1290,8 +1593,6 @@ def audit_log():
         conditions.append("a.action = %s"); params.append(f_action)
     if f_user:
         conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
-    if f_batch:
-        conditions.append("t.print_batch_id = %s"); params.append(f_batch)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
