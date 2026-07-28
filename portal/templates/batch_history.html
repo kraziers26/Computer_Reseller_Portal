@@ -35,7 +35,7 @@
       <input type="date" name="date_to" value="{{ filters.date_to }}" style="width:100%" onchange="this.form.submit()">
     </div>
     <div style="display:flex;align-items:flex-end">
-      {% if filters.batch_id or filters.company or filters.submitter or filters.date_from or filters.date_to %}
+      {% if filters.batch_id or filters.order_number or filters.company or filters.submitter or filters.date_from or filters.date_to %}
       <a href="{{ url_for('admin.batch_history') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
       {% endif %}
     </div>
