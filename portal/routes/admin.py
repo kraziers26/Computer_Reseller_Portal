@@ -1540,28 +1540,41 @@ def costco_tax_refund_update():
     from ..security import audit
     from flask import abort
 
-    tid          = request.form.get('transaction_id', '').strip()
-    amount_entry = request.form.get('amount_received', type=float)
-    return_to    = request.form.get('return_to') or url_for('admin.costco_taxes')
+    tid           = request.form.get('transaction_id', '').strip()
+    status_choice = request.form.get('status_choice', 'Pending')
+    amount_entry  = request.form.get('amount_received', type=float)
+    return_to     = request.form.get('return_to') or url_for('admin.costco_taxes')
 
-    if not tid or amount_entry is None or amount_entry <= 0:
-        flash('Enter a refund amount greater than $0.', 'danger')
+    if status_choice not in ('Pending', 'Partial', 'Full'):
+        status_choice = 'Pending'
+
+    if not tid:
+        flash('Missing order reference.', 'danger')
         return redirect(return_to)
 
     with db_cursor() as (cur, conn):
         cur.execute("""
-            SELECT order_number, costco_taxes_paid, costco_refund_amount
+            SELECT order_number, costco_taxes_paid
             FROM transactions WHERE transaction_id = %s AND retailer = 'Costco'
         """, (tid,))
         row = cur.fetchone()
         if not row:
             abort(404)
 
-        tax_paid    = float(row['costco_taxes_paid'] or 0)
-        prior       = float(row['costco_refund_amount'] or 0)
-        new_total   = round(prior + amount_entry, 2)
-        new_status  = 'Full' if new_total >= tax_paid - 0.01 else 'Partial'
-        new_total   = min(new_total, tax_paid)
+        tax_paid = float(row['costco_taxes_paid'] or 0)
+
+        if status_choice == 'Full':
+            new_amount = tax_paid
+            new_status = 'Full'
+        elif status_choice == 'Partial':
+            if amount_entry is None or amount_entry <= 0:
+                flash('Enter a partial refund amount greater than $0.', 'danger')
+                return redirect(return_to)
+            new_amount = round(min(amount_entry, tax_paid), 2)
+            new_status = 'Partial'
+        else:  # Pending — nothing selected, or explicitly reset
+            new_amount = 0
+            new_status = 'Pending'
 
         cur.execute("""
             UPDATE transactions
@@ -1569,13 +1582,110 @@ def costco_tax_refund_update():
                 costco_refund_status = %s,
                 costco_last_activity_at = NOW()
             WHERE transaction_id = %s
-        """, (new_total, new_status, tid))
+        """, (new_amount, new_status, tid))
 
     audit('costco_refund_updated', 'transaction', tid,
-          detail=f"Order {row['order_number']}: +${amount_entry:,.2f} received "
-                 f"(${new_total:,.2f} of ${tax_paid:,.2f} total) -> {new_status}")
-    flash(f"Order {row['order_number']} updated — {new_status}.", 'success')
+          detail=f"Order {row['order_number']}: marked {new_status}"
+                 + (f" — ${new_amount:,.2f} of ${tax_paid:,.2f}" if new_status != 'Pending' else ""))
+    flash(f"Order {row['order_number']} marked {new_status}.", 'success')
     return redirect(return_to)
+
+
+@admin_bp.route('/costco-taxes/batch/<batch_id>/undo', methods=['POST'])
+@login_required
+@require_role('admin')
+def costco_tax_batch_undo(batch_id):
+    from ..security import audit
+    from flask import abort
+
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT batch_name FROM costco_tax_batches WHERE batch_id = %s", (batch_id,))
+        batch = cur.fetchone()
+        if not batch:
+            abort(404)
+
+        # Orders eligible to revert to Unrequested: this was their only batch,
+        # AND no refund has been recorded since (still sitting at Pending).
+        cur.execute("""
+            SELECT bi.transaction_id, t.costco_refund_status,
+                   (SELECT COUNT(*) FROM costco_tax_batch_items bi2
+                     WHERE bi2.transaction_id = bi.transaction_id AND bi2.batch_id != %s) AS other_batches
+            FROM costco_tax_batch_items bi
+            JOIN transactions t ON bi.transaction_id = t.transaction_id
+            WHERE bi.batch_id = %s
+        """, (batch_id, batch_id))
+        items = cur.fetchall()
+
+        revert_ids = [str(i['transaction_id']) for i in items
+                      if i['other_batches'] == 0 and i['costco_refund_status'] == 'Pending']
+
+        if revert_ids:
+            cur.execute("""
+                UPDATE transactions
+                SET costco_refund_status = NULL,
+                    costco_refund_amount = 0,
+                    costco_last_requested_at = NULL,
+                    costco_last_activity_at = NULL
+                WHERE transaction_id = ANY(%s::uuid[])
+            """, (revert_ids,))
+
+        cur.execute("DELETE FROM costco_tax_batches WHERE batch_id = %s", (batch_id,))
+        # costco_tax_batch_items rows cascade-delete via FK
+
+    audit('costco_batch_undone', 'costco_tax_batch', batch_id,
+          detail=f"Undid batch '{batch['batch_name']}' — {len(revert_ids)} order(s) reverted to Unrequested")
+    flash(f"Batch '{batch['batch_name']}' undone. {len(revert_ids)} order(s) reverted to Unrequested; "
+          f"any Partial/Full orders kept their refund status.", 'success')
+    return redirect(url_for('admin.costco_tax_batches'))
+
+
+@admin_bp.route('/costco-taxes/batch/<batch_id>/remove-order', methods=['POST'])
+@login_required
+@require_role('admin')
+def costco_tax_batch_remove_order(batch_id):
+    from ..security import audit
+
+    tid = request.form.get('transaction_id', '').strip()
+    if not tid:
+        flash('Missing order reference.', 'danger')
+        return redirect(url_for('admin.costco_tax_batch_detail', batch_id=batch_id))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM costco_tax_batch_items
+            WHERE transaction_id = %s AND batch_id != %s
+        """, (tid, batch_id))
+        other_batches = cur.fetchone()['n']
+
+        cur.execute("SELECT order_number, costco_refund_status FROM transactions WHERE transaction_id = %s", (tid,))
+        t = cur.fetchone()
+
+        cur.execute("DELETE FROM costco_tax_batch_items WHERE batch_id = %s AND transaction_id = %s",
+                    (batch_id, tid))
+
+        cur.execute("""
+            SELECT COUNT(*) AS cnt, COALESCE(SUM(amount_requested), 0) AS total
+            FROM costco_tax_batch_items WHERE batch_id = %s
+        """, (batch_id,))
+        agg = cur.fetchone()
+        cur.execute("""
+            UPDATE costco_tax_batches SET order_count = %s, total_requested = %s WHERE batch_id = %s
+        """, (agg['cnt'], round(float(agg['total'] or 0), 2), batch_id))
+
+        reverted = False
+        if other_batches == 0 and t and t['costco_refund_status'] == 'Pending':
+            cur.execute("""
+                UPDATE transactions
+                SET costco_refund_status = NULL, costco_refund_amount = 0,
+                    costco_last_requested_at = NULL, costco_last_activity_at = NULL
+                WHERE transaction_id = %s
+            """, (tid,))
+            reverted = True
+
+    audit('costco_batch_order_removed', 'transaction', tid,
+          detail=f"Removed from batch {batch_id}" + (" — reverted to Unrequested" if reverted else ""))
+    flash(f"Order {t['order_number'] if t else tid} removed from batch.", 'success')
+    return redirect(url_for('admin.costco_tax_batch_detail', batch_id=batch_id))
 
 
 @admin_bp.route('/audit-log')
