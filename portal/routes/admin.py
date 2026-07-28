@@ -403,7 +403,8 @@ def all_submissions():
     f_order      = request.args.get('order_number', '')
     f_role        = request.args.get('role', '')
     f_fulfillment  = request.args.get('fulfillment', '')
-    f_stuck_days   = request.args.get('stuck_days', type=int)  # filter: in status > N days
+    f_stuck_days   = request.args.get('stuck_days', type=int)
+    f_batch        = request.args.get('batch', '')
 
     conditions = ["t.is_active = TRUE"]
     params = []
@@ -436,6 +437,9 @@ def all_submissions():
             "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
             " / 86400 >= %s")
         params.append(f_stuck_days)
+
+    if f_batch:
+        conditions.append("t.print_batch_id = %s"); params.append(f_batch)
 
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
@@ -484,16 +488,19 @@ def all_submissions():
         cards = cur.fetchall()
         cur.execute("SELECT DISTINCT purchase_year_month FROM transactions WHERE is_active=TRUE ORDER BY purchase_year_month DESC")
         months = [r['purchase_year_month'] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT print_batch_id FROM transactions WHERE print_batch_id IS NOT NULL AND is_active=TRUE ORDER BY print_batch_id")
+        batches = [r['print_batch_id'] for r in cur.fetchall()]
 
     return render_template('all_submissions.html',
                            submissions=submissions, total=total,
                            page=page, per_page=per_page,
                            retailers=retailers, companies=companies, users=users, cards=cards, months=months,
+                           batches=batches,
                            filters={'retailer':f_retailer,'company':f_company,'status':f_status,
                                     'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
                                     'card':f_card,'person_by':f_person,'order_number':f_order,
                                     'role':f_role,'fulfillment':f_fulfillment,
-                                    'stuck_days':f_stuck_days})
+                                    'stuck_days':f_stuck_days,'batch':f_batch})
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
@@ -876,6 +883,7 @@ def batch_history():
     f_submitter = request.args.get('submitter', type=int)
     f_date_from = request.args.get('date_from', '')
     f_date_to   = request.args.get('date_to', '')
+    f_order     = request.args.get('order_number', '').strip()
 
     conditions = ["t.print_batch_id IS NOT NULL"]
     params = []
@@ -889,6 +897,8 @@ def batch_history():
         conditions.append("t.print_date::date >= %s"); params.append(f_date_from)
     if f_date_to:
         conditions.append("t.print_date::date <= %s"); params.append(f_date_to)
+    if f_order:
+        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
 
     where = 'WHERE ' + ' AND '.join(conditions)
 
@@ -916,7 +926,8 @@ def batch_history():
                            users=users,
                            filters={'batch_id':f_batch,'company':f_company,
                                     'submitter':f_submitter,
-                                    'date_from':f_date_from,'date_to':f_date_to})
+                                    'date_from':f_date_from,'date_to':f_date_to,
+                                    'order_number':f_order})
 
 
 @admin_bp.route('/batch/<batch_id>')
@@ -1261,6 +1272,9 @@ def audit_log():
         conditions.append("a.action = %s"); params.append(f_action)
     if f_user:
         conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
+    if f_batch:
+        conditions.append("t.print_batch_id = %s"); params.append(f_batch)
+
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
     with db_cursor() as (cur, _):
@@ -1390,6 +1404,9 @@ def export_audit_log():
         conditions.append("a.action = %s"); params.append(f_action)
     if f_user:
         conditions.append("a.user_email ILIKE %s"); params.append(f'%{f_user}%')
+    if f_batch:
+        conditions.append("t.print_batch_id = %s"); params.append(f_batch)
+
     where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
 
     with db_cursor() as (cur, _):
