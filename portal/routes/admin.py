@@ -1250,8 +1250,8 @@ def costco_taxes():
                 COUNT(*) FILTER (WHERE t.costco_refund_status = 'Full')         AS full_count,
                 COUNT(*) FILTER (WHERE t.costco_refund_status IN ('Pending','Partial')
                                    AND t.costco_last_activity_at < NOW() - INTERVAL '{STALE_DAYS} days') AS stale_count,
-                ROUND(SUM(COALESCE(t.costco_taxes_paid,0) - COALESCE(t.costco_refund_amount,0))
-                      ::numeric, 2) FILTER (WHERE t.costco_refund_status IS DISTINCT FROM 'Full') AS outstanding_tax
+                ROUND((SUM(COALESCE(t.costco_taxes_paid,0) - COALESCE(t.costco_refund_amount,0))
+                       FILTER (WHERE t.costco_refund_status IS DISTINCT FROM 'Full'))::numeric, 2) AS outstanding_tax
             FROM transactions t {where}
         """, params)
         metrics = cur.fetchone()
