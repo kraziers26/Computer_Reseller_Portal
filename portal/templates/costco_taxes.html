@@ -195,7 +195,7 @@
       <td style="padding:8px 10px;white-space:nowrap">
         {% if r.costco_refund_status in ('Pending','Partial') %}
         <button type="button" class="btn btn-ghost btn-sm"
-                onclick="ctOpenRefundModal('{{ r.transaction_id }}','{{ r.order_number }}',{{ r.missing_amount or 0 }})">Update</button>
+                onclick="ctOpenRefundModal('{{ r.transaction_id }}','{{ r.order_number }}',{{ r.costco_taxes_paid or 0 }})">Update</button>
         {% endif %}
       </td>
     </tr>
@@ -239,10 +239,26 @@
       <input type="hidden" name="transaction_id" id="ctModalTid">
       <input type="hidden" name="return_to" value="{{ request.full_path }}">
       <div class="db-mrow">
-        <label>Amount refunded (this update)</label>
-        <input type="number" step="0.01" min="0.01" name="amount_received" required>
+        <label>Status</label>
+        <div style="display:flex;gap:14px;font-size:13px;padding:6px 0">
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:400;color:var(--text)">
+            <input type="radio" name="status_choice" value="Pending" checked onchange="ctToggleAmount(this)" style="width:auto">Pending
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:400;color:var(--text)">
+            <input type="radio" name="status_choice" value="Partial" onchange="ctToggleAmount(this)" style="width:auto">Partial
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:400;color:var(--text)">
+            <input type="radio" name="status_choice" value="Full" onchange="ctToggleAmount(this)" style="width:auto">Complete
+          </label>
+        </div>
       </div>
-      <div class="db-mrow" style="font-size:12px;color:var(--muted)">Remaining owed before this update: $<span id="ctModalMissing"></span></div>
+      <div class="db-mrow" id="ctAmountRow" style="display:none">
+        <label>Amount refunded so far (total, not just this update)</label>
+        <input type="number" step="0.01" min="0.01" name="amount_received" id="ctAmountInput">
+      </div>
+      <div class="db-mrow" style="font-size:12px;color:var(--muted)">
+        Tax paid on this order: $<span id="ctModalMissing"></span>. Leaving "Pending" selected resets any prior refund on this order back to Pending.
+      </div>
       <div class="db-modal-footer">
         <button type="button" class="btn btn-ghost btn-sm" onclick="ctCloseRefundModal()">Cancel</button>
         <button type="submit" class="btn btn-primary btn-sm">Save</button>
@@ -250,6 +266,15 @@
     </form>
   </div>
 </div>
+
+<script>
+function ctToggleAmount(radio){
+  const row = document.getElementById('ctAmountRow');
+  const input = document.getElementById('ctAmountInput');
+  if (radio.value === 'Partial'){ row.style.display = 'block'; input.required = true; }
+  else { row.style.display = 'none'; input.required = false; input.value = ''; }
+}
+</script>
 
 <script>
 function ctToggleAll(master){
@@ -281,10 +306,14 @@ function ctSubmitBatch(){
   }
   form.submit();
 }
-function ctOpenRefundModal(tid, orderNumber, missing){
+function ctOpenRefundModal(tid, orderNumber, taxPaid){
   document.getElementById('ctModalTid').value = tid;
   document.getElementById('ctModalOrder').textContent = orderNumber;
-  document.getElementById('ctModalMissing').textContent = missing.toFixed(2);
+  document.getElementById('ctModalMissing').textContent = taxPaid.toFixed(2);
+  document.querySelectorAll('input[name="status_choice"]').forEach(r => r.checked = (r.value === 'Pending'));
+  document.getElementById('ctAmountRow').style.display = 'none';
+  document.getElementById('ctAmountInput').required = false;
+  document.getElementById('ctAmountInput').value = '';
   document.getElementById('ctRefundModal').classList.add('open');
 }
 function ctCloseRefundModal(){
