@@ -917,13 +917,31 @@ def batch_history():
             ORDER BY batch_date DESC
         """, params)
         batches = cur.fetchall()
+
+        # When searching by order number, also fetch the individual matching orders
+        order_results = []
+        if f_order:
+            cur.execute("""
+                SELECT t.transaction_id, t.order_number, t.retailer,
+                       t.purchase_date, t.price_total, t.print_batch_id,
+                       t.fulfillment_status, t.print_date,
+                       per.username AS person_name,
+                       c.company_name
+                FROM transactions t
+                LEFT JOIN dim_users per    ON t.user_id    = per.user_id
+                LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+                WHERE t.order_number ILIKE %s AND t.is_active=TRUE
+                ORDER BY t.print_batch_id NULLS LAST, t.submitted_at DESC
+            """, (f'%{f_order}%',))
+            order_results = cur.fetchall()
+
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
         companies = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
 
     return render_template('batch_history.html', batches=batches, companies=companies,
-                           users=users,
+                           users=users, order_results=order_results,
                            filters={'batch_id':f_batch,'company':f_company,
                                     'submitter':f_submitter,
                                     'date_from':f_date_from,'date_to':f_date_to,
