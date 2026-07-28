@@ -2,8 +2,9 @@
 {% block title %}Costco Taxes — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>Costco Taxes</h1><p>Tax withheld on all Costco transactions</p></div>
+  <div><h1>Costco Taxes</h1><p>Tax withheld on all Costco transactions — request and track refunds here</p></div>
   <div class="flex gap-8">
+    <a href="{{ url_for('admin.costco_tax_batches') }}" class="btn btn-ghost btn-sm">🧾 Batch History</a>
     <a href="{{ url_for('admin.export_costco_taxes', month=filters.month, year=filters.year, company=filters.company or '', person_by=filters.person_by or '', membership=filters.membership) }}"
        class="btn btn-ghost btn-sm">⬇ Export Excel</a>
     <button onclick="window.print()" class="btn btn-ghost btn-sm">🖨 Print PDF</button>
@@ -12,16 +13,55 @@
 
 <style>
 @media print {
-  .sidebar, .page-header .flex, .card:first-of-type { display:none!important }
+  .sidebar, .page-header .flex, .card:first-of-type, #ctBatchBar { display:none!important }
   body { background:#fff; color:#000 }
   table { font-size:10px }
 }
+.ct-badge{font-size:11px;padding:2px 8px;border-radius:20px;white-space:nowrap}
+.ct-badge-unrequested{background:var(--surface2);color:var(--muted)}
+.ct-badge-pending{background:rgba(245,158,11,.15);color:#fbbf24}
+.ct-badge-partial{background:rgba(56,189,248,.15);color:#38bdf8}
+.ct-badge-full{background:rgba(34,197,94,.15);color:#4ade80}
+.ct-stale{color:#f87171;font-weight:600}
+
+/* Modal (shared pattern with deals module) */
+.db-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:none;align-items:center;justify-content:center}
+.db-modal-overlay.open{display:flex}
+.db-modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);padding:24px;width:420px;max-width:95vw;max-height:90vh;overflow-y:auto}
+.db-modal-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:18px;display:flex;align-items:center;justify-content:space-between}
+.db-modal-close{background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0;line-height:1}
+.db-modal-close:hover{color:var(--text)}
+.db-mrow{margin-bottom:14px}
+.db-mrow label{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+.db-mrow input,.db-mrow select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text);font-family:var(--font);font-size:13px;outline:none}
+.db-mrow input:focus,.db-mrow select:focus{border-color:var(--accent)}
+.db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+
+#ctBatchBar{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);
+  padding:12px 16px;margin-top:12px;display:none;align-items:center;justify-content:space-between;gap:16px;
+  box-shadow:0 -4px 16px rgba(0,0,0,.25)}
+#ctBatchBar.visible{display:flex}
 </style>
 
 <!-- Filters -->
 <div class="card" style="margin-bottom:16px">
   <form method="GET">
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;align-items:end">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
+        <input type="text" name="order_number" value="{{ filters.order_number }}" placeholder="Search order #" style="width:100%" onkeydown="if(event.key==='Enter'){this.form.submit()}">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Refund Status</div>
+        <select name="status" style="width:100%" onchange="this.form.submit()">
+          <option value="">All</option>
+          <option value="unrequested" {{ 'selected' if filters.status=='unrequested' }}>Unrequested</option>
+          <option value="Pending" {{ 'selected' if filters.status=='Pending' }}>Pending</option>
+          <option value="Partial" {{ 'selected' if filters.status=='Partial' }}>Partial</option>
+          <option value="Full" {{ 'selected' if filters.status=='Full' }}>Full</option>
+          <option value="stale" {{ 'selected' if filters.status=='stale' }}>Stale ({{ stale_days }}d+)</option>
+        </select>
+      </div>
       <div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Month</div>
         <select name="month" style="width:100%" onchange="this.form.submit()">
@@ -61,7 +101,7 @@
         </select>
       </div>
       <div style="display:flex;align-items:flex-end;padding-bottom:2px">
-        {% if filters.month or filters.year or filters.company or filters.person_by or filters.membership %}
+        {% if filters.month or filters.year or filters.company or filters.person_by or filters.membership or filters.status or filters.order_number %}
         <a href="{{ url_for('admin.costco_taxes') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
         {% endif %}
       </div>
@@ -70,69 +110,84 @@
 </div>
 
 <!-- KPI Cards -->
-<div class="metrics" style="margin-bottom:20px">
+<div class="metrics" style="margin-bottom:12px">
   <div class="metric"><div class="metric-label">Costco Taxes Withheld</div><div class="metric-value danger">${{ "{:,.2f}".format(metrics.total_taxes or 0) }}</div></div>
   <div class="metric"><div class="metric-label">Total Orders</div><div class="metric-value">{{ metrics.total_orders or 0 }}</div></div>
-  <div class="metric"><div class="metric-label">Total GMV</div><div class="metric-value accent">${{ "{:,.2f}".format(metrics.total_gmv or 0) }}</div></div>
-  <div class="metric"><div class="metric-label">Gross Paid Out</div><div class="metric-value success">${{ "{:,.2f}".format(metrics.total_gross_paid or 0) }}</div></div>
-  <div class="metric"><div class="metric-label">Total Cash Back</div><div class="metric-value">${{ "{:,.2f}".format(metrics.total_cashback or 0) }}</div></div>
-  <div class="metric"><div class="metric-label">Unique Memberships</div><div class="metric-value">{{ metrics.unique_memberships or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Outstanding Tax</div><div class="metric-value danger">${{ "{:,.2f}".format(metrics.outstanding_tax or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Unrequested</div><div class="metric-value">{{ metrics.unrequested_count or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Pending</div><div class="metric-value">{{ metrics.pending_count or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Partial</div><div class="metric-value">{{ metrics.partial_count or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Full</div><div class="metric-value success">{{ metrics.full_count or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">Stale ({{ stale_days }}d+)</div><div class="metric-value danger">{{ metrics.stale_count or 0 }}</div></div>
 </div>
+
+<!-- Hidden form the row checkboxes submit into (see form="ctBatchForm" on each checkbox) -->
+<form id="ctBatchForm" method="POST" action="{{ url_for('admin.costco_tax_batch_create') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+</form>
 
 <!-- Transactions Table — full width, no horizontal scroll -->
 <div class="card">
+  <div style="overflow-x:auto">
   <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:auto">
     <thead>
       <tr style="background:var(--surface2)">
+        <th style="padding:10px 6px;border-bottom:1px solid var(--border)"><input type="checkbox" onclick="ctToggleAll(this)"></th>
         <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Order #</th>
         <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
         <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person</th>
         <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-        <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Membership</th>
-        <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Card</th>
         <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
         <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Costco Tax</th>
-        <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Gross Paid</th>
-        <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Net Paid</th>
-        <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Cash Back</th>
-        <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
-        <th style="padding:10px 10px;border-bottom:1px solid var(--border)">PDF</th>
+        <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Refund Status</th>
+        <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Refunded</th>
+        <th style="padding:10px 10px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Missing</th>
+        <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Days Waiting</th>
+        <th style="padding:10px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch</th>
+        <th style="padding:10px 10px;border-bottom:1px solid var(--border)"></th>
       </tr>
     </thead>
     <tbody>
-    {% set ns = namespace(total=0, tax=0, gross=0, net=0, cb=0) %}
+    {% set ns = namespace(total=0, tax=0) %}
     {% for r in transactions %}
     {% set ns.total = ns.total + (r.price_total or 0)|float %}
     {% set ns.tax   = ns.tax   + (r.costco_taxes_paid or 0)|float %}
-    {% set ns.gross = ns.gross + (r.gross_paid or 0)|float %}
-    {% set ns.net   = ns.net   + (r.net_paid or 0)|float %}
-    {% set ns.cb    = ns.cb    + (r.cashback or 0)|float %}
     <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 6px">
+        {% if r.costco_refund_status != 'Full' %}
+        <input type="checkbox" form="ctBatchForm" name="txn_ids" value="{{ r.transaction_id }}"
+               data-amount="{{ r.missing_amount if r.costco_refund_status else r.costco_taxes_paid or 0 }}"
+               data-company="{{ r.company_id or '' }}" onclick="ctUpdateBar()">
+        {% endif %}
+      </td>
       <td style="padding:8px 10px;font-family:var(--mono);font-size:11px">{{ r.order_number[:18] }}</td>
       <td style="padding:8px 10px;font-size:12px;color:var(--muted);white-space:nowrap">{{ r.purchase_date }}</td>
       <td style="padding:8px 10px;white-space:nowrap">{{ r.person_name or '—' }}</td>
       <td style="padding:8px 10px;font-size:12px">{{ r.company_name or '—' }}</td>
-      <td style="padding:8px 10px;font-family:var(--mono);font-size:12px">{{ r.membership_number or '—' }}</td>
-      <td style="padding:8px 10px;font-family:var(--mono);font-size:11px;white-space:nowrap">
-        {% if r.card_id %}{{ r.card_id }} <span style="color:var(--muted)">{{ "%.1f"|format((r.cashback_rate or 0)*100) }}%</span>{% else %}—{% endif %}
-      </td>
       <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
       <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#f87171;font-weight:500">${{ "{:,.2f}".format(r.costco_taxes_paid or 0) }}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
       <td style="padding:8px 10px;white-space:nowrap">
-        {% if r.review_status in ('Auto-approved','Reviewed') %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:11px;padding:2px 8px;border-radius:20px">Approved</span>
-        {% elif r.review_status == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:11px;padding:2px 8px;border-radius:20px">Pending</span>
-        {% else %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:11px;padding:2px 8px;border-radius:20px">{{ r.review_status }}</span>{% endif %}
+        {% if not r.costco_refund_status %}<span class="ct-badge ct-badge-unrequested">Unrequested</span>
+        {% elif r.costco_refund_status == 'Pending' %}<span class="ct-badge ct-badge-pending">Pending</span>
+        {% elif r.costco_refund_status == 'Partial' %}<span class="ct-badge ct-badge-partial">Partial</span>
+        {% else %}<span class="ct-badge ct-badge-full">Full</span>{% endif %}
       </td>
-      <td style="padding:8px 10px">
-        {% if r.has_pdf %}
-          <a href="{{ url_for('admin.serve_transaction_pdf', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨</a>
-        {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
-          <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗</a>
-        {% else %}
-          <span style="color:var(--hint);font-size:11px">—</span>
+      <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">
+        {% if r.costco_refund_status %}${{ "{:,.2f}".format(r.costco_refund_amount or 0) }}{% else %}—{% endif %}
+      </td>
+      <td style="padding:8px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">
+        {% if r.costco_refund_status in ('Pending','Partial') %}${{ "{:,.2f}".format(r.missing_amount or 0) }}{% else %}—{% endif %}
+      </td>
+      <td style="padding:8px 10px;white-space:nowrap" class="{{ 'ct-stale' if r.days_waiting is not none and r.days_waiting >= stale_days and r.costco_refund_status in ('Pending','Partial') }}">
+        {% if r.days_waiting is not none and r.costco_refund_status in ('Pending','Partial') %}{{ r.days_waiting }}d{% else %}—{% endif %}
+      </td>
+      <td style="padding:8px 10px;font-size:12px;white-space:nowrap">
+        {% if r.last_batch_id %}<a href="{{ url_for('admin.costco_tax_batch_detail', batch_id=r.last_batch_id) }}">{{ r.last_batch_name }}</a>{% else %}—{% endif %}
+      </td>
+      <td style="padding:8px 10px;white-space:nowrap">
+        {% if r.costco_refund_status in ('Pending','Partial') %}
+        <button type="button" class="btn btn-ghost btn-sm"
+                onclick="ctOpenRefundModal('{{ r.transaction_id }}','{{ r.order_number }}',{{ r.missing_amount or 0 }})">Update</button>
         {% endif %}
       </td>
     </tr>
@@ -144,16 +199,92 @@
     {% if transactions %}
     <tfoot>
       <tr style="border-top:2px solid var(--border2);font-weight:600;background:var(--surface2)">
-        <td colspan="6" style="padding:10px 10px;color:var(--muted);font-size:12px">Total ({{ transactions|length }} orders)</td>
+        <td colspan="5" style="padding:10px 10px;color:var(--muted);font-size:12px">Total ({{ transactions|length }} orders)</td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(ns.total) }}</td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono);color:#f87171">${{ "{:,.2f}".format(ns.tax) }}</td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono);color:#4ade80">${{ "{:,.2f}".format(ns.gross) }}</td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(ns.net) }}</td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(ns.cb) }}</td>
-        <td colspan="2"></td>
+        <td colspan="6"></td>
       </tr>
     </tfoot>
     {% endif %}
   </table>
+  </div>
 </div>
+
+<!-- Sticky batch-creation bar -->
+<div id="ctBatchBar">
+  <div><span id="ctSelCount">0</span> orders selected · <span id="ctSelTotal">$0.00</span> total tax</div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <input type="text" id="ctBatchName" placeholder="Batch name (e.g. July Costco follow-up)" style="width:260px">
+    <button type="button" class="btn btn-primary btn-sm" onclick="ctSubmitBatch()">Create request batch</button>
+  </div>
+</div>
+
+<!-- Refund update modal -->
+<div class="db-modal-overlay" id="ctRefundModal">
+  <div class="db-modal">
+    <div class="db-modal-title">
+      <span>Update refund — order <span id="ctModalOrder"></span></span>
+      <button class="db-modal-close" onclick="ctCloseRefundModal()">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('admin.costco_tax_refund_update') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="transaction_id" id="ctModalTid">
+      <input type="hidden" name="return_to" value="{{ request.full_path }}">
+      <div class="db-mrow">
+        <label>Amount refunded (this update)</label>
+        <input type="number" step="0.01" min="0.01" name="amount_received" required>
+      </div>
+      <div class="db-mrow" style="font-size:12px;color:var(--muted)">Remaining owed before this update: $<span id="ctModalMissing"></span></div>
+      <div class="db-modal-footer">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="ctCloseRefundModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function ctToggleAll(master){
+  document.querySelectorAll('input[name="txn_ids"]').forEach(cb => cb.checked = master.checked);
+  ctUpdateBar();
+}
+function ctUpdateBar(){
+  const checked = Array.from(document.querySelectorAll('input[name="txn_ids"]:checked'));
+  const bar = document.getElementById('ctBatchBar');
+  if (checked.length === 0){ bar.classList.remove('visible'); return; }
+  bar.classList.add('visible');
+  document.getElementById('ctSelCount').textContent = checked.length;
+  const total = checked.reduce((s,cb) => s + parseFloat(cb.dataset.amount || 0), 0);
+  document.getElementById('ctSelTotal').textContent = '$' + total.toFixed(2);
+}
+function ctSubmitBatch(){
+  const name = document.getElementById('ctBatchName').value.trim();
+  if (!name){ alert('Give this batch a name.'); return; }
+  const checked = document.querySelectorAll('input[name="txn_ids"]:checked');
+  if (checked.length === 0){ alert('Select at least one order.'); return; }
+  const form = document.getElementById('ctBatchForm');
+  const nameInput = document.createElement('input');
+  nameInput.type = 'hidden'; nameInput.name = 'batch_name'; nameInput.value = name;
+  form.appendChild(nameInput);
+  const companyId = checked[0].dataset.company;
+  if (companyId){
+    const compInput = document.createElement('input');
+    compInput.type = 'hidden'; compInput.name = 'company_id'; compInput.value = companyId;
+    form.appendChild(compInput);
+  }
+  form.submit();
+}
+function ctOpenRefundModal(tid, orderNumber, missing){
+  document.getElementById('ctModalTid').value = tid;
+  document.getElementById('ctModalOrder').textContent = orderNumber;
+  document.getElementById('ctModalMissing').textContent = missing.toFixed(2);
+  document.getElementById('ctRefundModal').classList.add('open');
+}
+function ctCloseRefundModal(){
+  document.getElementById('ctRefundModal').classList.remove('open');
+}
+document.getElementById('ctRefundModal').addEventListener('click', function(e){
+  if (e.target === this) ctCloseRefundModal();
+});
+</script>
 {% endblock %}
