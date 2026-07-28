@@ -10,6 +10,7 @@
   </div>
   <div class="flex gap-8">
     <a href="{{ url_for('admin.costco_tax_batch_download', batch_id=batch.batch_id) }}" class="btn btn-ghost btn-sm">⬇ Re-download Excel</a>
+    <button type="button" class="btn btn-ghost btn-sm" style="color:#f87171" onclick="bdConfirmUndo()">↩ Undo batch</button>
     <a href="{{ url_for('admin.costco_tax_batches') }}" class="btn btn-ghost btn-sm">← Batch History</a>
   </div>
 </div>
@@ -17,6 +18,8 @@
 <div class="card" style="margin-bottom:12px;padding:12px 16px;font-size:13px;color:var(--muted)">
   Statuses below are live — they reflect each order's current refund status, not what it was when this batch was created.
   Requested at the time: <strong style="color:var(--text)">${{ "{:,.2f}".format(batch.total_requested or 0) }}</strong>.
+  "Undo batch" deletes this batch record and reverts any still-Pending order back to Unrequested; orders that already
+  have a Partial or Full refund recorded keep that status. "Remove" pulls a single order out of this batch the same way.
 </div>
 
 <style>
@@ -67,11 +70,17 @@
         {% if o.costco_refund_status != 'Full' %}${{ "{:,.2f}".format(o.missing_amount or 0) }}{% else %}—{% endif %}
       </td>
       <td style="padding:8px 12px;font-size:12px">{{ o.days_waiting ~ 'd' if o.days_waiting is not none and o.costco_refund_status != 'Full' else '—' }}</td>
-      <td style="padding:8px 12px">
+      <td style="padding:8px 12px;white-space:nowrap">
         {% if o.costco_refund_status != 'Full' %}
         <button type="button" class="btn btn-ghost btn-sm"
-                onclick="bdOpenRefundModal('{{ o.transaction_id }}','{{ o.order_number }}',{{ o.missing_amount or 0 }})">Update</button>
+                onclick="bdOpenRefundModal('{{ o.transaction_id }}','{{ o.order_number }}',{{ o.costco_taxes_paid or 0 }})">Update</button>
         {% endif %}
+        <form method="POST" action="{{ url_for('admin.costco_tax_batch_remove_order', batch_id=batch.batch_id) }}"
+              style="display:inline" onsubmit="return confirm('Remove order {{ o.order_number }} from this batch?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="transaction_id" value="{{ o.transaction_id }}">
+          <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171">Remove</button>
+        </form>
       </td>
     </tr>
     {% endfor %}
@@ -88,6 +97,11 @@
   it'll show up both here and in that new batch going forward.
 </div>
 
+<!-- Undo whole batch (hidden form, triggered by header button after confirm) -->
+<form id="bdUndoForm" method="POST" action="{{ url_for('admin.costco_tax_batch_undo', batch_id=batch.batch_id) }}" style="display:none">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+</form>
+
 <!-- Refund update modal -->
 <div class="db-modal-overlay" id="bdRefundModal">
   <div class="db-modal">
@@ -100,10 +114,26 @@
       <input type="hidden" name="transaction_id" id="bdModalTid">
       <input type="hidden" name="return_to" value="{{ request.full_path }}">
       <div class="db-mrow">
-        <label>Amount refunded (this update)</label>
-        <input type="number" step="0.01" min="0.01" name="amount_received" required>
+        <label>Status</label>
+        <div style="display:flex;gap:14px;font-size:13px;padding:6px 0">
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:400;color:var(--text)">
+            <input type="radio" name="status_choice" value="Pending" checked onchange="bdToggleAmount(this)" style="width:auto">Pending
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:400;color:var(--text)">
+            <input type="radio" name="status_choice" value="Partial" onchange="bdToggleAmount(this)" style="width:auto">Partial
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:400;color:var(--text)">
+            <input type="radio" name="status_choice" value="Full" onchange="bdToggleAmount(this)" style="width:auto">Complete
+          </label>
+        </div>
       </div>
-      <div class="db-mrow" style="font-size:12px;color:var(--muted)">Remaining owed before this update: $<span id="bdModalMissing"></span></div>
+      <div class="db-mrow" id="bdAmountRow" style="display:none">
+        <label>Amount refunded so far (total, not just this update)</label>
+        <input type="number" step="0.01" min="0.01" name="amount_received" id="bdAmountInput">
+      </div>
+      <div class="db-mrow" style="font-size:12px;color:var(--muted)">
+        Tax paid on this order: $<span id="bdModalMissing"></span>. Leaving "Pending" selected resets any prior refund on this order back to Pending.
+      </div>
       <div class="db-modal-footer">
         <button type="button" class="btn btn-ghost btn-sm" onclick="bdCloseRefundModal()">Cancel</button>
         <button type="submit" class="btn btn-primary btn-sm">Save</button>
@@ -113,10 +143,20 @@
 </div>
 
 <script>
-function bdOpenRefundModal(tid, orderNumber, missing){
+function bdToggleAmount(radio){
+  const row = document.getElementById('bdAmountRow');
+  const input = document.getElementById('bdAmountInput');
+  if (radio.value === 'Partial'){ row.style.display = 'block'; input.required = true; }
+  else { row.style.display = 'none'; input.required = false; input.value = ''; }
+}
+function bdOpenRefundModal(tid, orderNumber, taxPaid){
   document.getElementById('bdModalTid').value = tid;
   document.getElementById('bdModalOrder').textContent = orderNumber;
-  document.getElementById('bdModalMissing').textContent = missing.toFixed(2);
+  document.getElementById('bdModalMissing').textContent = taxPaid.toFixed(2);
+  document.querySelectorAll('input[name="status_choice"]').forEach(r => r.checked = (r.value === 'Pending'));
+  document.getElementById('bdAmountRow').style.display = 'none';
+  document.getElementById('bdAmountInput').required = false;
+  document.getElementById('bdAmountInput').value = '';
   document.getElementById('bdRefundModal').classList.add('open');
 }
 function bdCloseRefundModal(){
@@ -125,5 +165,10 @@ function bdCloseRefundModal(){
 document.getElementById('bdRefundModal').addEventListener('click', function(e){
   if (e.target === this) bdCloseRefundModal();
 });
+function bdConfirmUndo(){
+  if (confirm('Undo this entire batch? Still-Pending orders revert to Unrequested; any Partial/Full refunds already recorded are kept. This cannot be undone.')){
+    document.getElementById('bdUndoForm').submit();
+  }
+}
 </script>
 {% endblock %}
