@@ -1690,6 +1690,37 @@ def costco_tax_batch_remove_order(batch_id):
     return redirect(url_for('admin.costco_tax_batch_detail', batch_id=batch_id))
 
 
+@admin_bp.route('/costco-taxes/bulk-complete', methods=['POST'])
+@login_required
+@require_role('admin')
+def costco_tax_bulk_complete():
+    from ..security import audit
+
+    txn_ids   = request.form.getlist('txn_ids')
+    return_to = request.form.get('return_to') or url_for('admin.costco_taxes')
+
+    if not txn_ids:
+        flash('Select at least one order to mark complete.', 'danger')
+        return redirect(return_to)
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions
+            SET costco_refund_amount = COALESCE(costco_taxes_paid, 0),
+                costco_refund_status = 'Full',
+                costco_last_activity_at = NOW()
+            WHERE transaction_id = ANY(%s::uuid[]) AND retailer = 'Costco'
+            RETURNING transaction_id, order_number
+        """, (txn_ids,))
+        updated = cur.fetchall()
+
+    for u in updated:
+        audit('costco_bulk_marked_complete', 'transaction', str(u['transaction_id']),
+              detail=f"Order {u['order_number']}: bulk-marked Complete")
+    flash(f"{len(updated)} order(s) marked Complete.", 'success')
+    return redirect(return_to)
+
+
 @admin_bp.route('/audit-log')
 @login_required
 @require_role('admin')
