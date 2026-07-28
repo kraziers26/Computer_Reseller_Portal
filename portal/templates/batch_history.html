@@ -10,7 +10,11 @@
   <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-items:end">
     <div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Batch Name</div>
-      <input type="text" name="batch_id" value="{{ filters.batch_id }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
+      <input type="text" name="batch_id" value="{{ filters.batch_id }}" placeholder="Search batch..." style="width:100%" oninput="this.form.submit()">
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
+      <input type="text" name="order_number" value="{{ filters.order_number or '' }}" placeholder="Search order #..." style="width:100%" oninput="this.form.submit()">
     </div>
     <div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Submitter</div>
@@ -41,6 +45,64 @@
     </div>
   </form>
 </div>
+
+{% if filters.order_number and order_results %}
+<div class="card" style="margin-bottom:16px">
+  <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text)">
+    Orders matching "{{ filters.order_number }}" — {{ order_results|length }} found
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="background:var(--surface2)">
+        {% set th="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)" %}
+        <th style="{{ th }}">Order #</th>
+        <th style="{{ th }}">Batch</th>
+        <th style="{{ th }}">Retailer</th>
+        <th style="{{ th }}">Date</th>
+        <th style="{{ th }}">Person</th>
+        <th style="{{ th }}">Company</th>
+        <th style="{{ th }};text-align:right">Total</th>
+        <th style="{{ th }}">Stage</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for o in order_results %}
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">
+        <a href="{{ url_for('admin.review_submission', tid=o.transaction_id) }}" style="color:var(--accent2)">{{ o.order_number }}</a>
+      </td>
+      <td style="padding:8px 12px">
+        {% if o.print_batch_id %}
+        <a href="{{ url_for('admin.batch_detail', batch_id=o.print_batch_id) }}"
+           style="font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent2)">
+          {{ o.print_batch_id }}
+        </a>
+        {% else %}
+        <span style="color:var(--muted);font-size:12px">Not batched</span>
+        {% endif %}
+      </td>
+      <td style="padding:8px 12px;font-size:12px">{{ o.retailer }}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.purchase_date }}</td>
+      <td style="padding:8px 12px;font-size:12px">{{ o.person_name or '—' }}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.company_name or '—' }}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:var(--mono);font-size:12px">${{ "{:,.2f}".format(o.price_total or 0) }}</td>
+      <td style="padding:8px 12px">
+        <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;
+          background:{% if o.fulfillment_status=='invoiced' %}rgba(107,114,128,.15){% elif o.fulfillment_status=='received' %}rgba(16,185,129,.12){% elif o.fulfillment_status=='batched' %}rgba(139,92,246,.12){% else %}rgba(79,110,247,.1){% endif %};
+          color:{% if o.fulfillment_status=='invoiced' %}#9ca3af{% elif o.fulfillment_status=='received' %}#10b981{% elif o.fulfillment_status=='batched' %}#8b5cf6{% else %}#4f6ef7{% endif %}">
+          {{ o.fulfillment_status|capitalize }}
+        </span>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif filters.order_number and not order_results %}
+<div class="card" style="margin-bottom:16px;padding:24px;text-align:center;color:var(--muted)">
+  No orders found matching "{{ filters.order_number }}"
+</div>
+{% endif %}
 
 <div class="card">
   <table style="width:100%;border-collapse:collapse;font-size:13px">
