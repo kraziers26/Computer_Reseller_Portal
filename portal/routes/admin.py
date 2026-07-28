@@ -1604,8 +1604,10 @@ def costco_tax_batch_undo(batch_id):
         if not batch:
             abort(404)
 
-        # Orders eligible to revert to Unrequested: this was their only batch,
-        # AND no refund has been recorded since (still sitting at Pending).
+        # Orders eligible to revert to Unrequested: this batch was their only link.
+        # Reverts regardless of current status (Pending/Partial/Full) — undoing a
+        # batch/order-removal resets it fully rather than preserving a refund that
+        # was only ever recorded in the context of this batch.
         cur.execute("""
             SELECT bi.transaction_id, t.costco_refund_status,
                    (SELECT COUNT(*) FROM costco_tax_batch_items bi2
@@ -1617,7 +1619,7 @@ def costco_tax_batch_undo(batch_id):
         items = cur.fetchall()
 
         revert_ids = [str(i['transaction_id']) for i in items
-                      if i['other_batches'] == 0 and i['costco_refund_status'] == 'Pending']
+                      if i['other_batches'] == 0]
 
         if revert_ids:
             cur.execute("""
@@ -1635,7 +1637,7 @@ def costco_tax_batch_undo(batch_id):
     audit('costco_batch_undone', 'costco_tax_batch', batch_id,
           detail=f"Undid batch '{batch['batch_name']}' — {len(revert_ids)} order(s) reverted to Unrequested")
     flash(f"Batch '{batch['batch_name']}' undone. {len(revert_ids)} order(s) reverted to Unrequested; "
-          f"any Partial/Full orders kept their refund status.", 'success')
+          f"any order still linked to another batch was left untouched.", 'success')
     return redirect(url_for('admin.costco_tax_batches'))
 
 
@@ -1673,7 +1675,7 @@ def costco_tax_batch_remove_order(batch_id):
         """, (agg['cnt'], round(float(agg['total'] or 0), 2), batch_id))
 
         reverted = False
-        if other_batches == 0 and t and t['costco_refund_status'] == 'Pending':
+        if other_batches == 0:
             cur.execute("""
                 UPDATE transactions
                 SET costco_refund_status = NULL, costco_refund_amount = 0,
