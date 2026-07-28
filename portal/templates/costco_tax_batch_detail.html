@@ -10,6 +10,7 @@
   </div>
   <div class="flex gap-8">
     <a href="{{ url_for('admin.costco_tax_batch_download', batch_id=batch.batch_id) }}" class="btn btn-ghost btn-sm">⬇ Re-download Excel</a>
+    <button type="button" class="btn btn-ghost btn-sm" id="bdMarkCompleteBtn" disabled onclick="bdMarkComplete()">Mark selected complete</button>
     <button type="button" class="btn btn-ghost btn-sm" style="color:#f87171" onclick="bdConfirmUndo()">↩ Undo batch</button>
     <a href="{{ url_for('admin.costco_tax_batches') }}" class="btn btn-ghost btn-sm">← Batch History</a>
   </div>
@@ -18,8 +19,8 @@
 <div class="card" style="margin-bottom:12px;padding:12px 16px;font-size:13px;color:var(--muted)">
   Statuses below are live — they reflect each order's current refund status, not what it was when this batch was created.
   Requested at the time: <strong style="color:var(--text)">${{ "{:,.2f}".format(batch.total_requested or 0) }}</strong>.
-  "Undo batch" deletes this batch record and reverts any still-Pending order back to Unrequested; orders that already
-  have a Partial or Full refund recorded keep that status. "Remove" pulls a single order out of this batch the same way.
+  "Undo batch" and "Remove" fully reset an order back to Unrequested (as long as it isn't also linked to another batch) —
+  regardless of whether it was Pending, Partial, or Full at the time.
 </div>
 
 <style>
@@ -36,12 +37,20 @@
 .db-mrow label{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
 .db-mrow input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text);font-family:var(--font);font-size:13px;outline:none}
 .db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+#bdMarkCompleteBtn:disabled{opacity:.4;cursor:not-allowed}
 </style>
+
+<!-- Hidden form used for the bulk "mark complete" action, built dynamically in JS from the checked rows -->
+<form id="bdCompleteForm" method="POST" action="{{ url_for('admin.costco_tax_bulk_complete') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="return_to" value="{{ request.full_path }}">
+</form>
 
 <div class="card">
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <thead>
       <tr style="background:var(--surface2)">
+        <th style="padding:8px 12px;border-bottom:1px solid var(--border)"><input type="checkbox" onclick="bdToggleAll(this)"></th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person</th>
@@ -56,6 +65,11 @@
     <tbody>
     {% for o in orders %}
     <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px">
+        {% if o.costco_refund_status != 'Full' %}
+        <input type="checkbox" class="bd-row-check" value="{{ o.transaction_id }}" onclick="bdUpdateBar()">
+        {% endif %}
+      </td>
       <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ o.order_number[:24] }}</td>
       <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.purchase_date }}</td>
       <td style="padding:8px 12px">{{ o.person_name or '—' }}</td>
@@ -85,7 +99,7 @@
     </tr>
     {% endfor %}
     {% if not orders %}
-    <tr><td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">No orders in this batch.</td></tr>
+    <tr><td colspan="10" style="padding:32px;text-align:center;color:var(--muted)">No orders in this batch.</td></tr>
     {% endif %}
     </tbody>
   </table>
@@ -143,6 +157,26 @@
 </div>
 
 <script>
+function bdToggleAll(master){
+  document.querySelectorAll('.bd-row-check').forEach(cb => cb.checked = master.checked);
+  bdUpdateBar();
+}
+function bdUpdateBar(){
+  const checked = document.querySelectorAll('.bd-row-check:checked');
+  document.getElementById('bdMarkCompleteBtn').disabled = checked.length === 0;
+}
+function bdMarkComplete(){
+  const checked = document.querySelectorAll('.bd-row-check:checked');
+  if (checked.length === 0){ alert('Select at least one order.'); return; }
+  if (!confirm(`Mark ${checked.length} order(s) as Complete? This sets each to fully refunded.`)) return;
+  const form = document.getElementById('bdCompleteForm');
+  checked.forEach(cb => {
+    const input = document.createElement('input');
+    input.type = 'hidden'; input.name = 'txn_ids'; input.value = cb.value;
+    form.appendChild(input);
+  });
+  form.submit();
+}
 function bdToggleAmount(radio){
   const row = document.getElementById('bdAmountRow');
   const input = document.getElementById('bdAmountInput');
@@ -166,7 +200,7 @@ document.getElementById('bdRefundModal').addEventListener('click', function(e){
   if (e.target === this) bdCloseRefundModal();
 });
 function bdConfirmUndo(){
-  if (confirm('Undo this entire batch? Still-Pending orders revert to Unrequested; any Partial/Full refunds already recorded are kept. This cannot be undone.')){
+  if (confirm('Undo this entire batch? Every order in it (Pending, Partial, or Full) reverts fully to Unrequested unless it is also linked to another batch. This cannot be undone.')){
     document.getElementById('bdUndoForm').submit();
   }
 }
