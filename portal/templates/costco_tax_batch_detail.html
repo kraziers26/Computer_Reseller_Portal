@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Batch: {{ batch.batch_name }} — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div>
+    <h1>Batch: {{ batch.batch_name }}</h1>
+    <p>{{ orders|length }} orders · {{ batch.created_at.strftime('%b %d, %Y') if batch.created_at else '' }}
+       {% if batch.company_name %} · {{ batch.company_name }}{% endif %}
+       {% if batch.created_by %} · created by {{ batch.created_by }}{% endif %}</p>
+  </div>
+  <div class="flex gap-8">
+    <a href="{{ url_for('admin.costco_tax_batch_download', batch_id=batch.batch_id) }}" class="btn btn-ghost btn-sm">⬇ Re-download Excel</a>
+    <a href="{{ url_for('admin.costco_tax_batches') }}" class="btn btn-ghost btn-sm">← Batch History</a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:12px;padding:12px 16px;font-size:13px;color:var(--muted)">
+  Statuses below are live — they reflect each order's current refund status, not what it was when this batch was created.
+  Requested at the time: <strong style="color:var(--text)">${{ "{:,.2f}".format(batch.total_requested or 0) }}</strong>.
+</div>
+
+<style>
+.ct-badge{font-size:11px;padding:2px 8px;border-radius:20px;white-space:nowrap}
+.ct-badge-pending{background:rgba(245,158,11,.15);color:#fbbf24}
+.ct-badge-partial{background:rgba(56,189,248,.15);color:#38bdf8}
+.ct-badge-full{background:rgba(34,197,94,.15);color:#4ade80}
+.db-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:none;align-items:center;justify-content:center}
+.db-modal-overlay.open{display:flex}
+.db-modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);padding:24px;width:420px;max-width:95vw;max-height:90vh;overflow-y:auto}
+.db-modal-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:18px;display:flex;align-items:center;justify-content:space-between}
+.db-modal-close{background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0;line-height:1}
+.db-mrow{margin-bottom:14px}
+.db-mrow label{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+.db-mrow input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;color:var(--text);font-family:var(--font);font-size:13px;outline:none}
+.db-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+</style>
+
+<div class="card">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="background:var(--surface2)">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Requested (this batch)</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status now</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Refunded (total)</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Missing</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Days waiting</th>
+        <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for o in orders %}
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ o.order_number[:24] }}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ o.purchase_date }}</td>
+      <td style="padding:8px 12px">{{ o.person_name or '—' }}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(o.amount_requested or 0) }}</td>
+      <td style="padding:8px 12px">
+        {% if o.costco_refund_status == 'Pending' %}<span class="ct-badge ct-badge-pending">Pending</span>
+        {% elif o.costco_refund_status == 'Partial' %}<span class="ct-badge ct-badge-partial">Partial</span>
+        {% else %}<span class="ct-badge ct-badge-full">Full</span>{% endif %}
+      </td>
+      <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(o.costco_refund_amount or 0) }}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">
+        {% if o.costco_refund_status != 'Full' %}${{ "{:,.2f}".format(o.missing_amount or 0) }}{% else %}—{% endif %}
+      </td>
+      <td style="padding:8px 12px;font-size:12px">{{ o.days_waiting ~ 'd' if o.days_waiting is not none and o.costco_refund_status != 'Full' else '—' }}</td>
+      <td style="padding:8px 12px">
+        {% if o.costco_refund_status != 'Full' %}
+        <button type="button" class="btn btn-ghost btn-sm"
+                onclick="bdOpenRefundModal('{{ o.transaction_id }}','{{ o.order_number }}',{{ o.missing_amount or 0 }})">Update</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    {% if not orders %}
+    <tr><td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">No orders in this batch.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:12px;padding:12px 16px;font-size:13px;color:var(--muted)">
+  To re-request the remaining balance on a Partial or still-Pending order here, go back to
+  <a href="{{ url_for('admin.costco_taxes') }}">Costco Taxes</a>, filter by order # or status, select it, and create a new batch —
+  it'll show up both here and in that new batch going forward.
+</div>
+
+<!-- Refund update modal -->
+<div class="db-modal-overlay" id="bdRefundModal">
+  <div class="db-modal">
+    <div class="db-modal-title">
+      <span>Update refund — order <span id="bdModalOrder"></span></span>
+      <button class="db-modal-close" onclick="bdCloseRefundModal()">✕</button>
+    </div>
+    <form method="POST" action="{{ url_for('admin.costco_tax_refund_update') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="transaction_id" id="bdModalTid">
+      <input type="hidden" name="return_to" value="{{ request.full_path }}">
+      <div class="db-mrow">
+        <label>Amount refunded (this update)</label>
+        <input type="number" step="0.01" min="0.01" name="amount_received" required>
+      </div>
+      <div class="db-mrow" style="font-size:12px;color:var(--muted)">Remaining owed before this update: $<span id="bdModalMissing"></span></div>
+      <div class="db-modal-footer">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="bdCloseRefundModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function bdOpenRefundModal(tid, orderNumber, missing){
+  document.getElementById('bdModalTid').value = tid;
+  document.getElementById('bdModalOrder').textContent = orderNumber;
+  document.getElementById('bdModalMissing').textContent = missing.toFixed(2);
+  document.getElementById('bdRefundModal').classList.add('open');
+}
+function bdCloseRefundModal(){
+  document.getElementById('bdRefundModal').classList.remove('open');
+}
+document.getElementById('bdRefundModal').addEventListener('click', function(e){
+  if (e.target === this) bdCloseRefundModal();
+});
+</script>
+{% endblock %}
