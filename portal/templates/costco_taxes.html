@@ -23,7 +23,7 @@
 .ct-badge-partial{background:rgba(56,189,248,.15);color:#38bdf8}
 .ct-badge-full{background:rgba(34,197,94,.15);color:#4ade80}
 .ct-stale{color:#f87171;font-weight:600}
-#ctCreateBatchBtn:disabled{opacity:.4;cursor:not-allowed}
+#ctCreateBatchBtn:disabled,#ctMarkCompleteBtn:disabled{opacity:.4;cursor:not-allowed}
 
 /* Modal (shared pattern with deals module) */
 .db-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:none;align-items:center;justify-content:center}
@@ -46,9 +46,9 @@
 </style>
 
 <div class="card ct-hint" style="margin-bottom:12px;padding:10px 16px;font-size:12px;color:var(--muted)">
-  ☑ Check orders below (anything not already Full), name a batch, and click <strong style="color:var(--text)">Create request batch</strong> —
-  the bar for this stays pinned at the bottom of your screen so you can scroll the table freely.
-  It'll download the Costco-format Excel and mark those orders Pending.
+  ☑ Check orders below (anything not already Full), then either name a batch and click <strong style="color:var(--text)">Create request batch</strong>
+  (downloads the Costco-format Excel and marks them Pending), or click <strong style="color:var(--text)">Mark selected complete</strong>
+  to bulk-close out orders you already know were fully refunded — the bar for this stays pinned at the bottom of your screen so you can scroll the table freely.
 </div>
 
 <!-- Filters -->
@@ -132,6 +132,11 @@
 <!-- Hidden form the row checkboxes submit into (see form="ctBatchForm" on each checkbox) -->
 <form id="ctBatchForm" method="POST" action="{{ url_for('admin.costco_tax_batch_create') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+</form>
+<!-- Hidden form used for the bulk "mark complete" action, built dynamically in JS from the same checkboxes -->
+<form id="ctCompleteForm" method="POST" action="{{ url_for('admin.costco_tax_bulk_complete') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="return_to" value="{{ request.full_path }}">
 </form>
 
 <!-- Transactions Table — full width, no horizontal scroll -->
@@ -224,6 +229,7 @@
   <div style="display:flex;gap:8px;align-items:center">
     <input type="text" id="ctBatchName" placeholder="Batch name (e.g. July Costco follow-up)" style="width:260px">
     <button type="button" class="btn btn-primary btn-sm" id="ctCreateBatchBtn" disabled onclick="ctSubmitBatch()">Create request batch</button>
+    <button type="button" class="btn btn-ghost btn-sm" id="ctMarkCompleteBtn" disabled onclick="ctMarkComplete()">Mark selected complete</button>
   </div>
 </div>
 
@@ -284,10 +290,24 @@ function ctToggleAll(master){
 function ctUpdateBar(){
   const checked = Array.from(document.querySelectorAll('input[name="txn_ids"]:checked'));
   const btn = document.getElementById('ctCreateBatchBtn');
+  const completeBtn = document.getElementById('ctMarkCompleteBtn');
   document.getElementById('ctSelCount').textContent = checked.length;
   const total = checked.reduce((s,cb) => s + parseFloat(cb.dataset.amount || 0), 0);
   document.getElementById('ctSelTotal').textContent = '$' + total.toFixed(2);
   btn.disabled = checked.length === 0;
+  completeBtn.disabled = checked.length === 0;
+}
+function ctMarkComplete(){
+  const checked = document.querySelectorAll('input[name="txn_ids"]:checked');
+  if (checked.length === 0){ alert('Select at least one order.'); return; }
+  if (!confirm(`Mark ${checked.length} order(s) as Complete? This sets each to fully refunded.`)) return;
+  const form = document.getElementById('ctCompleteForm');
+  checked.forEach(cb => {
+    const input = document.createElement('input');
+    input.type = 'hidden'; input.name = 'txn_ids'; input.value = cb.value;
+    form.appendChild(input);
+  });
+  form.submit();
 }
 function ctSubmitBatch(){
   const name = document.getElementById('ctBatchName').value.trim();
