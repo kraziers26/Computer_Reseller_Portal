@@ -1,14 +1,78 @@
 {% extends "base.html" %}
-{% block title %}Batch {{ batch_id }} — ComputerReseller Invoices Portal{% endblock %}
+{% block title %}Batch {{ batch_name }} — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
   <div>
-    <h1>Batch: {{ batch_id }}</h1>
-    <p>{{ invoices|length }} invoices · {{ batch_date.strftime('%b %d, %Y') if batch_date else '' }}</p>
+    <div id="name-display" style="display:flex;align-items:center;gap:8px">
+      <h1 style="margin:0">Batch: {{ batch_name }}</h1>
+      <button type="button" class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:12px"
+              onclick="toggleRename()" title="Rename batch">✏️</button>
+    </div>
+    <form method="POST" action="{{ url_for('admin.batch_rename', batch_id=batch_id) }}"
+          id="rename-form" style="display:none;align-items:center;gap:6px;margin-top:4px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="text" name="batch_name" value="{{ batch_name }}" required style="font-size:13px;padding:4px 8px;width:220px">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="toggleRename()">Cancel</button>
+    </form>
+    <p style="margin-top:4px">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{ batch_id }}</span>
+      · {{ invoices|length }} invoices · {{ batch_date.strftime('%b %d, %Y') if batch_date else '' }}
+    </p>
   </div>
   <div class="flex gap-8">
     <button onclick="printCombined()" class="btn btn-primary btn-sm">🖨 Print Combined PDF</button>
-    <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">← Back</a>
+    <form method="POST" action="{{ url_for('admin.unbatch') }}" style="display:inline"
+          onsubmit="return confirm('Undo this entire batch? Orders still at Batched will be released back to the unprinted queue. Orders already received, invoiced, or counted in an open receiving session will be left in place.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="batch_id" value="{{ batch_id }}">
+      <button type="submit" class="btn btn-danger btn-sm">Undo Batch</button>
+    </form>
+    <a href="{{ url_for('admin.batch_history') }}" class="btn btn-ghost btn-sm">← Back</a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:12px;padding:12px 16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleAddPanel()">
+    <span style="font-size:13px;font-weight:600">+ Add orders to this batch</span>
+    <span id="add-panel-caret" style="font-size:12px;color:var(--muted)">▾ show</span>
+  </div>
+  <div id="add-panel" style="display:none;margin-top:12px">
+    {% if addable_orders %}
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface2)">
+          {% set th2="padding:6px 10px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)" %}
+          <th style="{{ th2 }}">Order #</th>
+          <th style="{{ th2 }}">Retailer</th>
+          <th style="{{ th2 }}">Date</th>
+          <th style="{{ th2 }}">Company</th>
+          <th style="{{ th2 }};text-align:right">Total</th>
+          <th style="{{ th2 }}"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for o in addable_orders %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 10px;font-family:var(--mono);font-size:12px">{{ o.order_number[:24] }}</td>
+        <td style="padding:6px 10px;font-size:12px">{{ o.retailer }}</td>
+        <td style="padding:6px 10px;font-size:12px;color:var(--muted)">{{ o.purchase_date }}</td>
+        <td style="padding:6px 10px;font-size:12px">{{ o.company_name or '—' }}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:var(--mono);font-size:12px">${{ "{:,.2f}".format(o.price_total or 0) }}</td>
+        <td style="padding:6px 10px">
+          <form method="POST" action="{{ url_for('admin.batch_add_order', batch_id=batch_id) }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="transaction_id" value="{{ o.transaction_id }}">
+            <button type="submit" class="btn btn-ghost btn-sm">+ Add</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--muted);font-size:13px;margin:0">No unbatched orders available to add.</p>
+    {% endif %}
   </div>
 </div>
 
@@ -36,6 +100,7 @@
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
           <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoice</th>
+          <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
         </tr>
       </thead>
       <tbody>
@@ -65,10 +130,23 @@
             <span style="color:var(--hint);font-size:11px">No PDF</span>
           {% endif %}
         </td>
+        <td style="padding:8px 12px">
+          {% if r.is_editable %}
+          <form method="POST" action="{{ url_for('admin.batch_remove_order', batch_id=batch_id) }}" style="display:inline"
+                onsubmit="return confirm('Remove {{ r.order_number }} from this batch? It will return to the unprinted queue.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="transaction_id" value="{{ r.transaction_id }}">
+            <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+          </form>
+          {% else %}
+          <button type="button" class="btn btn-ghost btn-sm" disabled
+                  style="opacity:.4;cursor:not-allowed" title="{{ r.lock_reason }}">Remove</button>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
       {% if not invoices %}
-      <tr><td colspan="8" style="padding:32px;text-align:center;color:var(--muted)">No invoices in this batch.</td></tr>
+      <tr><td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">No invoices in this batch.</td></tr>
       {% endif %}
       </tbody>
     </table>
@@ -97,6 +175,23 @@ function printCombined() {
     btn.textContent = '🖨 Print Combined PDF';
     btn.disabled = false;
   }, 4000);
+}
+
+function toggleRename() {
+  const display = document.getElementById('name-display');
+  const form = document.getElementById('rename-form');
+  const showForm = form.style.display === 'none' || !form.style.display;
+  display.style.display = showForm ? 'none' : 'flex';
+  form.style.display = showForm ? 'flex' : 'none';
+  if (showForm) form.querySelector('input[name="batch_name"]').focus();
+}
+
+function toggleAddPanel() {
+  const panel = document.getElementById('add-panel');
+  const caret = document.getElementById('add-panel-caret');
+  const showing = panel.style.display !== 'none';
+  panel.style.display = showing ? 'none' : 'block';
+  caret.textContent = showing ? '▾ show' : '▴ hide';
 }
 </script>
 {% endblock %}
