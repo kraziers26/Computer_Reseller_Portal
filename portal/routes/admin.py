@@ -794,6 +794,7 @@ def cashback():
 @login_required
 @require_role('admin')
 def print_batch():
+    from flask_login import current_user
     if request.method == 'POST':
         txn_ids  = request.form.getlist('txn_ids')
         batch_id = request.form.get('batch_id', '').strip()
@@ -813,6 +814,14 @@ def print_batch():
                         fulfillment_status_updated_at=NOW()
                     WHERE transaction_id = ANY(%s::uuid[])
                 """, (batch_id, txn_ids))
+                # Give this batch a metadata row (name defaults to the ID) so it's
+                # renameable right away. Safe if the batch_id already has one
+                # (e.g. topping up an existing batch with more invoices).
+                cur.execute("""
+                    INSERT INTO print_batches (batch_id, batch_name, created_by)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (batch_id) DO NOTHING
+                """, (batch_id, batch_id, current_user.id if current_user.is_authenticated else None))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
 
     f_retailer  = request.args.get('retailer', '')
@@ -888,7 +897,8 @@ def batch_history():
     conditions = ["t.print_batch_id IS NOT NULL"]
     params = []
     if f_batch:
-        conditions.append("t.print_batch_id ILIKE %s"); params.append(f'%{f_batch}%')
+        conditions.append("(t.print_batch_id ILIKE %s OR pb.batch_name ILIKE %s)")
+        params.append(f'%{f_batch}%'); params.append(f'%{f_batch}%')
     if f_company:
         conditions.append("t.company_id = %s"); params.append(f_company)
     if f_submitter:
@@ -902,18 +912,36 @@ def batch_history():
 
     where = 'WHERE ' + ' AND '.join(conditions)
 
+    # An order is still "editable" (removable / undo-able) only if it hasn't
+    # progressed past Batched, AND hasn't already been scanned inside an open
+    # receiving session (received/partial/missing there) even though the
+    # transaction itself still says 'batched' until that session closes.
+    editable_expr = """
+        (t.fulfillment_status = 'batched'
+         AND NOT EXISTS (
+            SELECT 1 FROM receiving_items ri
+            JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+            WHERE ri.transaction_id = t.transaction_id
+              AND rs.status = 'open'
+              AND ri.receive_status IN ('received','partial','missing')
+         ))
+    """
+
     with db_cursor() as (cur, _):
         cur.execute(f"""
             SELECT t.print_batch_id,
+                   COALESCE(pb.batch_name, t.print_batch_id) AS batch_name,
                    MIN(t.print_date)         AS batch_date,
                    COUNT(*)                  AS cnt,
+                   COUNT(*) FILTER (WHERE {editable_expr}) AS editable_count,
                    MIN(u.username)           AS created_by,
                    STRING_AGG(DISTINCT c.company_name, ', ') AS companies
             FROM transactions t
             LEFT JOIN dim_users u     ON t.submitted_by_email = u.email
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN print_batches pb ON pb.batch_id = t.print_batch_id
             {where}
-            GROUP BY t.print_batch_id
+            GROUP BY t.print_batch_id, pb.batch_name
             ORDER BY batch_date DESC
         """, params)
         batches = cur.fetchall()
@@ -948,16 +976,49 @@ def batch_history():
                                     'order_number':f_order})
 
 
+# An order is "editable" (removable from a batch / reverted by Undo) only if
+# it hasn't progressed past Batched, AND hasn't already been scanned inside an
+# open receiving session (received/partial/missing there) even though the
+# transaction itself still reads 'batched' until that session is closed.
+_EDITABLE_EXPR = """
+    (t.fulfillment_status = 'batched'
+     AND NOT EXISTS (
+        SELECT 1 FROM receiving_items ri
+        JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+        WHERE ri.transaction_id = t.transaction_id
+          AND rs.status = 'open'
+          AND ri.receive_status IN ('received','partial','missing')
+     ))
+"""
+
+_LOCK_REASON_EXPR = """
+    CASE
+        WHEN t.fulfillment_status = 'invoiced' THEN 'Already invoiced'
+        WHEN t.fulfillment_status = 'received' THEN 'Already received'
+        WHEN EXISTS (
+            SELECT 1 FROM receiving_items ri
+            JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+            WHERE ri.transaction_id = t.transaction_id
+              AND rs.status = 'open'
+              AND ri.receive_status IN ('received','partial','missing')
+        ) THEN 'Already counted in an open receiving session'
+        ELSE NULL
+    END
+"""
+
+
 @admin_bp.route('/batch/<batch_id>')
 @login_required
 @require_role('admin')
 def batch_detail(batch_id):
     with db_cursor() as (cur, _):
-        cur.execute("""
+        cur.execute(f"""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.invoice_file_path,
                    (t.invoice_pdf IS NOT NULL) AS has_pdf,
-                   t.print_date, u.username AS person_name, c.company_name
+                   t.print_date, u.username AS person_name, c.company_name,
+                   {_EDITABLE_EXPR} AS is_editable,
+                   {_LOCK_REASON_EXPR} AS lock_reason
             FROM transactions t
             LEFT JOIN dim_users u     ON t.user_id    = u.user_id
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
@@ -966,23 +1027,230 @@ def batch_detail(batch_id):
         """, (batch_id,))
         invoices = cur.fetchall()
         batch_date = invoices[0]['print_date'] if invoices else None
-    return render_template('batch_detail.html', batch_id=batch_id,
-                           invoices=invoices, batch_date=batch_date)
+
+        cur.execute("SELECT batch_name FROM print_batches WHERE batch_id = %s", (batch_id,))
+        pb = cur.fetchone()
+        batch_name = pb['batch_name'] if pb else batch_id
+
+        # Orders eligible to be pulled into this batch: currently unbatched, active.
+        cur.execute("""
+            SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
+                   t.price_total, c.company_name
+            FROM transactions t
+            LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            WHERE t.fulfillment_status = 'uploaded' AND t.is_active = TRUE
+            ORDER BY t.submitted_at DESC
+            LIMIT 200
+        """)
+        addable_orders = cur.fetchall()
+
+    return render_template('batch_detail.html', batch_id=batch_id, batch_name=batch_name,
+                           invoices=invoices, batch_date=batch_date,
+                           addable_orders=addable_orders)
 
 
 @admin_bp.route('/batch/unbatch', methods=['POST'])
 @login_required
 @require_role('admin')
 def unbatch():
+    from ..security import audit
+
     batch_id = request.form.get('batch_id', '').strip()
-    if batch_id:
-        with db_cursor() as (cur, conn):
+    if not batch_id:
+        return redirect(request.referrer or url_for('admin.batch_history'))
+
+    with db_cursor() as (cur, conn):
+        cur.execute(f"""
+            SELECT t.transaction_id, t.order_number, {_EDITABLE_EXPR} AS is_editable,
+                   {_LOCK_REASON_EXPR} AS lock_reason
+            FROM transactions t
+            WHERE t.print_batch_id = %s
+        """, (batch_id,))
+        rows = cur.fetchall()
+
+        cur.execute("SELECT batch_name FROM print_batches WHERE batch_id = %s", (batch_id,))
+        pb = cur.fetchone()
+        batch_name = pb['batch_name'] if pb else batch_id
+
+        if not rows:
+            flash(f"Batch '{batch_name}' has no orders — nothing to undo.", 'warning')
+            return redirect(request.referrer or url_for('admin.batch_history'))
+
+        eligible_ids = [str(r['transaction_id']) for r in rows if r['is_editable']]
+        locked       = [r for r in rows if not r['is_editable']]
+
+        if eligible_ids:
             cur.execute("""
-                UPDATE transactions SET print_batch_id=NULL, print_date=NULL
-                WHERE print_batch_id=%s
-            """, (batch_id,))
-        flash(f'Batch {batch_id} released. Invoices returned to unprinted queue.', 'success')
-    return redirect(url_for('admin.print_batch'))
+                UPDATE transactions
+                SET print_batch_id = NULL, print_date = NULL,
+                    fulfillment_status = 'uploaded', fulfillment_status_updated_at = NOW()
+                WHERE transaction_id = ANY(%s::uuid[])
+            """, (eligible_ids,))
+
+            # Drop any receiving_items this batch's OPEN session was still holding
+            # for the orders we just released, so the session doesn't keep
+            # showing phantom rows for orders no longer in the batch.
+            cur.execute("""
+                DELETE FROM receiving_items ri
+                USING receiving_sessions rs
+                WHERE ri.session_id = rs.session_id
+                  AND rs.status = 'open'
+                  AND rs.batch_id = %s
+                  AND ri.transaction_id = ANY(%s::uuid[])
+            """, (batch_id, eligible_ids))
+
+        # If nothing's left in the batch, the metadata row can go too.
+        cur.execute("""
+            DELETE FROM print_batches
+            WHERE batch_id = %s
+              AND NOT EXISTS (SELECT 1 FROM transactions WHERE print_batch_id = %s)
+        """, (batch_id, batch_id))
+
+    detail = f"{len(eligible_ids)} of {len(rows)} order(s) reverted to unprinted"
+    if locked:
+        detail += "; kept in batch: " + ", ".join(f"{r['order_number']} ({r['lock_reason']})" for r in locked)
+    audit('batch_undone', 'print_batch', batch_id, detail=f"'{batch_name}' — {detail}")
+
+    if locked:
+        locked_desc = ", ".join(f"{r['order_number']} ({r['lock_reason']})" for r in locked)
+        flash(f"Batch '{batch_name}': {len(eligible_ids)} of {len(rows)} order(s) released. "
+              f"Left in place — {locked_desc}.", 'warning')
+    else:
+        flash(f"Batch '{batch_name}' undone. All {len(eligible_ids)} order(s) returned to the unprinted queue.",
+              'success')
+    return redirect(request.referrer or url_for('admin.batch_history'))
+
+
+@admin_bp.route('/batch/<batch_id>/rename', methods=['POST'])
+@login_required
+@require_role('admin')
+def batch_rename(batch_id):
+    from ..security import audit
+    from flask import abort
+
+    new_name = request.form.get('batch_name', '').strip()
+    if not new_name:
+        flash('Batch name cannot be empty.', 'error')
+        return redirect(request.referrer or url_for('admin.batch_history'))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT batch_name FROM print_batches WHERE batch_id = %s", (batch_id,))
+        pb = cur.fetchone()
+        if not pb:
+            abort(404)
+        old_name = pb['batch_name']
+
+        cur.execute("""
+            SELECT 1 FROM print_batches
+            WHERE LOWER(batch_name) = LOWER(%s) AND batch_id != %s
+        """, (new_name, batch_id))
+        if cur.fetchone():
+            flash(f"Another batch is already named '{new_name}'. Pick something else.", 'error')
+            return redirect(request.referrer or url_for('admin.batch_history'))
+
+        cur.execute("""
+            UPDATE print_batches SET batch_name = %s, updated_at = NOW() WHERE batch_id = %s
+        """, (new_name, batch_id))
+
+    audit('batch_renamed', 'print_batch', batch_id, detail=f"'{old_name}' → '{new_name}'")
+    flash(f"Batch renamed to '{new_name}'.", 'success')
+    return redirect(request.referrer or url_for('admin.batch_history'))
+
+
+@admin_bp.route('/batch/<batch_id>/remove-order', methods=['POST'])
+@login_required
+@require_role('admin')
+def batch_remove_order(batch_id):
+    from ..security import audit
+
+    tid = request.form.get('transaction_id', '').strip()
+    if not tid:
+        return redirect(url_for('admin.batch_detail', batch_id=batch_id))
+
+    with db_cursor() as (cur, conn):
+        cur.execute(f"""
+            SELECT t.order_number, {_EDITABLE_EXPR} AS is_editable, {_LOCK_REASON_EXPR} AS lock_reason
+            FROM transactions t WHERE t.transaction_id = %s AND t.print_batch_id = %s
+        """, (tid, batch_id))
+        row = cur.fetchone()
+        if not row:
+            flash('Order not found in this batch.', 'error')
+            return redirect(url_for('admin.batch_detail', batch_id=batch_id))
+
+        if not row['is_editable']:
+            flash(f"Can't remove {row['order_number']} — {row['lock_reason']}.", 'warning')
+            return redirect(url_for('admin.batch_detail', batch_id=batch_id))
+
+        cur.execute("""
+            UPDATE transactions
+            SET print_batch_id = NULL, print_date = NULL,
+                fulfillment_status = 'uploaded', fulfillment_status_updated_at = NOW()
+            WHERE transaction_id = %s
+        """, (tid,))
+
+        cur.execute("""
+            DELETE FROM receiving_items ri
+            USING receiving_sessions rs
+            WHERE ri.session_id = rs.session_id
+              AND rs.status = 'open' AND rs.batch_id = %s
+              AND ri.transaction_id = %s
+        """, (batch_id, tid))
+
+        cur.execute("""
+            DELETE FROM print_batches
+            WHERE batch_id = %s
+              AND NOT EXISTS (SELECT 1 FROM transactions WHERE print_batch_id = %s)
+        """, (batch_id, batch_id))
+
+    audit('batch_order_removed', 'transaction', tid, detail=f"Removed {row['order_number']} from batch {batch_id}")
+    flash(f"{row['order_number']} removed from batch and returned to the unprinted queue.", 'success')
+    return redirect(url_for('admin.batch_detail', batch_id=batch_id))
+
+
+@admin_bp.route('/batch/<batch_id>/add-order', methods=['POST'])
+@login_required
+@require_role('admin')
+def batch_add_order(batch_id):
+    from ..security import audit
+    from flask_login import current_user
+    from .receiving import _add_orphaned_batch_orders_to_session
+
+    tid = request.form.get('transaction_id', '').strip()
+    if not tid:
+        return redirect(url_for('admin.batch_detail', batch_id=batch_id))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions
+            SET print_batch_id = %s, print_date = NOW(),
+                fulfillment_status = 'batched', fulfillment_status_updated_at = NOW()
+            WHERE transaction_id = %s AND fulfillment_status = 'uploaded' AND is_active = TRUE
+            RETURNING order_number
+        """, (batch_id, tid))
+        updated = cur.fetchone()
+
+        if not updated:
+            flash("That order is no longer available to add (it may have just been batched elsewhere).", 'error')
+            return redirect(url_for('admin.batch_detail', batch_id=batch_id))
+
+        # Make sure this batch has a metadata row (covers the edge case of
+        # adding to a batch_id that was fully undone down to zero orders).
+        cur.execute("""
+            INSERT INTO print_batches (batch_id, batch_name, created_by)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (batch_id) DO NOTHING
+        """, (batch_id, batch_id, current_user.id if current_user.is_authenticated else None))
+
+        # If a receiving session (open or closed) already exists for this batch,
+        # sync the newly-added order into it — same helper used elsewhere for
+        # exactly this "order joined the batch after the session started" case.
+        cur.execute("SELECT session_id FROM receiving_sessions WHERE batch_id = %s", (batch_id,))
+        for sess in cur.fetchall():
+            _add_orphaned_batch_orders_to_session(cur, sess['session_id'], batch_id)
+
+    audit('batch_order_added', 'transaction', tid, detail=f"Added {updated['order_number']} to batch {batch_id}")
+    flash(f"{updated['order_number']} added to the batch.", 'success')
+    return redirect(url_for('admin.batch_detail', batch_id=batch_id))
 
 
 @admin_bp.route('/print-invoice/<string:tid>')
