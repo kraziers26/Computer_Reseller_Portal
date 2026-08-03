@@ -108,7 +108,7 @@
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <thead>
       <tr style="background:var(--surface2)">
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch ID</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date Created</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Created By</th>
         <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Companies</th>
@@ -119,13 +119,45 @@
     <tbody>
     {% for b in batches %}
     <tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:9px 12px;font-family:var(--mono);font-size:12px;font-weight:500">{{ b.print_batch_id }}</td>
+      <td style="padding:9px 12px">
+        <div id="name-display-{{ loop.index }}" style="display:flex;align-items:center;gap:6px">
+          <span style="font-weight:500;font-size:13px">{{ b.batch_name }}</span>
+          <button type="button" class="btn btn-ghost btn-sm" style="padding:1px 5px;font-size:11px"
+                  onclick="toggleRename({{ loop.index }})" title="Rename batch">✏️</button>
+        </div>
+        <form method="POST" action="{{ url_for('admin.batch_rename', batch_id=b.print_batch_id) }}"
+              id="rename-form-{{ loop.index }}" style="display:none;align-items:center;gap:6px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="text" name="batch_name" value="{{ b.batch_name }}" required
+                 style="font-size:12px;padding:3px 6px;width:140px">
+          <button type="submit" class="btn btn-primary btn-sm" style="padding:3px 8px;font-size:11px">Save</button>
+          <button type="button" class="btn btn-ghost btn-sm" style="padding:3px 8px;font-size:11px"
+                  onclick="toggleRename({{ loop.index }})">Cancel</button>
+        </form>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px">{{ b.print_batch_id }}</div>
+      </td>
       <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ b.batch_date.strftime('%b %d, %Y') if b.batch_date else '—' }}</td>
       <td style="padding:9px 12px">{{ b.created_by or '—' }}</td>
       <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ b.companies or '—' }}</td>
       <td style="padding:9px 12px;text-align:right">{{ b.cnt }}</td>
       <td style="padding:9px 12px">
-        <a href="{{ url_for('admin.batch_detail', batch_id=b.print_batch_id) }}" class="btn btn-ghost btn-sm">View</a>
+        <div class="flex gap-8">
+          <a href="{{ url_for('admin.batch_detail', batch_id=b.print_batch_id) }}" class="btn btn-ghost btn-sm">Manage</a>
+          <form method="POST" action="{{ url_for('admin.unbatch') }}" style="display:inline"
+                {% if b.editable_count > 0 %}
+                onsubmit="return confirm('Undo batch {{ b.batch_name }}? {{ b.editable_count }} of {{ b.cnt }} order(s) will be released back to the unprinted queue.{% if b.editable_count < b.cnt %} {{ b.cnt - b.editable_count }} order(s) already past Batched will be left untouched.{% endif %}')"
+                {% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="batch_id" value="{{ b.print_batch_id }}">
+            {% if b.editable_count > 0 %}
+            <button type="submit" class="btn btn-danger btn-sm">Undo Batch</button>
+            {% else %}
+            <button type="button" class="btn btn-ghost btn-sm" disabled
+                    style="opacity:.4;cursor:not-allowed"
+                    title="No orders in this batch can be undone — all are already received or invoiced">Undo Batch</button>
+            {% endif %}
+          </form>
+        </div>
       </td>
     </tr>
     {% endfor %}
@@ -135,4 +167,15 @@
     </tbody>
   </table>
 </div>
+
+<script>
+function toggleRename(id) {
+  const display = document.getElementById('name-display-' + id);
+  const form = document.getElementById('rename-form-' + id);
+  const showForm = form.style.display === 'none' || !form.style.display;
+  display.style.display = showForm ? 'none' : 'flex';
+  form.style.display = showForm ? 'flex' : 'none';
+  if (showForm) form.querySelector('input[name="batch_name"]').focus();
+}
+</script>
 {% endblock %}
