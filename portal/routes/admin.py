@@ -1477,7 +1477,7 @@ def costco_taxes():
     f_status     = request.args.get('status', '')
     f_order      = request.args.get('order_number', '').strip()
 
-    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
+    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE", "t.exception_status IS DISTINCT FROM 'returned'"]
     params = []
     if f_month:
         conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
@@ -2041,7 +2041,7 @@ def export_costco_taxes():
     f_person     = request.args.get('person_by', type=int)
     f_membership = request.args.get('membership', '')
 
-    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE"]
+    conditions = ["t.retailer = 'Costco'", "t.is_active = TRUE", "t.exception_status IS DISTINCT FROM 'returned'"]
     params = []
     if f_month:
         conditions.append("TO_CHAR(t.purchase_date,'MM') = %s"); params.append(f_month)
