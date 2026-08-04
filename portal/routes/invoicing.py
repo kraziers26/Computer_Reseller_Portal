@@ -51,11 +51,13 @@ def _load_received_orders(cur):
         SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
                t.price_total, u.username AS person_name,
                c.company_name, c.company_id, c.company_short_code,
-               t.print_batch_id
+               t.print_batch_id, COALESCE(pb.batch_name, t.print_batch_id) AS batch_name
         FROM transactions t
         LEFT JOIN dim_users u      ON t.user_id = u.user_id
         LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+        LEFT JOIN print_batches pb ON pb.batch_id = t.print_batch_id
         WHERE t.fulfillment_status='received' AND t.is_active=TRUE
+          AND t.exception_status IS NULL
         ORDER BY t.print_batch_id NULLS LAST, t.retailer, t.order_number
     """)
     orders = cur.fetchall()
@@ -77,6 +79,139 @@ def _load_received_orders(cur):
             order_items.setdefault(tid, []).append(item)
 
     return orders, order_items
+
+
+# ── Hold / Return (pre-invoice) ─────────────────────────────────────────────
+# An order that's fully received but turns out not to be needed right now
+# (price no longer favorable, client backed out, etc.) can be pulled out of
+# the ready-to-invoice queue without losing track of it. 'held' means it's
+# parked for a future invoice; 'returned' means it's done for good.
+
+@invoicing_bp.route('/hold', methods=['POST'])
+@login_required
+@require_role('admin')
+def hold_order():
+    from ..security import audit
+    tid  = request.form.get('transaction_id', '').strip()
+    note = request.form.get('note', '').strip() or None
+    if not tid:
+        return redirect(request.referrer or url_for('invoicing.new_invoice'))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions
+            SET exception_status='held', exception_note=%s,
+                exception_set_at=NOW(), exception_set_by=%s
+            WHERE transaction_id=%s AND fulfillment_status='received' AND exception_status IS NULL
+            RETURNING order_number
+        """, (note, current_user.id if current_user.is_authenticated else None, tid))
+        row = cur.fetchone()
+
+    if row:
+        audit('order_held', 'transaction', tid, detail=f"{row['order_number']}" + (f" — {note}" if note else ""))
+        flash(f"{row['order_number']} held. It'll show up in Held Items, ready to release into a future invoice.", 'success')
+    else:
+        flash("Couldn't hold that order — it may have already changed state.", 'warning')
+    return redirect(request.referrer or url_for('invoicing.new_invoice'))
+
+
+@invoicing_bp.route('/return-order', methods=['POST'])
+@login_required
+@require_role('admin')
+def return_order():
+    """Mark a not-yet-invoiced order as returned directly (skips the Held step)."""
+    from ..security import audit
+    tid  = request.form.get('transaction_id', '').strip()
+    note = request.form.get('note', '').strip() or None
+    if not tid:
+        return redirect(request.referrer or url_for('invoicing.new_invoice'))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions
+            SET exception_status='returned', exception_note=%s,
+                exception_set_at=NOW(), exception_set_by=%s
+            WHERE transaction_id=%s AND fulfillment_status IN ('received') AND exception_status IS NULL
+            RETURNING order_number
+        """, (note, current_user.id if current_user.is_authenticated else None, tid))
+        row = cur.fetchone()
+
+    if row:
+        audit('order_returned', 'transaction', tid, detail=f"{row['order_number']}" + (f" — {note}" if note else ""))
+        flash(f"{row['order_number']} marked returned.", 'success')
+    else:
+        flash("Couldn't mark that order returned — it may have already changed state.", 'warning')
+    return redirect(request.referrer or url_for('invoicing.new_invoice'))
+
+
+@invoicing_bp.route('/held')
+@login_required
+@require_role('admin')
+def held_items():
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
+                   t.price_total, t.exception_note, t.exception_set_at,
+                   u.username AS person_name, c.company_name,
+                   setter.username AS held_by,
+                   ROUND(EXTRACT(EPOCH FROM (NOW()-t.exception_set_at))/86400) AS days_held
+            FROM transactions t
+            LEFT JOIN dim_users u      ON t.user_id = u.user_id
+            LEFT JOIN dim_users setter ON t.exception_set_by = setter.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            WHERE t.exception_status = 'held' AND t.is_active = TRUE
+            ORDER BY t.exception_set_at ASC
+        """)
+        items = cur.fetchall()
+    return render_template('invoicing/held.html', items=items)
+
+
+@invoicing_bp.route('/held/<uuid:transaction_id>/release', methods=['POST'])
+@login_required
+@require_role('admin')
+def release_held(transaction_id):
+    from ..security import audit
+    tid = str(transaction_id)
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions
+            SET exception_status=NULL, exception_note=NULL,
+                exception_set_at=NULL, exception_set_by=NULL
+            WHERE transaction_id=%s AND exception_status='held'
+            RETURNING order_number
+        """, (tid,))
+        row = cur.fetchone()
+
+    if row:
+        audit('order_released', 'transaction', tid, detail=row['order_number'])
+        flash(f"{row['order_number']} released — back in the ready-to-invoice queue.", 'success')
+    else:
+        flash("Couldn't release that order.", 'warning')
+    return redirect(url_for('invoicing.held_items'))
+
+
+@invoicing_bp.route('/held/<uuid:transaction_id>/return', methods=['POST'])
+@login_required
+@require_role('admin')
+def return_held(transaction_id):
+    """Convert a held order straight to returned."""
+    from ..security import audit
+    tid = str(transaction_id)
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            UPDATE transactions
+            SET exception_status='returned', exception_set_at=NOW()
+            WHERE transaction_id=%s AND exception_status='held'
+            RETURNING order_number
+        """, (tid,))
+        row = cur.fetchone()
+
+    if row:
+        audit('order_returned', 'transaction', tid, detail=f"{row['order_number']} (from Held)")
+        flash(f"{row['order_number']} marked returned.", 'success')
+    else:
+        flash("Couldn't mark that order returned.", 'warning')
+    return redirect(url_for('invoicing.held_items'))
 
 
 # ── Invoice History ───────────────────────────────────────────────────────────
@@ -176,7 +311,11 @@ def new_invoice():
         customers = cur.fetchall()
         retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
         persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
-        batches   = sorted(set(o['print_batch_id'] for o in orders if o['print_batch_id']))
+        _seen = {}
+        for o in orders:
+            if o['print_batch_id'] and o['print_batch_id'] not in _seen:
+                _seen[o['print_batch_id']] = o['batch_name']
+        batches = sorted(_seen.items(), key=lambda kv: kv[1].lower())
 
     return render_template('invoicing/new.html',
                            orders=orders, order_items=order_items,
@@ -225,7 +364,11 @@ def edit_invoice(invoice_id):
         customers = cur.fetchall()
         retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
         persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
-        batches   = sorted(set(o['print_batch_id'] for o in orders if o['print_batch_id']))
+        _seen = {}
+        for o in orders:
+            if o['print_batch_id'] and o['print_batch_id'] not in _seen:
+                _seen[o['print_batch_id']] = o['batch_name']
+        batches = sorted(_seen.items(), key=lambda kv: kv[1].lower())
 
     return render_template('invoicing/new.html',
                            orders=orders, order_items=order_items,
@@ -541,6 +684,85 @@ def remove_item(invoice_id):
         'subtotal': f"{new_subtotal:,.2f}",
         'total': f"{new_total:,.2f}",
         'removed_order': released_order
+    })
+
+
+# ── Mark a line item returned (any invoice status — draft, sent, or paid) ──────
+# Unlike remove_item, this works regardless of invoice status: a return can
+# come to light after the invoice was already sent or paid. The line stays on
+# the invoice (marked returned) rather than being deleted, so the invoice's
+# history still shows what was originally billed.
+
+@invoicing_bp.route('/<uuid:invoice_id>/return-item', methods=['POST'])
+@login_required
+@require_role('admin')
+def return_item(invoice_id):
+    from ..security import audit
+    sid  = str(invoice_id)
+    data = request.get_json()
+    item_id = data.get('item_id')
+    if not item_id:
+        return jsonify({'error': 'Missing item_id'}), 400
+
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT status, invoice_number FROM invoices WHERE invoice_id=%s", (sid,))
+        inv = cur.fetchone()
+        if not inv:
+            return jsonify({'error': 'Invoice not found'}), 404
+
+        cur.execute(
+            "SELECT transaction_id, item_description, returned FROM invoice_items "
+            "WHERE item_id=%s AND invoice_id=%s",
+            (item_id, sid))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'error': 'Item not found'}), 404
+        if row['returned']:
+            return jsonify({'error': 'Already marked returned'}), 400
+        txn_id = str(row['transaction_id'])
+
+        cur.execute(
+            "UPDATE invoice_items SET returned=TRUE, returned_at=NOW() WHERE item_id=%s",
+            (item_id,))
+
+        # If every line for this transaction on this invoice is now returned,
+        # flag the whole order as returned. Partial returns (some SKUs on the
+        # same order) leave the order alone — it's still validly invoiced.
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM invoice_items "
+            "WHERE invoice_id=%s AND transaction_id=%s::uuid AND NOT returned",
+            (sid, txn_id))
+        remaining = cur.fetchone()['n']
+        order_returned = False
+        if remaining == 0:
+            cur.execute("""
+                UPDATE transactions
+                SET exception_status='returned', exception_set_at=NOW(),
+                    exception_set_by=%s
+                WHERE transaction_id=%s::uuid
+            """, (current_user.id if current_user.is_authenticated else None, txn_id))
+            order_returned = True
+
+        cur.execute(
+            "SELECT COALESCE(SUM(line_total),0) AS s FROM invoice_items "
+            "WHERE invoice_id=%s AND NOT returned",
+            (sid,))
+        new_subtotal = round(float(cur.fetchone()['s']), 2)
+        cur.execute("SELECT other_amount FROM invoices WHERE invoice_id=%s", (sid,))
+        other = float(cur.fetchone()['other_amount'] or 0)
+        new_total = round(new_subtotal + other, 2)
+        cur.execute(
+            "UPDATE invoices SET subtotal=%s, total=%s WHERE invoice_id=%s",
+            (new_subtotal, new_total, sid))
+
+    audit('invoice_item_returned', 'invoice_item', item_id,
+          detail=f"{row['item_description']} on {inv['invoice_number']} (status: {inv['status']})")
+
+    return jsonify({
+        'ok': True,
+        'subtotal': f"{new_subtotal:,.2f}",
+        'total': f"{new_total:,.2f}",
+        'order_returned': order_returned
     })
 
 
