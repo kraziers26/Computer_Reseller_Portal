@@ -99,11 +99,12 @@
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:10%">QTY</th>
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Total</th>
           {% if inv.status == 'draft' %}<th style="padding:9px 6px;width:32px"></th>{% endif %}
+          <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:90px">Returned</th>
         </tr>
       </thead>
       <tbody>
       {% for item in items %}
-      <tr style="border-bottom:0.5px solid var(--border)" id="item-row-{{ item.item_id }}">
+      <tr style="border-bottom:0.5px solid var(--border);{% if item.returned %}opacity:.45{% endif %}" id="item-row-{{ item.item_id }}">
         <td style="padding:10px 10px">
           {% if inv.status == 'draft' %}
           <div class="editable-desc" data-item-id="{{ item.item_id }}"
@@ -153,6 +154,15 @@
                   >✕</button>
         </td>
         {% endif %}
+        <td style="padding:10px 10px;text-align:center" id="return-cell-{{ item.item_id }}">
+          {% if item.returned %}
+          <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:rgba(248,113,113,.12);color:#f87171">Returned</span>
+          {% else %}
+          <button onclick="returnItem('{{ item.item_id }}', this.dataset.desc)"
+                  data-desc="{{ item.item_description }}"
+                  class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:10px;color:#f87171">Return</button>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
       </tbody>
@@ -224,6 +234,41 @@
     </div>
   </div>
 </div>
+
+<!-- Always available (not draft-only): marking an item returned can happen on
+     a Sent or Paid invoice too, since the return may come to light after the
+     invoice already went out. -->
+<script>
+function returnItem(itemId, description){
+  const status = "{{ inv.status }}";
+  let msg = `Mark "${description}" as returned? It will be excluded from the invoice total.`;
+  if (status === 'sent' || status === 'paid') {
+    msg = `This invoice was already marked ${status.toUpperCase()} — the client's copy won't reflect this change. ` +
+          `Recalculate the total anyway and mark "${description}" as returned?`;
+  }
+  if (!confirm(msg)) return;
+
+  fetch('{{ url_for("invoicing.return_item", invoice_id=inv.invoice_id) }}', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token() }}'},
+    body: JSON.stringify({item_id: itemId})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      const row = document.getElementById('item-row-'+itemId);
+      if (row) row.style.opacity = '.45';
+      const cell = document.getElementById('return-cell-'+itemId);
+      if (cell) cell.innerHTML = '<span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:rgba(248,113,113,.12);color:#f87171">Returned</span>';
+      document.getElementById('inv-subtotal').textContent = '$'+d.subtotal;
+      document.getElementById('inv-total').textContent = '$'+d.total;
+      if (d.order_returned) {
+        alert('All line items for this order are now returned — the order itself is flagged returned too.');
+      }
+    } else {
+      alert(d.error || 'Error marking item returned.');
+    }
+  }).catch(()=> alert('Network error — please check the item and try again.'));
+}
+</script>
 
 {% if inv.status == 'draft' %}
 <script>
