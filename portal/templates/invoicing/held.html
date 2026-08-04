@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Held Items — ComputerReseller Invoices Portal{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Held Items</h1><p>Received orders parked out of the invoicing queue — release when ready, or mark returned</p></div>
+  <a href="{{ url_for('invoicing.new_invoice') }}" class="btn btn-ghost btn-sm">← New Invoice</a>
+</div>
+
+<div class="card">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="background:var(--surface2)">
+        {% set th="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)" %}
+        <th style="{{ th }}">Order #</th>
+        <th style="{{ th }}">Retailer</th>
+        <th style="{{ th }}">Company</th>
+        <th style="{{ th }};text-align:right">Total</th>
+        <th style="{{ th }}">Held By</th>
+        <th style="{{ th }}">Reason</th>
+        <th style="{{ th }};text-align:right">Held</th>
+        <th style="{{ th }}"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for i in items %}
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:9px 12px;font-family:var(--mono);font-size:12px;font-weight:500">{{ i.order_number }}</td>
+      <td style="padding:9px 12px;font-size:12px">{{ i.retailer }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ i.company_name or '—' }}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(i.price_total or 0) }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ i.held_by or '—' }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ i.exception_note or '—' }}</td>
+      <td style="padding:9px 12px;text-align:right;font-size:12px;color:{{ '#f87171' if i.days_held and i.days_held >= 14 else 'var(--muted)' }}">
+        {{ i.days_held|int }}d
+      </td>
+      <td style="padding:9px 12px">
+        <div class="flex gap-8">
+          <form method="POST" action="{{ url_for('invoicing.release_held', transaction_id=i.transaction_id) }}" style="display:inline"
+                onsubmit="return confirm('Release {{ i.order_number }} back into the ready-to-invoice queue?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-primary btn-sm">Release</button>
+          </form>
+          <form method="POST" action="{{ url_for('invoicing.return_held', transaction_id=i.transaction_id) }}" style="display:inline"
+                onsubmit="return confirm('Mark {{ i.order_number }} as returned? It will not be invoiced.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171">Return</button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+    {% if not items %}
+    <tr><td colspan="8" style="padding:32px;text-align:center;color:var(--muted)">No held items — everything received is either invoiced or ready to be.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
