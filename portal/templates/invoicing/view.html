@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Invoice {{ inv.invoice_number }} — ComputerReseller Portal{% endblock %}
 {% block content %}
+<style>
+  .editable-sku:empty:before { content: attr(data-placeholder); color: var(--hint, #6b7280); opacity: .6; }
+</style>
 <div class="page-header page-header-row">
   <div>
     <a href="{{ url_for('invoicing.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoicing</a>
-    <h1>Invoice #{{ inv.invoice_number }}</h1>
+    <h1>Invoice #<span class="inv-number-display">{{ inv.invoice_number }}</span></h1>
     <p>{{ inv.customer_name or '—' }} · {{ inv.invoice_date }}</p>
   </div>
   <div style="display:flex;gap:8px;align-items:center">
@@ -41,9 +44,8 @@
       <div style="font-size:12px;color:var(--muted);margin-top:5px;line-height:1.8">{{ co.addr.replace('\n','<br>')|safe }}</div>
     </div>
     <div style="text-align:right">
-      {% if inv.status == 'draft' %}
       <div style="font-size:20px;font-weight:600;color:var(--text);letter-spacing:-.3px">INVOICE #<span
-           class="hdr-editable" data-field="invoice_number" data-value="{{ inv.invoice_number }}"
+           class="hdr-editable inv-number-display" data-field="invoice_number" data-value="{{ inv.invoice_number }}"
            contenteditable="true" spellcheck="false"
            style="outline:none;cursor:text;border-radius:3px;padding:1px 4px;margin:-1px -4px;transition:background .15s"
            onmouseenter="this.style.background='var(--surface2)'"
@@ -58,10 +60,6 @@
                style="background:transparent;border:none;color:var(--muted);font-size:13px;font-family:inherit;cursor:pointer;padding:0;width:130px"
                onchange="saveHeaderInput(this)">
       </div>
-      {% else %}
-      <div style="font-size:20px;font-weight:600;color:var(--text);letter-spacing:-.3px">INVOICE #{{ inv.invoice_number }}</div>
-      <div style="font-size:13px;color:var(--muted);margin-top:4px">{{ inv.invoice_date }}</div>
-      {% endif %}
       <div style="margin-top:8px">
         {% if inv.status=='draft' %}<span style="background:rgba(251,191,36,.15);color:#fbbf24;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Draft</span>
         {% elif inv.status=='sent' %}<span style="background:rgba(139,92,246,.12);color:#8b5cf6;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Sent</span>
@@ -76,7 +74,6 @@
   <!-- To -->
   <div style="padding:16px 36px">
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px">To</div>
-    {% if inv.status == 'draft' %}
     <select id="customerInlineSelect" data-field="customer_id"
             style="background:transparent;border:none;color:var(--text);font-size:15px;font-weight:500;font-family:inherit;cursor:pointer;padding:0;max-width:300px"
             onchange="saveHeaderSelect(this)">
@@ -84,9 +81,6 @@
       <option value="{{ c.customer_id }}" {{ 'selected' if inv.customer_id|string == c.customer_id|string }}>{{ c.customer_name }}</option>
       {% endfor %}
     </select>
-    {% else %}
-    <div style="font-size:15px;font-weight:500;color:var(--text)">{{ inv.customer_name or '—' }}</div>
-    {% endif %}
   </div>
 
   <!-- Line items -->
@@ -98,7 +92,7 @@
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Price</th>
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:10%">QTY</th>
           <th style="padding:9px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:18%">Total</th>
-          {% if inv.status == 'draft' %}<th style="padding:9px 6px;width:32px"></th>{% endif %}
+          <th style="padding:9px 6px;width:32px"></th>
           <th style="padding:9px 10px;text-align:center;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;width:90px">Returned</th>
         </tr>
       </thead>
@@ -106,7 +100,6 @@
       {% for item in items %}
       <tr style="border-bottom:0.5px solid var(--border);{% if item.returned %}opacity:.45{% endif %}" id="item-row-{{ item.item_id }}">
         <td style="padding:10px 10px">
-          {% if inv.status == 'draft' %}
           <div class="editable-desc" data-item-id="{{ item.item_id }}"
                contenteditable="true" spellcheck="false"
                style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px -4px;
@@ -116,13 +109,18 @@
                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
                onblur="saveDesc(this)"
                >{{ item.item_description }}</div>
-          {% else %}
-          {{ item.item_description }}
-          {% endif %}
-          {% if item.sku %}<div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">{{ item.sku }}</div>{% endif %}
+          <div class="editable-sku" data-item-id="{{ item.item_id }}"
+               contenteditable="true" spellcheck="false"
+               style="outline:none;cursor:text;border-radius:3px;padding:1px 4px;margin:1px -4px 0;
+                      font-size:11px;color:var(--muted);font-family:var(--mono);transition:background .15s"
+               onmouseenter="this.style.background='var(--surface2)'"
+               onmouseleave="if(document.activeElement!==this)this.style.background=''"
+               onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+               onblur="saveSku(this)"
+               data-placeholder="Model / SKU"
+               >{{ item.sku or '' }}</div>
         </td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">
-          {% if inv.status == 'draft' %}
           $<span class="line-editable" data-field="unit_price" data-item-id="{{ item.item_id }}"
                 contenteditable="true" spellcheck="false"
                 style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
@@ -131,10 +129,8 @@
                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
                 onblur="saveLine(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
                 >{{ "{:,.2f}".format(item.unit_price or 0) }}</span>
-          {% else %}${{ "{:,.2f}".format(item.unit_price or 0) }}{% endif %}
         </td>
         <td style="padding:10px 10px;text-align:right">
-          {% if inv.status == 'draft' %}
           <span class="line-editable" data-field="quantity" data-item-id="{{ item.item_id }}"
                 contenteditable="true" spellcheck="false"
                 style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:20px;text-align:right"
@@ -143,17 +139,14 @@
                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
                 onblur="saveLine(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
                 >{{ item.quantity }}</span>
-          {% else %}{{ item.quantity }}{% endif %}
         </td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)" id="lt-{{ item.item_id }}">${{ "{:,.2f}".format(item.line_total or 0) }}</td>
-        {% if inv.status == 'draft' %}
         <td style="padding:10px 6px;text-align:center;width:32px">
           <button onclick="removeItem('{{ item.item_id }}','{{ "{:,.2f}".format(item.line_total or 0) }}')"
                   title="Remove this item"
                   style="background:none;border:none;cursor:pointer;color:#f87171;font-size:14px;padding:2px 4px;border-radius:4px;line-height:1"
                   >✕</button>
         </td>
-        {% endif %}
         <td style="padding:10px 10px;text-align:center" id="return-cell-{{ item.item_id }}">
           {% if item.returned %}
           <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:rgba(248,113,113,.12);color:#f87171">Returned</span>
@@ -176,7 +169,6 @@
       <tr><td style="padding:5px 8px;color:var(--muted)">TAX RATE</td><td style="padding:5px 8px;text-align:right">0.00%</td></tr>
       <tr>
         <td style="padding:5px 8px;color:var(--muted)">
-          {% if inv.status == 'draft' %}
           <span class="hdr-editable" data-field="other_label"
                 contenteditable="true" spellcheck="false"
                 style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s"
@@ -185,10 +177,8 @@
                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
                 onblur="saveHeader(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
                 >{{ inv.other_label or 'OTHER' }}</span>
-          {% else %}{{ inv.other_label or 'OTHER' }}{% endif %}
         </td>
         <td style="padding:5px 8px;text-align:right;font-family:var(--mono)" id="other-amount-cell">
-          {% if inv.status == 'draft' %}
           $<span class="hdr-editable" data-field="other_amount"
                 contenteditable="true" spellcheck="false"
                 style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
@@ -197,7 +187,6 @@
                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
                 onblur="saveHeader(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
                 >{{ "{:,.2f}".format(inv.other_amount or 0) }}</span>
-          {% else %}${{ "{:,.2f}".format(inv.other_amount or 0) }}{% endif %}
         </td>
       </tr>
       <tr style="border-top:0.5px solid var(--border)">
@@ -270,7 +259,6 @@ function returnItem(itemId, description){
 }
 </script>
 
-{% if inv.status == 'draft' %}
 <script>
 function removeItem(itemId, lineTotal){
   if(!confirm('Remove this item from the invoice? The order may return to Received if no items remain.')) return;
@@ -282,8 +270,8 @@ function removeItem(itemId, lineTotal){
     if(d.ok){
       document.getElementById('item-row-'+itemId).remove();
       // Update totals display
-      document.getElementById('tSubtotal').textContent = '$'+d.subtotal;
-      document.getElementById('tTotal').textContent = '$'+d.total;
+      document.getElementById('inv-subtotal').textContent = '$'+d.subtotal;
+      document.getElementById('inv-total').textContent = '$'+d.total;
       if(d.removed_order){ 
         showFlash('Item removed. Order released back to Received pool.'); 
       } else {
@@ -309,11 +297,32 @@ function saveDesc(el){
     else { showFlash('Error: ' + (d.error||'unknown'), true); }
   });
 }
+function saveSku(el){
+  el.style.background = '';
+  el.style.outline = 'none';
+  const newSku = el.textContent.trim();
+  const itemId = el.dataset.itemId;
+  fetch('{{ url_for("invoicing.update_item_description", invoice_id=inv.invoice_id) }}', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token() }}'},
+    body: JSON.stringify({item_id: itemId, sku: newSku})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){ showFlash('Model / SKU updated.'); }
+    else { showFlash('Error: ' + (d.error||'unknown'), true); }
+  });
+}
 
 // Store originals on load
 document.querySelectorAll('.editable-desc').forEach(el=>{
   el.dataset.original = el.textContent.trim();
   // Prevent Enter from adding new lines
+  el.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
+    if(e.key==='Escape'){ el.textContent=el.dataset.original; el.blur(); }
+  });
+});
+document.querySelectorAll('.editable-sku').forEach(el=>{
+  el.dataset.original = el.textContent.trim();
   el.addEventListener('keydown', e=>{
     if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
     if(e.key==='Escape'){ el.textContent=el.dataset.original; el.blur(); }
@@ -328,7 +337,6 @@ function showFlash(msg, isError=false){
   setTimeout(()=>div.remove(), 3000);
 }
 </script>
-{% endif %}
 
 {% if inv.notes %}
 <div class="card" style="margin-top:14px">
@@ -389,7 +397,8 @@ async function saveHeaderSelect(el) {
   const field = el.dataset.field;
   const res   = await post(HDR_URL, {[field]: el.value || null});
   if (res.error) { alert(res.error); return; }
-  document.getElementById('customer-display').innerText = res.customer_name || '—';
+  const custDisplay = document.getElementById('customer-display');
+  if (custDisplay) custDisplay.innerText = res.customer_name || '—';
   el.style.color = '#10b981';
   setTimeout(() => el.style.color = '', 800);
 }
