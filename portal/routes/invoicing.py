@@ -626,7 +626,7 @@ def delete_invoice(invoice_id):
     return redirect(url_for('invoicing.index'))
 
 
-# ── Remove single item from draft invoice ────────────────────────────────────
+# ── Remove single item from an invoice (any status) ──────────────────────────
 
 @invoicing_bp.route('/<uuid:invoice_id>/remove-item', methods=['POST'])
 @login_required
@@ -641,8 +641,8 @@ def remove_item(invoice_id):
     with db_cursor() as (cur, conn):
         cur.execute("SELECT status FROM invoices WHERE invoice_id=%s", (sid,))
         inv = cur.fetchone()
-        if not inv or inv['status'] != 'draft':
-            return jsonify({'error': 'Invoice not editable'}), 400
+        if not inv:
+            return jsonify({'error': 'Invoice not found'}), 404
 
         cur.execute(
             "SELECT transaction_id FROM invoice_items WHERE item_id=%s AND invoice_id=%s",
@@ -814,7 +814,7 @@ def update_status(invoice_id):
     return redirect(url_for('invoicing.view_invoice', invoice_id=str(invoice_id)))
 
 
-# ── Update item description (draft only) ─────────────────────────────────────
+# ── Update item description and/or model/SKU (any status) ────────────────────
 
 @invoicing_bp.route('/<uuid:invoice_id>/update-item', methods=['POST'])
 @login_required
@@ -822,19 +822,33 @@ def update_status(invoice_id):
 def update_item_description(invoice_id):
     sid = str(invoice_id)
     data = request.get_json()
-    item_id = data.get('item_id')
+    item_id  = data.get('item_id')
+    has_desc = 'description' in data
+    has_sku  = 'sku' in data
     new_desc = (data.get('description') or '').strip()
-    if not item_id or not new_desc:
+    new_sku  = (data.get('sku') or '').strip()
+    if not item_id or not (has_desc or has_sku):
         return jsonify({'error': 'Missing fields'}), 400
+    if has_desc and not new_desc:
+        return jsonify({'error': 'Description cannot be empty'}), 400
     with db_cursor() as (cur, conn):
         cur.execute("SELECT status FROM invoices WHERE invoice_id=%s", (sid,))
         inv = cur.fetchone()
-        if not inv or inv['status'] != 'draft':
-            return jsonify({'error': 'Not editable'}), 400
-        cur.execute(
-            "UPDATE invoice_items SET item_description=%s WHERE item_id=%s AND invoice_id=%s",
-            (new_desc, item_id, sid))
-    return jsonify({'ok': True, 'description': new_desc})
+        if not inv:
+            return jsonify({'error': 'Invoice not found'}), 404
+        if has_desc and has_sku:
+            cur.execute(
+                "UPDATE invoice_items SET item_description=%s, sku=%s WHERE item_id=%s AND invoice_id=%s",
+                (new_desc, new_sku or None, item_id, sid))
+        elif has_desc:
+            cur.execute(
+                "UPDATE invoice_items SET item_description=%s WHERE item_id=%s AND invoice_id=%s",
+                (new_desc, item_id, sid))
+        else:
+            cur.execute(
+                "UPDATE invoice_items SET sku=%s WHERE item_id=%s AND invoice_id=%s",
+                (new_sku or None, item_id, sid))
+    return jsonify({'ok': True, 'description': new_desc, 'sku': new_sku})
 
 
 # ── Update invoice header fields (draft only) ─────────────────────────────────
@@ -848,8 +862,8 @@ def update_header(invoice_id):
     with db_cursor() as (cur, conn):
         cur.execute("SELECT status, invoice_number FROM invoices WHERE invoice_id=%s", (sid,))
         inv = cur.fetchone()
-        if not inv or inv['status'] != 'draft':
-            return jsonify({'error': 'Not editable'}), 400
+        if not inv:
+            return jsonify({'error': 'Invoice not found'}), 404
 
         allowed = ('invoice_number', 'invoice_date', 'customer_id',
                    'other_label', 'other_amount')
@@ -932,8 +946,8 @@ def update_line(invoice_id):
     with db_cursor() as (cur, conn):
         cur.execute("SELECT status FROM invoices WHERE invoice_id=%s", (sid,))
         inv = cur.fetchone()
-        if not inv or inv['status'] != 'draft':
-            return jsonify({'error': 'Not editable'}), 400
+        if not inv:
+            return jsonify({'error': 'Invoice not found'}), 404
 
         try:
             unit_price = round(float(data.get('unit_price', 0)), 2)
