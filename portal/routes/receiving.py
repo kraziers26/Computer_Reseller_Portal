@@ -61,6 +61,7 @@ def index():
         # match the session detail view.
         cur.execute("""
             SELECT t.print_batch_id AS batch_id,
+                   COALESCE(pb.batch_name, t.print_batch_id) AS batch_name,
                    MIN(t.print_date) AS batch_date,
                    COUNT(DISTINCT t.transaction_id) AS total_orders,
                    COUNT(DISTINCT t.transaction_id)
@@ -69,6 +70,7 @@ def index():
                    STRING_AGG(DISTINCT c.company_name, ', ') AS companies
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
+            LEFT JOIN print_batches pb ON pb.batch_id = t.print_batch_id
             LEFT JOIN (
                 SELECT ri.transaction_id
                 FROM receiving_items ri
@@ -79,14 +81,15 @@ def index():
             WHERE t.print_batch_id IS NOT NULL
               AND t.is_active = TRUE
               AND t.fulfillment_status IN ('batched','received','invoiced')
-            GROUP BY t.print_batch_id
+            GROUP BY t.print_batch_id, pb.batch_name
             ORDER BY batch_date DESC
         """)
         batches = cur.fetchall()
 
         # Active receiving sessions
         cur.execute("""
-            SELECT rs.session_id, rs.batch_id, rs.created_at, rs.status,
+            SELECT rs.session_id, rs.batch_id, COALESCE(pb.batch_name, rs.batch_id) AS batch_name,
+                   rs.created_at, rs.status,
                    u.username AS created_by,
                    COUNT(ri.item_id) AS total_items,
                    COUNT(ri.item_id) FILTER (WHERE ri.receive_status='received') AS received_count,
@@ -96,7 +99,8 @@ def index():
             FROM receiving_sessions rs
             LEFT JOIN dim_users u     ON rs.created_by = u.user_id
             LEFT JOIN receiving_items ri ON rs.session_id = ri.session_id
-            GROUP BY rs.session_id, rs.batch_id, rs.created_at, rs.status, u.username
+            LEFT JOIN print_batches pb ON pb.batch_id = rs.batch_id
+            GROUP BY rs.session_id, rs.batch_id, pb.batch_name, rs.created_at, rs.status, u.username
             ORDER BY rs.created_at DESC
         """)
         sessions = cur.fetchall()
@@ -173,9 +177,11 @@ def start_session():
 def session(session_id):
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT rs.*, u.username AS created_by_name
+            SELECT rs.*, u.username AS created_by_name,
+                   COALESCE(pb.batch_name, rs.batch_id) AS batch_name
             FROM receiving_sessions rs
             LEFT JOIN dim_users u ON rs.created_by = u.user_id
+            LEFT JOIN print_batches pb ON pb.batch_id = rs.batch_id
             WHERE rs.session_id = %s
         """, (session_id,))
         sess = cur.fetchone()
@@ -410,7 +416,8 @@ def pending_pool():
     conditions = [
         "ri.receive_status IN ('pending', 'missing', 'partial')",
         "rs.status = 'closed'",
-        "t.is_active = TRUE"
+        "t.is_active = TRUE",
+        "t.exception_status IS NULL"
     ]
     params = []
     if f_status:   conditions.append("ri.receive_status = %s"); params.append(f_status)
@@ -418,7 +425,7 @@ def pending_pool():
     if f_company:  conditions.append("t.company_id = %s"); params.append(f_company)
     if f_person:   conditions.append("t.user_id = %s"); params.append(f_person)
     if f_order:    conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
-    if f_batch:    conditions.append("rs.batch_id ILIKE %s"); params.append(f'%{f_batch}%')
+    if f_batch:    conditions.append("(rs.batch_id ILIKE %s OR pb.batch_name ILIKE %s)"); params.append(f'%{f_batch}%'); params.append(f'%{f_batch}%')
     if f_stuck_days:
         conditions.append(
             "EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,t.submitted_at)))/86400 >= %s")
@@ -428,7 +435,7 @@ def pending_pool():
     with db_cursor() as (cur, _):
         cur.execute(f"""
             SELECT ri.item_id, ri.receive_status, ri.notes,
-                   rs.batch_id, rs.session_id,
+                   rs.batch_id, COALESCE(pb.batch_name, rs.batch_id) AS batch_name, rs.session_id,
                    t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.order_type,
                    t.fulfillment_status, t.fulfillment_status_updated_at,
@@ -443,6 +450,7 @@ def pending_pool():
             LEFT JOIN dim_users u      ON t.user_id = u.user_id
             LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
             LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            LEFT JOIN print_batches pb ON pb.batch_id = rs.batch_id
             {where}
             ORDER BY ri.receive_status, days_in_status DESC
         """, params)
