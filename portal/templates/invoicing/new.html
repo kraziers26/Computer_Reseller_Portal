@@ -39,7 +39,7 @@
           {% if batches %}
           <select id="filterBatch" style="width:160px" onchange="filterOrders()">
             <option value="">All batches</option>
-            {% for b in batches %}<option value="{{ b }}">Batch {{ b }}</option>{% endfor %}
+            {% for batch_id, batch_name in batches %}<option value="{{ batch_id }}">{{ batch_name }}</option>{% endfor %}
           </select>
           {% endif %}
         </div>
@@ -87,6 +87,7 @@
                   <span style="font-size:11px;color:var(--muted)">{{ o.retailer }}</span>
                   <span style="font-size:11px;color:var(--muted)">· {{ o.person_name or '—' }}</span>
                   <span style="font-size:11px;color:var(--muted)">· {{ o.company_name or '—' }}</span>
+                  {% if o.batch_name %}<span style="font-size:11px;color:var(--muted)">· {{ o.batch_name }}</span>{% endif %}
                 </div>
                 {% if items %}
                 <div style="margin-top:5px;padding-left:2px">
@@ -115,6 +116,22 @@
                   {% else %}
                   {{ items|length }} item{{ 's' if items|length != 1 }}
                   {% endif %}
+                </div>
+                <div style="margin-top:6px;display:flex;gap:4px;justify-content:flex-end">
+                  <form method="POST" action="{{ url_for('invoicing.hold_order') }}" class="hold-form" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="transaction_id" value="{{ tid }}">
+                    <input type="hidden" name="note" class="note-field">
+                    <button type="button" onclick="holdOrReturn(this.form, 'hold', '{{ o.order_number }}')"
+                            class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px" title="Not needed right now — park it for a future invoice">Hold</button>
+                  </form>
+                  <form method="POST" action="{{ url_for('invoicing.return_order') }}" class="return-form" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="transaction_id" value="{{ tid }}">
+                    <input type="hidden" name="note" class="note-field">
+                    <button type="button" onclick="holdOrReturn(this.form, 'return', '{{ o.order_number }}')"
+                            class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;color:#f87171" title="Not going out at all">Return</button>
+                  </form>
                 </div>
               </div>
             </div>
@@ -207,6 +224,17 @@ function updateCount(){
   const btn = document.getElementById('submitBtn');
   btn.disabled = checked === 0;
   document.getElementById('submitHint').style.display = checked > 0 ? 'none' : 'block';
+}
+
+function holdOrReturn(form, action, orderNumber){
+  const verb = action === 'hold' ? 'Hold' : 'Return';
+  const msg  = action === 'hold'
+    ? `Hold ${orderNumber}? It'll come off this list and show up in Held Items, ready to release into a future invoice.`
+    : `Mark ${orderNumber} as returned? It won't be invoiced.`;
+  if (!confirm(msg)) return;
+  const note = prompt(`${verb} reason (optional):`, '');
+  form.querySelector('.note-field').value = note || '';
+  form.submit();
 }
 
 function highlightRow(cb){
