@@ -22,7 +22,7 @@
       <input type="hidden" name="status" value="sent">
       <button type="submit" class="btn btn-primary btn-sm">Mark as Sent</button>
     </form>
-    {% elif inv.status == 'sent' %}
+    {% elif inv.status == 'sent' or inv.status == 'unpaid' %}
     <form method="POST" action="{{ url_for('invoicing.update_status', invoice_id=inv.invoice_id) }}" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="status" value="paid">
@@ -63,6 +63,7 @@
       <div style="margin-top:8px">
         {% if inv.status=='draft' %}<span style="background:rgba(251,191,36,.15);color:#fbbf24;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Draft</span>
         {% elif inv.status=='sent' %}<span style="background:rgba(139,92,246,.12);color:#8b5cf6;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Sent</span>
+        {% elif inv.status=='unpaid' %}<span style="background:rgba(248,113,113,.12);color:#f87171;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Unpaid</span>
         {% elif inv.status=='paid' %}<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600">Paid</span>
         {% endif %}
       </div>
