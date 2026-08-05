@@ -1,184 +1,246 @@
 {% extends "base.html" %}
-{% block title %}Pending Pool — Receiving{% endblock %}
+{% block title %}Receiving Session — {{ sess.batch_name }}{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>Pending Pool</h1><p>{{ items|length }} orders awaiting receipt</p></div>
-  <a href="{{ url_for('receiving.index') }}" class="btn btn-ghost btn-sm">← Receiving</a>
-</div>
-
-<!-- Filters -->
-<div class="card" style="margin-bottom:14px">
-  <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;align-items:end">
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Pool Status</div>
-      <select name="status" style="width:100%" onchange="this.form.submit()">
-        <option value="">All</option>
-        <option value="pending" {{ 'selected' if filters.status=='pending' }}>⏳ Pending</option>
-        <option value="partial" {{ 'selected' if filters.status=='partial' }}>⚠ Partial</option>
-        <option value="missing" {{ 'selected' if filters.status=='missing' }}>✕ Missing</option>
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
-      <input type="text" name="order_number" value="{{ filters.order_number }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
-      <select name="retailer" style="width:100%" onchange="this.form.submit()">
-        <option value="">All</option>
-        {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Person By</div>
-      <select name="person_by" style="width:100%" onchange="this.form.submit()">
-        <option value="">All</option>
-        {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
-      <select name="company" style="width:100%" onchange="this.form.submit()">
-        <option value="">All</option>
-        {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Batch</div>
-      <input type="text" name="batch_id" value="{{ filters.batch_id }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stuck &gt; Days</div>
-      <select name="stuck_days" style="width:100%" onchange="this.form.submit()">
-        <option value="">Any</option>
-        <option value="3"  {{ 'selected' if filters.stuck_days==3  }}>3+ days</option>
-        <option value="7"  {{ 'selected' if filters.stuck_days==7  }}>7+ days</option>
-        <option value="14" {{ 'selected' if filters.stuck_days==14 }}>14+ days</option>
-        <option value="30" {{ 'selected' if filters.stuck_days==30 }}>30+ days</option>
-      </select>
-    </div>
-    <div style="display:flex;align-items:flex-end">
-      {% if filters.status or filters.retailer or filters.company or filters.person_by or filters.order_number or filters.stuck_days or filters.batch_id %}
-      <a href="{{ url_for('receiving.pending_pool') }}" class="btn btn-ghost btn-sm w-full">Clear</a>
-      {% endif %}
-    </div>
-  </form>
-</div>
-
-{% if not items %}
-<div class="card" style="text-align:center;padding:48px;color:var(--muted)">
-  ✅ No orders in the pending pool.
-</div>
-{% else %}
-<form method="POST" action="{{ url_for('receiving.move_to_received') }}">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
-      <input type="checkbox" id="selectAll" style="width:auto" onchange="document.querySelectorAll('.row-check').forEach(c=>c.checked=this.checked)"> Select all
-    </label>
-    <button type="submit" class="btn btn-sm"
-            style="background:rgba(16,185,129,.15);color:#10b981;border-color:#10b981"
-            onclick="return confirm('Move selected orders to Received?')">
-      ✓ Move to Received
-    </button>
+  <div>
+    <a href="{{ url_for('receiving.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Receiving</a>
+    <h1>{{ sess.batch_name }}</h1>
+    <p>Session started {{ sess.created_at.strftime('%b %d, %Y') }} by {{ sess.created_by_name or '—' }}
+       · <span style="color:{{ '#10b981' if sess.status=='closed' else '#fbbf24' }}">{{ sess.status|title }}</span></p>
   </div>
+  {% if sess.status == 'open' %}
+  <form method="POST" action="{{ url_for('receiving.close_session', session_id=session_id) }}"
+        onsubmit="return confirm('Close this session? Missing and partial items stay in the receiving pool.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost btn-sm">Close Session</button>
+  </form>
+  {% endif %}
+</div>
 
-  <div class="card" style="padding:0">
-    <!-- Header -->
-    <div style="display:grid;grid-template-columns:32px 200px 1fr 80px 100px 90px 80px;
-                gap:0;padding:8px 12px;background:var(--surface2);
-                border-bottom:1px solid var(--border);font-size:10px;font-weight:600;
-                color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
-      <div></div>
-      <div>Order #</div>
-      <div>Details</div>
-      <div style="text-align:right">Total</div>
-      <div>Pool Status</div>
-      <div>Time in Pool</div>
-      <div>Batch</div>
-    </div>
+<!-- KPI bar -->
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px">
+  <div style="background:var(--surface2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Total</div>
+    <div style="font-size:20px;font-weight:600">{{ total }}</div>
+  </div>
+  <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:#10b981;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Received</div>
+    <div style="font-size:20px;font-weight:600;color:#10b981">{{ rcvd }}</div>
+  </div>
+  <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:#fbbf24;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Partial</div>
+    <div style="font-size:20px;font-weight:600;color:#fbbf24">{{ partial }}</div>
+  </div>
+  <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:#f87171;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Missing</div>
+    <div style="font-size:20px;font-weight:600;color:#f87171">{{ missing }}</div>
+  </div>
+  <div style="background:var(--surface2);border-radius:8px;padding:12px 14px">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Pending</div>
+    <div style="font-size:20px;font-weight:600;color:var(--muted)">{{ pending }}</div>
+  </div>
+</div>
 
-    {% for r in items %}
-    {% set days = r.days_in_status|int if r.days_in_status else 0 %}
-    {% set stuck = days >= 14 %}
-    {% set line_items = order_items.get(r.transaction_id|string, []) %}
-    {% set status_color = '#6b7280' if r.receive_status=='pending' else '#fbbf24' if r.receive_status=='partial' else '#f87171' %}
-    <div style="border-bottom:1px solid var(--border);border-left:3px solid {{ status_color }}">
+<div class="card" style="padding:0">
+  {% for item in items %}
+  {% set iid = item.item_id|string %}
+  {% set lines = line_map.get(iid, []) %}
+  {% set rs = item.receive_status %}
+  <div class="rx-item" id="item-{{ iid }}"
+       style="border-bottom:1px solid var(--border);
+              border-left:4px solid {{ '#10b981' if rs=='received' else '#fbbf24' if rs=='partial' else '#f87171' if rs=='missing' else 'var(--border)' }}">
 
-      <!-- Main row -->
-      <div style="display:grid;grid-template-columns:32px 200px 1fr 80px 100px 90px 80px;
-                  gap:0;padding:10px 12px;align-items:start">
-        <div style="padding-top:2px">
-          <input type="checkbox" name="item_ids" value="{{ r.item_id }}" class="row-check" style="width:auto">
-        </div>
-
-        <!-- Order # + meta -->
-        <div>
-          <a href="{{ url_for('admin.review_submission', tid=r.transaction_id) }}"
-             style="color:var(--accent2);font-family:var(--mono);font-size:12px;font-weight:500">
-            {{ r.order_number[:24] }}
-          </a>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px">{{ r.retailer }}</div>
-          <div style="font-size:11px;color:var(--muted)">{{ r.person_name or '—' }} · {{ r.company_name or '—' }}</div>
-          <div style="font-size:11px;color:var(--muted)">{{ r.purchase_date }}</div>
-        </div>
-
-        <!-- Line items -->
-        <div style="padding-right:8px">
-          {% if line_items %}
-            {% for ti in line_items %}
-            <div style="display:flex;align-items:flex-start;gap:8px;padding:2px 0;font-size:11px;
-                        border-bottom:{% if not loop.last %}0.5px solid var(--border){% else %}none{% endif %};
-                        margin-bottom:{% if not loop.last %}3px{% else %}0{% endif %}">
-              <span style="color:var(--text);flex:1;min-width:0;word-break:break-word;line-height:1.4">
-                {{ ti.item_description }}
-              </span>
-              {% if ti.sku_model_color %}
-              <span style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0">
-                {{ ti.sku_model_color[:20] }}
-              </span>
-              {% endif %}
-              <span style="white-space:nowrap;flex-shrink:0;font-size:11px;color:var(--muted)">× {{ ti.quantity }}</span>
-              <span style="white-space:nowrap;flex-shrink:0;font-family:var(--mono);font-size:11px;font-weight:500">
-                ${{ "{:,.2f}".format(ti.unit_price or 0) }}
-              </span>
-            </div>
-            {% endfor %}
-          {% else %}
-            <span style="font-size:11px;color:var(--muted);font-style:italic">No billable items</span>
+    <!-- Order header -->
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:160px">
+        <div style="font-family:var(--mono);font-size:12px;font-weight:500">{{ item.order_number }}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          {{ item.retailer }} · {{ item.person_name or '—' }} · {{ item.company_name or '—' }}
+          · ${{ "{:,.2f}".format(item.price_total or 0) }}
+          {% set d = item.days_in_status|float|round|int if item.days_in_status else 0 %}
+          {% if d > 0 %}
+          · <span style="color:{{ '#f87171' if d >= 14 else '#fbbf24' if d >= 7 else 'var(--muted)' }}">
+              {{ d }}d in {{ item.fulfillment_status or 'batched' }}{% if d >= 14 %} ⚠{% endif %}
+            </span>
           {% endif %}
         </div>
-
-        <!-- Total -->
-        <div style="text-align:right;font-family:var(--mono);font-size:12px;font-weight:500;padding-top:2px">
-          ${{ "{:,.2f}".format(r.price_total or 0) }}
+        {% if lines %}
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          {% for l in lines %}{{ l.item_description[:40] if l.item_description else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}
         </div>
-
-        <!-- Pool status -->
-        <div style="padding-top:2px">
-          {% if r.receive_status == 'pending' %}
-          <span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">⏳ Pending</span>
-          {% elif r.receive_status == 'partial' %}
-          <span style="background:rgba(251,191,36,.12);color:#fbbf24;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">⚠ Partial</span>
-          {% elif r.receive_status == 'missing' %}
-          <span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">✕ Missing</span>
-          {% endif %}
-        </div>
-
-        <!-- Days -->
-        <div style="font-size:12px;color:{{ '#f87171' if stuck else '#fbbf24' if days >= 7 else 'var(--muted)' }};padding-top:2px">
-          {{ days }}d{% if stuck %} ⚠{% endif %}
-        </div>
-
-        <!-- Batch -->
-        <div style="font-size:11px;color:var(--muted);padding-top:2px">
-          {{ r.batch_name or '—' }}
-        </div>
+        {% endif %}
       </div>
 
+      {% if sess.status == 'open' %}
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button onclick="setStatus('{{ iid }}','received')"
+                class="rx-btn rx-received {{ 'rx-active' if rs=='received' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#10b981;color:#fff;border-color:#10b981' if rs=='received' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ✓ Received
+        </button>
+        <button onclick="setStatus('{{ iid }}','partial')"
+                class="rx-btn rx-partial {{ 'rx-active' if rs=='partial' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#fbbf24;color:#1a1d27;border-color:#fbbf24' if rs=='partial' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ⚠ Partial
+        </button>
+        <button onclick="setStatus('{{ iid }}','missing')"
+                class="rx-btn rx-missing {{ 'rx-active' if rs=='missing' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#f87171;color:#fff;border-color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ✕ Missing
+        </button>
+        <button onclick="setStatus('{{ iid }}','pending')"
+                class="rx-btn rx-pending {{ 'rx-active' if rs=='pending' else '' }}"
+                style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
+                       {{ 'background:#6b7280;color:#fff;border-color:#6b7280' if rs=='pending' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
+          ⏳ Pending
+        </button>
+      </div>
+      {% else %}
+      <span style="font-size:11px;padding:3px 10px;border-radius:10px;
+                   {{ 'background:rgba(16,185,129,.12);color:#10b981' if rs=='received' else 'background:rgba(251,191,36,.12);color:#fbbf24' if rs=='partial' else 'background:rgba(239,68,68,.12);color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted)' }}">
+        {{ rs|title }}
+      </span>
+      {% endif %}
     </div>
-    {% endfor %}
+
+    <!-- Partial line items panel (hidden until Partial clicked) -->
+    {% if lines %}
+    <div id="partial-{{ iid }}"
+         style="display:{{ 'block' if rs=='partial' else 'none' }};
+                background:var(--surface2);border-top:1px solid var(--border);padding:12px 16px 14px 20px">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">
+        Mark units received
+      </div>
+      {% for l in lines %}
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <div style="font-size:12px">{{ l.item_description or '—' }}</div>
+          {% if l.sku_model_color %}<div style="font-size:10px;color:var(--muted);font-family:var(--mono)">{{ l.sku_model_color }}</div>{% endif %}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;white-space:nowrap">
+          <span style="font-size:11px;color:var(--muted)">Received:</span>
+          <input type="number" id="line-{{ l.line_id }}" min="0" max="{{ l.ordered_qty }}"
+                 value="{{ l.received_qty }}"
+                 style="width:56px;text-align:center;padding:4px;font-size:13px;
+                        background:var(--surface);border:1px solid var(--border);
+                        border-radius:6px;color:var(--text);font-family:var(--mono)"
+                 oninput="savePartial('{{ iid }}')">
+          <span style="font-size:11px;color:var(--muted)">of {{ l.ordered_qty }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
-</form>
+  {% endfor %}
+</div>
+
+<script>
+const SESSION_ID = "{{ session_id }}";
+const CSRF = "{{ csrf_token() }}";
+let saveTimers = {};
+
+async function rxPost(payload) {
+  const r = await fetch(`/receiving/session/${SESSION_ID}/mark`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken': CSRF},
+    body: JSON.stringify(payload)
+  });
+  return r.json();
+}
+
+function setStatus(iid, status) {
+  const el = document.getElementById('item-' + iid);
+  const panel = document.getElementById('partial-' + iid);
+  const colors = {received:'#10b981', partial:'#fbbf24', missing:'#f87171', pending:'#6b7280'};
+  el.style.borderLeftColor = colors[status] || 'var(--border)';
+
+  // Update button styles
+  el.querySelectorAll('.rx-btn').forEach(btn => {
+    const t = btn.classList.contains('rx-received') ? 'received'
+             : btn.classList.contains('rx-partial')  ? 'partial'
+             : 'missing';
+    if (t === status) {
+      if (t==='received') { btn.style.background='#10b981'; btn.style.color='#fff'; btn.style.borderColor='#10b981'; }
+      else if (t==='partial') { btn.style.background='#fbbf24'; btn.style.color='#1a1d27'; btn.style.borderColor='#fbbf24'; }
+      else { btn.style.background='#f87171'; btn.style.color='#fff'; btn.style.borderColor='#f87171'; }
+    } else if (t==='pending' && status==='pending') {
+      btn.style.background='#6b7280'; btn.style.color='#fff'; btn.style.borderColor='#6b7280';
+    } else {
+      btn.style.background='var(--surface2)'; btn.style.color='var(--muted)'; btn.style.borderColor='var(--border)';
+    }
+  });
+
+  // Show/hide partial panel
+  if (panel) panel.style.display = status === 'partial' ? 'block' : 'none';
+
+  if (status !== 'partial') {
+    rxPost({item_id: iid, status: status}).then(r => {
+      if (r.ok) updateKPIs();
+    });
+  }
+}
+
+function savePartial(iid) {
+  clearTimeout(saveTimers[iid]);
+  saveTimers[iid] = setTimeout(() => {
+    const lines = {};
+    document.querySelectorAll(`#partial-${iid} input[id^="line-"]`).forEach(inp => {
+      const lid = inp.id.replace('line-', '');
+      lines[lid] = parseInt(inp.value) || 0;
+    });
+    rxPost({item_id: iid, status: 'partial', lines: lines}).then(r => {
+      if (r.ok) updateKPIs();
+    });
+  }, 600);
+}
+
+function updateKPIs() {
+  const items = document.querySelectorAll('.rx-item');
+  let rcvd=0, partial=0, missing=0, pending=0;
+  items.forEach(el => {
+    const c = el.style.borderLeftColor;
+    if (c.includes('16,185,129') || c.includes('10b981')) rcvd++;
+    else if (c.includes('251,191,36') || c.includes('fbbf24')) partial++;
+    else if (c.includes('239,68,68') || c.includes('f87171')) missing++;
+    else pending++;
+  });
+  // Update KPI cards by position
+  const cards = document.querySelectorAll('[style*="border-radius:8px"][style*="padding:12px"]');
+  if (cards[1]) cards[1].querySelector('[style*="font-size:20px"]').textContent = rcvd;
+  if (cards[2]) cards[2].querySelector('[style*="font-size:20px"]').textContent = partial;
+  if (cards[3]) cards[3].querySelector('[style*="font-size:20px"]').textContent = missing;
+  if (cards[4]) cards[4].querySelector('[style*="font-size:20px"]').textContent = pending;
+}
+</script>
+
+{% if missing_from_session %}
+<div style="margin-top:20px;border:1px solid #f59e0b;border-radius:8px;padding:16px;background:rgba(245,158,11,.06)">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+    <span style="font-size:14px">⚠</span>
+    <span style="font-size:12px;font-weight:600;color:#f59e0b;text-transform:uppercase;letter-spacing:.5px">
+      {{ missing_from_session|length }} order{{ 's' if missing_from_session|length != 1 }} in this print batch were not in this session
+    </span>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
+    These orders belong to batch <strong>{{ sess.batch_name }}</strong> but were not captured when this session was started.
+    Start a new receiving session for this batch to process them.
+  </div>
+  {% for o in missing_from_session %}
+  <div style="padding:8px 10px;border-radius:6px;background:var(--surface2);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+    <div>
+      <span style="font-family:var(--mono);font-size:12px;font-weight:500">{{ o.order_number }}</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px">{{ o.retailer }} · {{ o.person_name or '—' }} · {{ o.company_name or '—' }}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-family:var(--mono);font-size:12px">${{ "{:,.2f}".format(o.price_total or 0) }}</span>
+      <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(107,114,128,.15);color:var(--muted)">{{ o.fulfillment_status }}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
 {% endif %}
 {% endblock %}
