@@ -264,10 +264,11 @@ def index():
 
         cur.execute("""
             SELECT
-                COUNT(*) FILTER (WHERE status='draft') AS drafts,
-                COUNT(*) FILTER (WHERE status='sent')  AS sent,
-                COUNT(*) FILTER (WHERE status='paid')  AS paid,
-                COALESCE(SUM(total) FILTER (WHERE status='sent'), 0)  AS pending_amount,
+                COUNT(*) FILTER (WHERE status='draft')  AS drafts,
+                COUNT(*) FILTER (WHERE status='sent')   AS sent,
+                COUNT(*) FILTER (WHERE status='unpaid') AS unpaid,
+                COUNT(*) FILTER (WHERE status='paid')   AS paid,
+                COALESCE(SUM(total) FILTER (WHERE status IN ('sent','unpaid')), 0)  AS pending_amount,
                 COALESCE(SUM(total) FILTER (WHERE status='paid'), 0)  AS paid_amount
             FROM invoices
         """)
@@ -390,6 +391,9 @@ def _save_invoice(existing_id=None):
     other_label  = request.form.get('other_label', '').strip()
     invoice_date = request.form.get('invoice_date') or str(date.today())
     txn_ids      = request.form.getlist('txn_ids')
+    create_status = request.form.get('create_status', 'draft')
+    if create_status not in ('draft', 'unpaid'):
+        create_status = 'draft'
 
     if not txn_ids:
         flash('Select at least one order.', 'error')
@@ -554,11 +558,11 @@ def _save_invoice(existing_id=None):
                 INSERT INTO invoices (invoice_id, invoice_number, company_id, customer_id,
                     created_by, invoice_date, batch_markup_pct,
                     subtotal, other_amount, other_label, total, status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft')
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (invoice_id, inv_number, company_id,
                   customer_id or None, current_user.id,
                   invoice_date, markup_pct,
-                  subtotal, other_amount, other_label or None, total))
+                  subtotal, other_amount, other_label or None, total, create_status))
 
         for li in line_items:
             cur.execute("""
@@ -807,7 +811,7 @@ def view_invoice(invoice_id):
 @require_role('admin')
 def update_status(invoice_id):
     status = request.form.get('status')
-    if status in ('draft', 'sent', 'paid'):
+    if status in ('draft', 'sent', 'unpaid', 'paid'):
         with db_cursor() as (cur, conn):
             cur.execute("UPDATE invoices SET status=%s WHERE invoice_id=%s",
                         (status, str(invoice_id)))
