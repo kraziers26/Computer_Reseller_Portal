@@ -30,6 +30,12 @@
     </form>
     {% elif inv.status == 'paid' %}
     <span style="font-size:12px;background:rgba(16,185,129,.12);color:#10b981;padding:4px 12px;border-radius:10px;font-weight:600">✓ Paid</span>
+    <form method="POST" action="{{ url_for('invoicing.update_status', invoice_id=inv.invoice_id) }}" style="display:inline"
+          onsubmit="return confirm('Mark this invoice as Unpaid? Use this if it was marked Paid by mistake or payment fell through.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="status" value="unpaid">
+      <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Mark Unpaid</button>
+    </form>
     {% endif %}
   </div>
 </div>
