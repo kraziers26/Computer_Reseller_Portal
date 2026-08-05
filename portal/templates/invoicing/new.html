@@ -204,10 +204,25 @@
                  step="0.01" min="0" style="width:100%">
         </label>
 
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px"
-                id="submitBtn" {{ '' if edit_mode else 'disabled' }}>
-          {{ 'Update Invoice' if edit_mode else 'Generate Invoice' }}
+        {% if edit_mode %}
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px" id="submitBtn">
+          Update Invoice
         </button>
+        {% else %}
+        <div style="display:flex;gap:8px">
+          <button type="submit" class="btn btn-primary" style="flex:1;padding:10px" id="submitBtn" disabled
+                  onclick="document.getElementById('createStatusField').value='draft'">
+            Generate Invoice
+          </button>
+          <button type="submit" class="btn" style="flex:1;padding:10px;background:rgba(251,191,36,.15);color:#fbbf24;border-color:#fbbf24"
+                  id="submitBtnUnpaid" disabled
+                  onclick="document.getElementById('createStatusField').value='unpaid'"
+                  title="Skips Draft — creates the invoice as final and awaiting payment">
+            Generate as Unpaid
+          </button>
+        </div>
+        <input type="hidden" name="create_status" id="createStatusField" value="draft">
+        {% endif %}
         <div id="submitHint" style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;
              display:{{ 'none' if edit_mode else 'block' }}">
           Select at least one order above
@@ -223,6 +238,8 @@ function updateCount(){
   document.getElementById('selectedCount').textContent = checked + ' selected';
   const btn = document.getElementById('submitBtn');
   btn.disabled = checked === 0;
+  const btnUnpaid = document.getElementById('submitBtnUnpaid');
+  if (btnUnpaid) btnUnpaid.disabled = checked === 0;
   document.getElementById('submitHint').style.display = checked > 0 ? 'none' : 'block';
 }
 
