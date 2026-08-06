@@ -91,9 +91,11 @@
         </form>
         {% else %}
         <span style="font-size:11px;color:#10b981">✓ All received</span>
-        {% if b.latest_session_id %}
+        {% if b.latest_session_id and not b.has_invoice_lock %}
         <a href="{{ url_for('receiving.session', session_id=b.latest_session_id) }}"
            class="btn btn-ghost btn-sm" style="margin-left:8px">Manage Session</a>
+        {% elif b.latest_session_id and b.has_invoice_lock %}
+        <span style="font-size:11px;color:var(--muted);margin-left:8px" title="On an active invoice — return it there first to manage this session">On invoice</span>
         {% endif %}
         {% endif %}
       </td>
