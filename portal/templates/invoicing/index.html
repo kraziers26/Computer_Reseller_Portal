@@ -111,15 +111,13 @@
       <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.created_by or '—' }}</td>
       <td style="padding:9px 14px;white-space:nowrap">
         <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">View</a>
-        {% if inv.status == 'draft' %}
         <a href="{{ url_for('invoicing.edit_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm" style="color:#4f6ef7;border-color:#4f6ef740;margin-left:4px">✏ Edit</a>
         <form method="POST" action="{{ url_for('invoicing.delete_invoice', invoice_id=inv.invoice_id) }}"
               style="display:inline;margin-left:4px"
-              onsubmit="return confirm('Delete Invoice {{ inv.invoice_number }}? Orders will return to Received pool.')">
+              onsubmit="return confirmDeleteInvoice('{{ inv.invoice_number }}', '{{ inv.status }}')">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">✕ Delete</button>
         </form>
-        {% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -127,4 +125,20 @@
   </table>
 </div>
 {% endif %}
+
+<script>
+function confirmDeleteInvoice(number, status) {
+  if (status === 'paid') {
+    return confirm(
+      'Invoice ' + number + ' is marked PAID.\n\n' +
+      'Are you sure you want to delete a PAID invoice? This will permanently remove the ' +
+      'invoice and release its orders back to the Received (closed, not-yet-invoiced) pool.'
+    );
+  }
+  return confirm(
+    'Delete Invoice ' + number + '? Its orders will be released back to the Received ' +
+    '(closed, not-yet-invoiced) pool.'
+  );
+}
+</script>
 {% endblock %}
