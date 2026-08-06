@@ -2,7 +2,14 @@
 {% block title %}Pending Pool — Receiving{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>Pending Pool</h1><p>{{ items|length }} orders awaiting receipt</p></div>
+  <div>
+    <h1>Pending Pool</h1>
+    <p>{{ items|length }} orders awaiting receipt</p>
+    <p style="font-size:11px;color:var(--muted);max-width:560px;margin-top:4px">
+      Orders land here when a session is closed without every item marked Received.
+      Open the order's session to correct its status, or use Reset there to start it over.
+    </p>
+  </div>
   <a href="{{ url_for('receiving.index') }}" class="btn btn-ghost btn-sm">← Receiving</a>
 </div>
 
