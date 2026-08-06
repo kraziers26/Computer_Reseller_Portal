@@ -980,19 +980,35 @@ def batch_history():
 # it hasn't progressed past Batched, AND hasn't already been scanned inside an
 # open receiving session (received/partial/missing there) even though the
 # transaction itself still reads 'batched' until that session is closed.
-_EDITABLE_EXPR = """
-    (t.fulfillment_status = 'batched'
-     AND NOT EXISTS (
-        SELECT 1 FROM receiving_items ri
-        JOIN receiving_sessions rs ON ri.session_id = rs.session_id
-        WHERE ri.transaction_id = t.transaction_id
-          AND rs.status = 'open'
-          AND ri.receive_status IN ('received','partial','missing')
-     ))
+# An order is locked from editing if it currently has a non-returned line on
+# any invoice. The moment it's marked Returned there (even after being
+# invoiced), it's unlocked again -- this same rule is reused in Receiving.
+_INVOICE_LOCKED_EXPR = """
+    EXISTS (
+        SELECT 1 FROM invoice_items ii
+        WHERE ii.transaction_id = t.transaction_id AND NOT ii.returned
+    )
 """
 
-_LOCK_REASON_EXPR = """
+_EDITABLE_EXPR = f"""
+    (
+        (t.exception_status = 'returned' AND NOT {_INVOICE_LOCKED_EXPR})
+        OR
+        (t.fulfillment_status = 'batched'
+         AND NOT EXISTS (
+            SELECT 1 FROM receiving_items ri
+            JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+            WHERE ri.transaction_id = t.transaction_id
+              AND rs.status = 'open'
+              AND ri.receive_status IN ('received','partial','missing')
+         ))
+    )
+"""
+
+_LOCK_REASON_EXPR = f"""
     CASE
+        WHEN t.exception_status = 'returned' AND NOT {_INVOICE_LOCKED_EXPR} THEN NULL
+        WHEN {_INVOICE_LOCKED_EXPR} THEN 'On an active invoice — return it there first'
         WHEN t.fulfillment_status = 'invoiced' THEN 'Already invoiced'
         WHEN t.fulfillment_status = 'received' THEN 'Already received'
         WHEN EXISTS (
