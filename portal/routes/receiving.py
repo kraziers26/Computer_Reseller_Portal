@@ -194,6 +194,10 @@ def session(session_id):
                    t.transaction_id, t.order_number, t.retailer, t.purchase_date,
                    t.price_total, u.username AS person_name, c.company_name,
                    t.fulfillment_status,
+                   EXISTS (
+                       SELECT 1 FROM invoice_items ii
+                       WHERE ii.transaction_id = t.transaction_id AND NOT ii.returned
+                   ) AS invoice_locked,
                    EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at,
                            t.submitted_at))) / 86400 AS days_in_status
             FROM receiving_items ri
@@ -204,6 +208,7 @@ def session(session_id):
             ORDER BY t.retailer, t.order_number
         """, (session_id,))
         items = cur.fetchall()
+        any_locked = any(i['invoice_locked'] for i in items)
 
         # Load line items for each receiving_item
         line_map = {}
@@ -248,6 +253,7 @@ def session(session_id):
                            total=total, rcvd=rcvd, missing=missing,
                            partial=partial, pending=pending,
                            missing_from_session=missing_from_session,
+                           any_locked=any_locked,
                            session_id=session_id)
 
 
@@ -397,6 +403,129 @@ def close_session(session_id):
     else:
         flash('Session closed. Missing and partial items remain in the pending pool.', 'success')
     return redirect(url_for('receiving.index'))
+
+
+# ── Reopen a closed session (no data changes -- just re-enables marking) ───────
+
+@receiving_bp.route('/session/<session_id>/reopen', methods=['POST'])
+@login_required
+@require_role('admin')
+def reopen_session(session_id):
+    from ..security import audit
+    with db_cursor() as (cur, conn):
+        cur.execute(
+            "UPDATE receiving_sessions SET status='open' WHERE session_id=%s AND status='closed' "
+            "RETURNING batch_id",
+            (session_id,))
+        row = cur.fetchone()
+    if row:
+        audit('session_reopened', 'receiving_session', session_id, detail=f"batch {row['batch_id']}")
+        flash('Session reopened. You can mark items again.', 'success')
+    else:
+        flash('Session not found or already open.', 'warning')
+    return redirect(url_for('receiving.session', session_id=session_id))
+
+
+def _unreceive_transaction(cur, item_id, transaction_id):
+    """Reset one receiving_items row + its transaction back to pre-received,
+    a clean slate. Caller must have already confirmed it's not invoice-locked."""
+    cur.execute(
+        "UPDATE receiving_items SET receive_status='pending', notes=NULL, updated_at=NOW() "
+        "WHERE item_id=%s",
+        (item_id,))
+    cur.execute(
+        "UPDATE receiving_item_lines SET received_qty=0 WHERE item_id=%s",
+        (item_id,))
+    cur.execute("""
+        UPDATE transactions
+        SET fulfillment_status='batched', fulfillment_status_updated_at=NOW(),
+            exception_status=NULL, exception_note=NULL,
+            exception_set_at=NULL, exception_set_by=NULL
+        WHERE transaction_id=%s
+    """, (transaction_id,))
+
+
+# ── Unreceive one order within a session ────────────────────────────────────
+
+@receiving_bp.route('/session/<session_id>/unreceive-item', methods=['POST'])
+@login_required
+@require_role('admin')
+def unreceive_item(session_id):
+    from ..security import audit
+    item_id = request.form.get('item_id', '').strip()
+    if not item_id:
+        return redirect(url_for('receiving.session', session_id=session_id))
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            SELECT ri.item_id, ri.transaction_id, t.order_number,
+                   EXISTS (
+                       SELECT 1 FROM invoice_items ii
+                       WHERE ii.transaction_id = t.transaction_id AND NOT ii.returned
+                   ) AS invoice_locked
+            FROM receiving_items ri
+            JOIN transactions t ON ri.transaction_id = t.transaction_id
+            WHERE ri.item_id = %s AND ri.session_id = %s
+        """, (item_id, session_id))
+        row = cur.fetchone()
+
+        if not row:
+            flash('Item not found in this session.', 'error')
+            return redirect(url_for('receiving.session', session_id=session_id))
+
+        if row['invoice_locked']:
+            flash(f"Can't unreceive {row['order_number']} — it's on an active invoice. "
+                  f"Return it there first.", 'warning')
+            return redirect(url_for('receiving.session', session_id=session_id))
+
+        _unreceive_transaction(cur, item_id, row['transaction_id'])
+
+    audit('order_unreceived', 'transaction', str(row['transaction_id']),
+          detail=f"{row['order_number']} unreceived from session {session_id}")
+    flash(f"{row['order_number']} unreceived — back to Batched, ready to redo.", 'success')
+    return redirect(url_for('receiving.session', session_id=session_id))
+
+
+# ── Unreceive an entire session ─────────────────────────────────────────────
+
+@receiving_bp.route('/session/<session_id>/unreceive', methods=['POST'])
+@login_required
+@require_role('admin')
+def unreceive_session(session_id):
+    from ..security import audit
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            SELECT ri.item_id, ri.transaction_id, t.order_number,
+                   EXISTS (
+                       SELECT 1 FROM invoice_items ii
+                       WHERE ii.transaction_id = t.transaction_id AND NOT ii.returned
+                   ) AS invoice_locked
+            FROM receiving_items ri
+            JOIN transactions t ON ri.transaction_id = t.transaction_id
+            WHERE ri.session_id = %s
+        """, (session_id,))
+        rows = cur.fetchall()
+
+        if not rows:
+            flash('No items in this session.', 'warning')
+            return redirect(url_for('receiving.session', session_id=session_id))
+
+        blockers = [r for r in rows if r['invoice_locked']]
+        if blockers:
+            names = ', '.join(r['order_number'] for r in blockers)
+            flash(f"Can't unreceive this session — {names} still on an active invoice. "
+                  f"Return {'it' if len(blockers)==1 else 'them'} there first, then try again.",
+                  'warning')
+            return redirect(url_for('receiving.session', session_id=session_id))
+
+        for r in rows:
+            _unreceive_transaction(cur, r['item_id'], r['transaction_id'])
+
+        cur.execute("UPDATE receiving_sessions SET status='open' WHERE session_id=%s", (session_id,))
+
+    audit('session_unreceived', 'receiving_session', session_id, detail=f"{len(rows)} order(s) reset")
+    flash(f"Session unreceived — all {len(rows)} order(s) reset to Batched. Session reopened.", 'success')
+    return redirect(url_for('receiving.session', session_id=session_id))
 
 
 # ── Pending pool ──────────────────────────────────────────────────────────────
