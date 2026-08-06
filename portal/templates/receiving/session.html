@@ -20,16 +20,16 @@
     <button type="submit" class="btn btn-ghost btn-sm">Reopen Session</button>
   </form>
   {% endif %}
-  <form method="POST" action="{{ url_for('receiving.unreceive_session', session_id=session_id) }}" style="display:inline"
+  <form method="POST" action="{{ url_for('receiving.reset_session', session_id=session_id) }}" style="display:inline"
         {% if not any_locked %}
-        onsubmit="return confirm('Unreceive this ENTIRE session? Every order resets to Batched and the session reopens. This can\'t be undone by clicking again.')"
+        onsubmit="return confirm('Reset this ENTIRE session? Every order goes back to Batched, the session itself is cleared, and Start Receiving becomes available again for this batch.')"
         {% endif %}>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% if any_locked %}
     <button type="button" class="btn btn-ghost btn-sm" disabled style="opacity:.4;cursor:not-allowed;color:#f87171"
-            title="One or more orders in this session are on an active invoice — return them first">Unreceive Session</button>
+            title="One or more orders in this session are on an active invoice — return them first">Reset Session</button>
     {% else %}
-    <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Unreceive Session</button>
+    <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Reset Session</button>
     {% endif %}
   </form>
 </div>
@@ -124,13 +124,13 @@
 
       {% if item.invoice_locked %}
       <button type="button" class="btn btn-ghost btn-sm" disabled style="opacity:.4;cursor:not-allowed;color:#f87171;flex-shrink:0"
-              title="On an active invoice — return it there first">Unreceive</button>
+              title="On an active invoice — return it there first">Reset</button>
       {% else %}
-      <form method="POST" action="{{ url_for('receiving.unreceive_item', session_id=session_id) }}" style="display:inline;flex-shrink:0"
-            onsubmit="return confirm('Unreceive {{ item.order_number }}? It resets to Batched, ready to redo.')">
+      <form method="POST" action="{{ url_for('receiving.reset_item', session_id=session_id) }}" style="display:inline;flex-shrink:0"
+            onsubmit="return confirm('Reset {{ item.order_number }}? It goes back to Batched, ready to redo.')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="item_id" value="{{ item.item_id }}">
-        <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Unreceive</button>
+        <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Reset</button>
       </form>
       {% endif %}
     </div>
