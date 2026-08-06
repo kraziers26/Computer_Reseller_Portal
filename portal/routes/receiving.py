@@ -426,16 +426,11 @@ def reopen_session(session_id):
     return redirect(url_for('receiving.session', session_id=session_id))
 
 
-def _unreceive_transaction(cur, item_id, transaction_id):
-    """Reset one receiving_items row + its transaction back to pre-received,
-    a clean slate. Caller must have already confirmed it's not invoice-locked."""
-    cur.execute(
-        "UPDATE receiving_items SET receive_status='pending', notes=NULL, updated_at=NOW() "
-        "WHERE item_id=%s",
-        (item_id,))
-    cur.execute(
-        "UPDATE receiving_item_lines SET received_qty=0 WHERE item_id=%s",
-        (item_id,))
+def _reset_transaction(cur, item_id, transaction_id):
+    """Fully undo one order's receiving: delete its receiving_items row (and
+    lines with it) rather than just resetting status, so no stale residue is
+    left behind, and reset the transaction to a clean pre-received slate."""
+    cur.execute("DELETE FROM receiving_items WHERE item_id=%s", (item_id,))
     cur.execute("""
         UPDATE transactions
         SET fulfillment_status='batched', fulfillment_status_updated_at=NOW(),
@@ -445,12 +440,23 @@ def _unreceive_transaction(cur, item_id, transaction_id):
     """, (transaction_id,))
 
 
-# ── Unreceive one order within a session ────────────────────────────────────
+def _delete_session_if_empty(cur, session_id):
+    """If unreceiving emptied a session out completely, remove the session
+    record too -- otherwise it lingers as a confusing empty 'Closed' shell
+    that doesn't reflect reality."""
+    cur.execute("SELECT COUNT(*) AS n FROM receiving_items WHERE session_id=%s", (session_id,))
+    if cur.fetchone()['n'] == 0:
+        cur.execute("DELETE FROM receiving_sessions WHERE session_id=%s", (session_id,))
+        return True
+    return False
 
-@receiving_bp.route('/session/<session_id>/unreceive-item', methods=['POST'])
+
+# ── Reset one order within a session ────────────────────────────────────
+
+@receiving_bp.route('/session/<session_id>/reset-item', methods=['POST'])
 @login_required
 @require_role('admin')
-def unreceive_item(session_id):
+def reset_item(session_id):
     from ..security import audit
     item_id = request.form.get('item_id', '').strip()
     if not item_id:
@@ -474,24 +480,31 @@ def unreceive_item(session_id):
             return redirect(url_for('receiving.session', session_id=session_id))
 
         if row['invoice_locked']:
-            flash(f"Can't unreceive {row['order_number']} — it's on an active invoice. "
+            flash(f"Can't reset {row['order_number']} — it's on an active invoice. "
                   f"Return it there first.", 'warning')
             return redirect(url_for('receiving.session', session_id=session_id))
 
-        _unreceive_transaction(cur, item_id, row['transaction_id'])
+        _reset_transaction(cur, item_id, row['transaction_id'])
+        emptied = _delete_session_if_empty(cur, session_id)
 
-    audit('order_unreceived', 'transaction', str(row['transaction_id']),
-          detail=f"{row['order_number']} unreceived from session {session_id}")
-    flash(f"{row['order_number']} unreceived — back to Batched, ready to redo.", 'success')
+    audit('order_reset', 'transaction', str(row['transaction_id']),
+          detail=f"{row['order_number']} reset from session {session_id}")
+
+    if emptied:
+        flash(f"{row['order_number']} reset — back to Batched. That was the last order in "
+              f"this session, so it's been cleared. Start Receiving is available again.", 'success')
+        return redirect(url_for('receiving.index'))
+
+    flash(f"{row['order_number']} reset — back to Batched, ready to redo.", 'success')
     return redirect(url_for('receiving.session', session_id=session_id))
 
 
-# ── Unreceive an entire session ─────────────────────────────────────────────
+# ── Reset an entire session ─────────────────────────────────────────────
 
-@receiving_bp.route('/session/<session_id>/unreceive', methods=['POST'])
+@receiving_bp.route('/session/<session_id>/reset', methods=['POST'])
 @login_required
 @require_role('admin')
-def unreceive_session(session_id):
+def reset_session(session_id):
     from ..security import audit
     with db_cursor() as (cur, conn):
         cur.execute("""
@@ -513,18 +526,22 @@ def unreceive_session(session_id):
         blockers = [r for r in rows if r['invoice_locked']]
         if blockers:
             names = ', '.join(r['order_number'] for r in blockers)
-            flash(f"Can't unreceive this session — {names} still on an active invoice. "
+            flash(f"Can't reset this session — {names} still on an active invoice. "
                   f"Return {'it' if len(blockers)==1 else 'them'} there first, then try again.",
                   'warning')
             return redirect(url_for('receiving.session', session_id=session_id))
 
         for r in rows:
-            _unreceive_transaction(cur, r['item_id'], r['transaction_id'])
+            _reset_transaction(cur, r['item_id'], r['transaction_id'])
 
-        cur.execute("UPDATE receiving_sessions SET status='open' WHERE session_id=%s", (session_id,))
+        # Unreceiving every order always empties the session out -- remove it
+        # rather than leaving an empty 'open' shell behind.
+        cur.execute("DELETE FROM receiving_sessions WHERE session_id=%s", (session_id,))
 
-    audit('session_unreceived', 'receiving_session', session_id, detail=f"{len(rows)} order(s) reset")
-    flash(f"Session unreceived — all {len(rows)} order(s) reset to Batched. Session reopened.", 'success')
+    audit('session_reset', 'receiving_session', session_id, detail=f"{len(rows)} order(s) reset")
+    flash(f"Session reset — all {len(rows)} order(s) back to Batched. "
+          f"Start Receiving is available again for this batch.", 'success')
+    return redirect(url_for('receiving.index'))
     return redirect(url_for('receiving.session', session_id=session_id))
 
 
