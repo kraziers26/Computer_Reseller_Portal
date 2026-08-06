@@ -2,7 +2,16 @@
 {% block title %}Receiving — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>Receiving</h1><p>Mark batched orders as received, missing, or partial</p></div>
+  <div>
+    <h1>Receiving</h1>
+    <p>Mark batched orders as received, missing, or partial</p>
+    <p style="font-size:11px;color:var(--muted);max-width:640px;margin-top:4px">
+      <strong>Start Receiving</strong> begins checking off a batch's orders as they arrive →
+      <strong>Close Session</strong> finishes it, sending anything not fully received to the Pending Pool →
+      once closed, <strong>Manage Session</strong> lets you go back in to fix a mistake or fully
+      <strong>Reset</strong> it back to unreceived.
+    </p>
+  </div>
   <form method="POST" action="{{ url_for('receiving.sync_received') }}" style="margin-left:auto">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="btn btn-ghost btn-sm"
@@ -42,7 +51,8 @@
         <div style="font-size:16px;font-weight:600;color:var(--muted)">{{ s.pending_count }}</div>
         <div style="font-size:10px;color:var(--muted)">Pending</div>
       </div>
-      <a href="{{ url_for('receiving.session', session_id=s.session_id) }}" class="btn btn-primary btn-sm">Continue →</a>
+      <a href="{{ url_for('receiving.session', session_id=s.session_id) }}" class="btn btn-primary btn-sm"
+         title="Keep marking this session's orders as received, missing, or partial">Continue →</a>
     </div>
   </div>
   {% endif %}
@@ -87,13 +97,15 @@
         <form method="POST" action="{{ url_for('receiving.start_session') }}" style="display:inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="batch_id" value="{{ b.batch_id }}">
-          <button type="submit" class="btn btn-primary btn-sm">Start Receiving</button>
+          <button type="submit" class="btn btn-primary btn-sm"
+                  title="Opens a new session for this batch so you can start checking off orders as they arrive">Start Receiving</button>
         </form>
         {% else %}
         <span style="font-size:11px;color:#10b981">✓ All received</span>
         {% if b.latest_session_id and not b.has_invoice_lock %}
         <a href="{{ url_for('receiving.session', session_id=b.latest_session_id) }}"
-           class="btn btn-ghost btn-sm" style="margin-left:8px">Manage Session</a>
+           class="btn btn-ghost btn-sm" style="margin-left:8px"
+           title="Review what was received, fix a mistake, or fully reset this session">Manage Session</a>
         {% elif b.latest_session_id and b.has_invoice_lock %}
         <span style="font-size:11px;color:var(--muted);margin-left:8px" title="On an active invoice — return it there first to manage this session">On invoice</span>
         {% endif %}
@@ -117,7 +129,8 @@
       <div style="font-size:12px;font-weight:500">{{ s.batch_name }}</div>
       <div style="font-size:11px;color:var(--muted)">Closed · {{ s.created_at.strftime('%b %d, %Y') }}</div>
     </div>
-    <a href="{{ url_for('receiving.session', session_id=s.session_id) }}" class="btn btn-ghost btn-sm">View</a>
+    <a href="{{ url_for('receiving.session', session_id=s.session_id) }}" class="btn btn-ghost btn-sm"
+       title="Review what was received, fix a mistake, or fully reset this session">View</a>
   </div>
   {% endfor %}
 </div>
