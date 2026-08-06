@@ -14,7 +14,24 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="btn btn-ghost btn-sm">Close Session</button>
   </form>
+  {% else %}
+  <form method="POST" action="{{ url_for('receiving.reopen_session', session_id=session_id) }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost btn-sm">Reopen Session</button>
+  </form>
   {% endif %}
+  <form method="POST" action="{{ url_for('receiving.unreceive_session', session_id=session_id) }}" style="display:inline"
+        {% if not any_locked %}
+        onsubmit="return confirm('Unreceive this ENTIRE session? Every order resets to Batched and the session reopens. This can\'t be undone by clicking again.')"
+        {% endif %}>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if any_locked %}
+    <button type="button" class="btn btn-ghost btn-sm" disabled style="opacity:.4;cursor:not-allowed;color:#f87171"
+            title="One or more orders in this session are on an active invoice — return them first">Unreceive Session</button>
+    {% else %}
+    <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Unreceive Session</button>
+    {% endif %}
+  </form>
 </div>
 
 <!-- KPI bar -->
@@ -103,6 +120,18 @@
                    {{ 'background:rgba(16,185,129,.12);color:#10b981' if rs=='received' else 'background:rgba(251,191,36,.12);color:#fbbf24' if rs=='partial' else 'background:rgba(239,68,68,.12);color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted)' }}">
         {{ rs|title }}
       </span>
+      {% endif %}
+
+      {% if item.invoice_locked %}
+      <button type="button" class="btn btn-ghost btn-sm" disabled style="opacity:.4;cursor:not-allowed;color:#f87171;flex-shrink:0"
+              title="On an active invoice — return it there first">Unreceive</button>
+      {% else %}
+      <form method="POST" action="{{ url_for('receiving.unreceive_item', session_id=session_id) }}" style="display:inline;flex-shrink:0"
+            onsubmit="return confirm('Unreceive {{ item.order_number }}? It resets to Batched, ready to redo.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="item_id" value="{{ item.item_id }}">
+        <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Unreceive</button>
+      </form>
       {% endif %}
     </div>
 
