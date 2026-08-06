@@ -45,8 +45,21 @@ def get_next_invoice_number(cur, code):
     return f"{int(n):05d}-{code}"
 
 
-def _load_received_orders(cur):
-    """Load received orders with their line items (items >= $1 only)."""
+def _load_received_orders(cur, include_txn_ids=None):
+    """Load received orders with their line items (items >= $1 only).
+
+    Only orders whose receiving session has been CLOSED are eligible —
+    an item marked 'received' mid-session (session still open) shouldn't
+    be invoiceable yet. Orders with no receiving_items record at all
+    (e.g. a manual fulfillment_status override from Admin) are still
+    allowed through, since there's no session to check.
+
+    include_txn_ids: transaction IDs to force-include regardless of their
+    current fulfillment_status — used by edit_invoice() so the orders
+    already on the invoice being edited still show up (and stay checked)
+    even though they're sitting at fulfillment_status='invoiced'.
+    """
+    include_txn_ids = include_txn_ids or []
     cur.execute("""
         SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date,
                t.price_total, u.username AS person_name,
@@ -56,10 +69,29 @@ def _load_received_orders(cur):
         LEFT JOIN dim_users u      ON t.user_id = u.user_id
         LEFT JOIN dim_companies c  ON t.company_id = c.company_id
         LEFT JOIN print_batches pb ON pb.batch_id = t.print_batch_id
-        WHERE t.fulfillment_status='received' AND t.is_active=TRUE
-          AND t.exception_status IS NULL
+        WHERE t.is_active=TRUE
+          AND (
+                (
+                  t.fulfillment_status='received'
+                  AND t.exception_status IS NULL
+                  AND (
+                        NOT EXISTS (
+                          SELECT 1 FROM receiving_items ri2
+                          WHERE ri2.transaction_id = t.transaction_id
+                        )
+                        OR EXISTS (
+                          SELECT 1 FROM receiving_items ri
+                          JOIN receiving_sessions rs ON ri.session_id = rs.session_id
+                          WHERE ri.transaction_id = t.transaction_id
+                            AND ri.receive_status = 'received'
+                            AND rs.status = 'closed'
+                        )
+                      )
+                )
+                OR t.transaction_id = ANY(%s::uuid[])
+              )
         ORDER BY t.print_batch_id NULLS LAST, t.retailer, t.order_number
-    """)
+    """, (include_txn_ids,))
     orders = cur.fetchall()
 
     # Load line items per order, filtering out < $1 items
@@ -344,11 +376,11 @@ def edit_invoice(invoice_id):
             FROM invoices i
             LEFT JOIN dim_companies c  ON i.company_id  = c.company_id
             LEFT JOIN dim_customers cu ON i.customer_id = cu.customer_id
-            WHERE i.invoice_id=%s AND i.status='draft'
+            WHERE i.invoice_id=%s
         """, (sid,))
         inv = cur.fetchone()
         if not inv:
-            flash('Invoice not found or not editable.', 'error')
+            flash('Invoice not found.', 'error')
             return redirect(url_for('invoicing.index'))
 
         # Current orders on this invoice
@@ -358,7 +390,7 @@ def edit_invoice(invoice_id):
         """, (sid,))
         existing_txn_ids = [r['transaction_id'] for r in cur.fetchall()]
 
-        orders, order_items = _load_received_orders(cur)
+        orders, order_items = _load_received_orders(cur, include_txn_ids=existing_txn_ids)
         cur.execute("SELECT company_id, company_name, company_short_code FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
         companies = cur.fetchall()
         cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
@@ -587,7 +619,7 @@ def _save_invoice(existing_id=None):
     return redirect(url_for('invoicing.view_invoice', invoice_id=invoice_id))
 
 
-# ── Delete Invoice (Draft only) ───────────────────────────────────────────────
+# ── Delete Invoice (any status — releases orders back to Received) ───────────
 
 @invoicing_bp.route('/<uuid:invoice_id>/delete', methods=['POST'])
 @login_required
@@ -599,9 +631,6 @@ def delete_invoice(invoice_id):
         inv = cur.fetchone()
         if not inv:
             flash('Invoice not found.', 'error')
-            return redirect(url_for('invoicing.index'))
-        if inv['status'] != 'draft':
-            flash('Only Draft invoices can be deleted.', 'error')
             return redirect(url_for('invoicing.index'))
 
         # Release orders back to received
