@@ -70,7 +70,13 @@ def index():
                    STRING_AGG(DISTINCT c.company_name, ', ') AS companies,
                    (SELECT rs.session_id FROM receiving_sessions rs
                     WHERE rs.batch_id = t.print_batch_id
-                    ORDER BY rs.created_at DESC LIMIT 1) AS latest_session_id
+                    ORDER BY rs.created_at DESC LIMIT 1) AS latest_session_id,
+                   BOOL_OR(
+                       EXISTS (
+                           SELECT 1 FROM invoice_items ii
+                           WHERE ii.transaction_id = t.transaction_id AND NOT ii.returned
+                       )
+                   ) AS has_invoice_lock
             FROM transactions t
             LEFT JOIN dim_companies c ON t.company_id = c.company_id
             LEFT JOIN print_batches pb ON pb.batch_id = t.print_batch_id
