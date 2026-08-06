@@ -1,144 +1,139 @@
 {% extends "base.html" %}
-{% block title %}Invoicing — ComputerReseller Portal{% endblock %}
+{% block title %}Receiving — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <div class="page-header page-header-row">
-  <div><h1>Invoicing</h1><p>{{ invoices|length }} invoice{{ 's' if invoices|length != 1 }}</p></div>
-  <a href="{{ url_for('invoicing.new_invoice') }}" class="btn btn-primary">+ New Invoice</a>
-</div>
-
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
-  <div class="card" style="padding:14px 16px">
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Drafts</div>
-    <div style="font-size:22px;font-weight:600;color:#fbbf24">{{ kpis.drafts or 0 }}</div>
+  <div>
+    <h1>Receiving</h1>
+    <p>Mark batched orders as received, missing, or partial</p>
+    <p style="font-size:11px;color:var(--muted);max-width:640px;margin-top:4px">
+      <strong>Start Receiving</strong> begins checking off a batch's orders as they arrive →
+      <strong>Close Session</strong> finishes it, sending anything not fully received to the Pending Pool →
+      once closed, <strong>Manage Session</strong> lets you go back in to fix a mistake or fully
+      <strong>Reset</strong> it back to unreceived.
+    </p>
   </div>
-  <div class="card" style="padding:14px 16px">
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Sent / Pending</div>
-    <div style="font-size:22px;font-weight:600;color:#8b5cf6">{{ (kpis.sent or 0) + (kpis.unpaid or 0) }}</div>
-    <div style="font-size:11px;color:var(--muted);margin-top:2px">${{ "{:,.2f}".format(kpis.pending_amount or 0) }}</div>
-  </div>
-  <div class="card" style="padding:14px 16px">
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Paid</div>
-    <div style="font-size:22px;font-weight:600;color:#10b981">{{ kpis.paid or 0 }}</div>
-    <div style="font-size:11px;color:var(--muted);margin-top:2px">${{ "{:,.2f}".format(kpis.paid_amount or 0) }}</div>
-  </div>
-  <div class="card" style="padding:14px 16px">
-    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Eligible Orders</div>
-    <div style="font-size:22px;font-weight:600;color:#4f6ef7">
-      <a href="{{ url_for('invoicing.new_invoice') }}" style="color:inherit;text-decoration:none">→ Invoice</a>
-    </div>
-  </div>
-</div>
-
-<div class="card" style="margin-bottom:14px">
-  <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:end">
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
-      <select name="company" style="width:100%" onchange="this.form.submit()">
-        <option value="">All companies</option>
-        {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Customer</div>
-      <select name="customer" style="width:100%" onchange="this.form.submit()">
-        <option value="">All customers</option>
-        {% for c in customers %}<option value="{{ c.customer_id }}" {{ 'selected' if filters.customer==c.customer_id|string }}>{{ c.customer_name }}</option>{% endfor %}
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Status</div>
-      <select name="status" style="width:100%" onchange="this.form.submit()">
-        <option value="">All statuses</option>
-        <option value="draft"  {{ 'selected' if filters.status=='draft'  }}>Draft</option>
-        <option value="sent"   {{ 'selected' if filters.status=='sent'   }}>Sent</option>
-        <option value="unpaid" {{ 'selected' if filters.status=='unpaid' }}>Unpaid</option>
-        <option value="paid"   {{ 'selected' if filters.status=='paid'   }}>Paid</option>
-      </select>
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">From</div>
-      <input type="date" name="date_from" value="{{ filters.date_from }}" style="width:100%" onchange="this.form.submit()">
-    </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">To</div>
-      <input type="date" name="date_to" value="{{ filters.date_to }}" style="width:100%" onchange="this.form.submit()">
-    </div>
-    <div style="display:flex;align-items:flex-end">
-      {% if filters.company or filters.customer or filters.status or filters.date_from or filters.date_to %}
-      <a href="{{ url_for('invoicing.index') }}" class="btn btn-ghost btn-sm" style="width:100%">Clear</a>
-      {% endif %}
-    </div>
+  <form method="POST" action="{{ url_for('receiving.sync_received') }}" style="margin-left:auto">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost btn-sm"
+            title="Fix transactions from closed sessions that are stuck in batched status"
+            onclick="return confirm('Sync all closed sessions to mark received orders as available for invoicing?')">
+      ⚙ Sync Received
+    </button>
   </form>
 </div>
 
-{% if not invoices %}
-<div class="card" style="text-align:center;padding:48px;color:var(--muted)">
-  No invoices yet. <a href="{{ url_for('invoicing.new_invoice') }}" style="color:var(--accent2)">Create your first invoice →</a>
+{% if sessions %}
+<div style="margin-bottom:20px">
+  <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Open Sessions</div>
+  {% for s in sessions %}
+  {% if s.status == 'open' %}
+  <div class="card" style="margin-bottom:8px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div>
+      <div style="font-weight:500;font-size:13px">{{ s.batch_name }}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">
+        Started {{ s.created_at.strftime('%b %d, %Y') }} by {{ s.created_by or '—' }}
+      </div>
+    </div>
+    <div style="display:flex;gap:16px;align-items:center">
+      <div style="text-align:center">
+        <div style="font-size:16px;font-weight:600;color:#10b981">{{ s.received_count }}</div>
+        <div style="font-size:10px;color:var(--muted)">Received</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:16px;font-weight:600;color:#fbbf24">{{ s.partial_count }}</div>
+        <div style="font-size:10px;color:var(--muted)">Partial</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:16px;font-weight:600;color:#f87171">{{ s.missing_count }}</div>
+        <div style="font-size:10px;color:var(--muted)">Missing</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:16px;font-weight:600;color:var(--muted)">{{ s.pending_count }}</div>
+        <div style="font-size:10px;color:var(--muted)">Pending</div>
+      </div>
+      <a href="{{ url_for('receiving.session', session_id=s.session_id) }}" class="btn btn-primary btn-sm"
+         title="Keep marking this session's orders as received, missing, or partial">Continue →</a>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
 </div>
-{% else %}
-<div class="card" style="padding:0">
+{% endif %}
+
+<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Start New Session — Select a Batch</div>
+<div class="card">
+  {% if not batches %}
+  <div style="text-align:center;padding:32px;color:var(--muted)">No batched orders available. Tag invoices to a print batch first.</div>
+  {% else %}
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <thead>
       <tr style="background:var(--surface2)">
-        {% set th="padding:9px 14px;text-align:left;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap" %}
-        <th style="{{ th }}">Invoice #</th>
-        <th style="{{ th }}">Date</th>
-        <th style="{{ th }}">Customer</th>
-        <th style="{{ th }}">Company</th>
-        <th style="{{ th }};text-align:right">Total</th>
-        <th style="{{ th }}">Status</th>
-        <th style="{{ th }}">Created by</th>
-        <th style="{{ th }}">Actions</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Batch</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Printed</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Companies</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Awaiting</th>
+        <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Received</th>
+        <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
       </tr>
     </thead>
     <tbody>
-    {% for inv in invoices %}
+    {% for b in batches %}
     <tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:9px 14px;font-family:var(--mono);font-size:12px;font-weight:500">
-        <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" style="color:var(--accent2)">{{ inv.invoice_number }}</a>
+      <td style="padding:9px 12px;font-weight:500;font-size:12px">{{ b.batch_name }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ b.batch_date.strftime('%b %d, %Y') if b.batch_date else '—' }}</td>
+      <td style="padding:9px 12px;font-size:12px;color:var(--muted)">{{ b.companies or '—' }}</td>
+      <td style="padding:9px 12px;text-align:right">
+        {% if b.pending_count > 0 %}
+        <span style="background:rgba(139,92,246,.12);color:#8b5cf6;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600">{{ b.pending_count }}</span>
+        {% else %}<span style="color:var(--muted)">—</span>{% endif %}
       </td>
-      <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.invoice_date }}</td>
-      <td style="padding:9px 14px;font-weight:500">{{ inv.customer_name or '—' }}</td>
-      <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.company_name or '—' }}</td>
-      <td style="padding:9px 14px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(inv.total or 0) }}</td>
-      <td style="padding:9px 14px">
-        {% if inv.status=='draft' %}<span style="background:rgba(251,191,36,.15);color:#fbbf24;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">Draft</span>
-        {% elif inv.status=='sent' %}<span style="background:rgba(139,92,246,.12);color:#8b5cf6;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">Sent</span>
-        {% elif inv.status=='unpaid' %}<span style="background:rgba(248,113,113,.12);color:#f87171;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">Unpaid</span>
-        {% elif inv.status=='paid' %}<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600">Paid</span>
-        {% endif %}
+      <td style="padding:9px 12px;text-align:right">
+        {% if b.received_count > 0 %}
+        <span style="background:rgba(16,185,129,.12);color:#10b981;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600">{{ b.received_count }}</span>
+        {% else %}<span style="color:var(--muted)">—</span>{% endif %}
       </td>
-      <td style="padding:9px 14px;font-size:12px;color:var(--muted)">{{ inv.created_by or '—' }}</td>
-      <td style="padding:9px 14px;white-space:nowrap">
-        <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">View</a>
-        <a href="{{ url_for('invoicing.edit_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm" style="color:#4f6ef7;border-color:#4f6ef740;margin-left:4px">✏ Edit</a>
-        <form method="POST" action="{{ url_for('invoicing.delete_invoice', invoice_id=inv.invoice_id) }}"
-              style="display:inline;margin-left:4px"
-              onsubmit="return confirmDeleteInvoice('{{ inv.invoice_number }}', '{{ inv.status }}')">
+      <td style="padding:9px 12px">
+        {% if b.pending_count > 0 %}
+        <form method="POST" action="{{ url_for('receiving.start_session') }}" style="display:inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">✕ Delete</button>
+          <input type="hidden" name="batch_id" value="{{ b.batch_id }}">
+          <button type="submit" class="btn btn-primary btn-sm"
+                  title="Opens a new session for this batch so you can start checking off orders as they arrive">Start Receiving</button>
         </form>
+        {% else %}
+        <span style="font-size:11px;color:#10b981">✓ All received</span>
+        {% if b.latest_session_id and not b.has_invoice_lock %}
+        <a href="{{ url_for('receiving.session', session_id=b.latest_session_id) }}"
+           class="btn btn-ghost btn-sm" style="margin-left:8px"
+           title="Review what was received, fix a mistake, or fully reset this session">Manage Session</a>
+        {% elif b.latest_session_id and b.has_invoice_lock %}
+        <span style="font-size:11px;color:var(--muted);margin-left:8px" title="On an active invoice — return it there first to manage this session">On invoice</span>
+        {% endif %}
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
+  {% endif %}
+</div>
+
+{% if sessions %}
+{% set closed = sessions|selectattr('status','eq','closed')|list %}
+{% if closed %}
+<div style="margin-top:20px">
+  <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Closed Sessions</div>
+  {% for s in closed %}
+  <div class="card" style="margin-bottom:6px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;opacity:.7">
+    <div>
+      <div style="font-size:12px;font-weight:500">{{ s.batch_name }}</div>
+      <div style="font-size:11px;color:var(--muted)">Closed · {{ s.created_at.strftime('%b %d, %Y') }}</div>
+    </div>
+    <a href="{{ url_for('receiving.session', session_id=s.session_id) }}" class="btn btn-ghost btn-sm"
+       title="Review what was received, fix a mistake, or fully reset this session">View</a>
+  </div>
+  {% endfor %}
 </div>
 {% endif %}
-
-<script>
-function confirmDeleteInvoice(number, status) {
-  if (status === 'paid') {
-    return confirm(
-      'Invoice ' + number + ' is marked PAID.\n\n' +
-      'Are you sure you want to delete a PAID invoice? This will permanently remove the ' +
-      'invoice and release its orders back to the Received (closed, not-yet-invoiced) pool.'
-    );
-  }
-  return confirm(
-    'Delete Invoice ' + number + '? Its orders will be released back to the Received ' +
-    '(closed, not-yet-invoiced) pool.'
-  );
-}
-</script>
+{% endif %}
 {% endblock %}
