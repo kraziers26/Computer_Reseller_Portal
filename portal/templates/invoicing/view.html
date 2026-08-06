@@ -13,9 +13,7 @@
   <div style="display:flex;gap:8px;align-items:center">
     <a href="{{ url_for('invoicing.export_excel', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">⬇ Excel</a>
     <a href="{{ url_for('invoicing.export_pdf',   invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">⬇ PDF</a>
-    {% if inv.status == 'draft' %}
     <a href="{{ url_for('invoicing.edit_invoice', invoice_id=inv.invoice_id) }}" class="btn btn-ghost btn-sm">✏ Edit Orders</a>
-    {% endif %}
     {% if inv.status == 'draft' %}
     <form method="POST" action="{{ url_for('invoicing.update_status', invoice_id=inv.invoice_id) }}" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
