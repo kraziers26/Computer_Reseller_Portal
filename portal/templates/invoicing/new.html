@@ -5,7 +5,9 @@
   <div>
     <a href="{{ url_for('invoicing.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoicing</a>
     <h1>{{ 'Edit Invoice' if edit_mode else 'New Invoice' }}</h1>
-    {% if edit_mode %}<p>Editing <strong>{{ existing_invoice.invoice_number }}</strong> · Draft</p>{% else %}<p>Select received orders and set markup</p>{% endif %}
+    {% if edit_mode %}<p>Editing <strong>{{ existing_invoice.invoice_number }}</strong> · {{ existing_invoice.status|capitalize }}
+      {% if existing_invoice.status != 'draft' %}<span style="color:var(--muted)">— saving rebuilds line items from current order data; any manual price/description edits or returns made on the invoice page will be reset</span>{% endif %}
+    </p>{% else %}<p>Select received orders and set markup</p>{% endif %}
   </div>
 </div>
 
