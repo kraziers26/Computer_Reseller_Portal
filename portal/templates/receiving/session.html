@@ -7,17 +7,23 @@
     <h1>{{ sess.batch_name }}</h1>
     <p>Session started {{ sess.created_at.strftime('%b %d, %Y') }} by {{ sess.created_by_name or '—' }}
        · <span style="color:{{ '#10b981' if sess.status=='closed' else '#fbbf24' }}">{{ sess.status|title }}</span></p>
+    <p style="font-size:11px;color:var(--muted);max-width:560px;margin-top:4px">
+      {% if sess.status == 'open' %}<strong>Close</strong> finishes this session — anything not fully received goes to the Pending Pool.{% else %}<strong>Reopen</strong> lets you mark items again without losing what's already here.{% endif %}
+      <strong>Reset</strong> is the undo button — it wipes this session and puts every order back to unreceived.
+    </p>
   </div>
   {% if sess.status == 'open' %}
   <form method="POST" action="{{ url_for('receiving.close_session', session_id=session_id) }}"
         onsubmit="return confirm('Close this session? Missing and partial items stay in the receiving pool.')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-ghost btn-sm">Close Session</button>
+    <button type="submit" class="btn btn-ghost btn-sm"
+            title="Finish this session. Received orders become ready to invoice; missing/partial/unmarked orders go to the Pending Pool">Close Session</button>
   </form>
   {% else %}
   <form method="POST" action="{{ url_for('receiving.reopen_session', session_id=session_id) }}" style="display:inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-ghost btn-sm">Reopen Session</button>
+    <button type="submit" class="btn btn-ghost btn-sm"
+            title="Bring back the mark-received controls for this session, without changing anything">Reopen Session</button>
   </form>
   {% endif %}
   <form method="POST" action="{{ url_for('receiving.reset_session', session_id=session_id) }}" style="display:inline"
@@ -29,7 +35,8 @@
     <button type="button" class="btn btn-ghost btn-sm" disabled style="opacity:.4;cursor:not-allowed;color:#f87171"
             title="One or more orders in this session are on an active invoice — return them first">Reset Session</button>
     {% else %}
-    <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Reset Session</button>
+    <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140"
+            title="Undo this whole session — every order goes back to unreceived and the session is cleared out entirely">Reset Session</button>
     {% endif %}
   </form>
 </div>
@@ -92,24 +99,28 @@
       <div style="display:flex;gap:6px;flex-shrink:0">
         <button onclick="setStatus('{{ iid }}','received')"
                 class="rx-btn rx-received {{ 'rx-active' if rs=='received' else '' }}"
+                title="Everything ordered showed up"
                 style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
                        {{ 'background:#10b981;color:#fff;border-color:#10b981' if rs=='received' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
           ✓ Received
         </button>
         <button onclick="setStatus('{{ iid }}','partial')"
                 class="rx-btn rx-partial {{ 'rx-active' if rs=='partial' else '' }}"
+                title="Some but not all of what was ordered showed up"
                 style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
                        {{ 'background:#fbbf24;color:#1a1d27;border-color:#fbbf24' if rs=='partial' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
           ⚠ Partial
         </button>
         <button onclick="setStatus('{{ iid }}','missing')"
                 class="rx-btn rx-missing {{ 'rx-active' if rs=='missing' else '' }}"
+                title="Nothing showed up for this order"
                 style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
                        {{ 'background:#f87171;color:#fff;border-color:#f87171' if rs=='missing' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
           ✕ Missing
         </button>
         <button onclick="setStatus('{{ iid }}','pending')"
                 class="rx-btn rx-pending {{ 'rx-active' if rs=='pending' else '' }}"
+                title="Not checked yet — still waiting to find out"
                 style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid;cursor:pointer;font-family:var(--font-sans);
                        {{ 'background:#6b7280;color:#fff;border-color:#6b7280' if rs=='pending' else 'background:var(--surface2);color:var(--muted);border-color:var(--border)' }}">
           ⏳ Pending
@@ -130,7 +141,8 @@
             onsubmit="return confirm('Reset {{ item.order_number }}? It goes back to Batched, ready to redo.')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="item_id" value="{{ item.item_id }}">
-        <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140">Reset</button>
+        <button type="submit" class="btn btn-ghost btn-sm" style="color:#f87171;border-color:#f8717140"
+                title="Undo just this order — back to unreceived, ready to redo">Reset</button>
       </form>
       {% endif %}
     </div>
