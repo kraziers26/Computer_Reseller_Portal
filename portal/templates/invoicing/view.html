@@ -102,7 +102,9 @@
         </tr>
       </thead>
       <tbody>
-      {% for item in items %}
+      {% for line in lines %}
+      {% if line.kind == 'single' %}
+      {% set item = line.item %}
       <tr style="border-bottom:0.5px solid var(--border);{% if item.returned %}opacity:.45{% endif %}" id="item-row-{{ item.item_id }}">
         <td style="padding:10px 10px">
           <div class="editable-desc" data-item-id="{{ item.item_id }}"
@@ -162,6 +164,71 @@
           {% endif %}
         </td>
       </tr>
+      {% else %}
+      <tr style="border-bottom:0.5px solid var(--border);{% if line.all_returned %}opacity:.45{% endif %}" id="group-row-{{ line.group_id }}">
+        <td style="padding:10px 10px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <button type="button" onclick="toggleGroupPanel('{{ line.group_id }}')" id="group-toggle-{{ line.group_id }}"
+                    style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:11px;padding:0;line-height:1;flex-shrink:0">▸</button>
+            <div class="editable-desc" data-group-id="{{ line.group_id }}"
+                 contenteditable="true" spellcheck="false"
+                 style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px -4px;flex:1;
+                        transition:background .15s;line-height:1.4"
+                 onmouseenter="this.style.background='var(--surface2)'"
+                 onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                 onblur="saveGroupDesc(this)"
+                 >{{ line.description }}</div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;margin-left:19px">{{ line.members|length }} order{{ 's' if line.members|length != 1 }}</div>
+        </td>
+        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">
+          $<span class="line-editable" data-field="unit_price" data-group-id="{{ line.group_id }}"
+                contenteditable="true" spellcheck="false"
+                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
+                onmouseenter="this.style.background='var(--surface2)'"
+                onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                onblur="saveGroupPrice(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+                >{{ "{:,.2f}".format(line.unit_price or 0) }}</span>
+        </td>
+        <td style="padding:10px 10px;text-align:right">{{ line.qty }}</td>
+        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)" id="lt-group-{{ line.group_id }}">${{ "{:,.2f}".format(line.line_total or 0) }}</td>
+        <td style="padding:10px 6px"></td>
+        <td style="padding:10px 10px;text-align:center">
+          {% if line.all_returned %}
+          <span style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;background:rgba(248,113,113,.12);color:#f87171">Returned</span>
+          {% else %}
+          <span style="font-size:10px;color:var(--muted)">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr id="group-panel-{{ line.group_id }}" style="display:none">
+        <td colspan="6" style="padding:0 10px 10px 38px;background:var(--surface2)">
+          <table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:4px">
+            {% for m in line.members %}
+            <tr id="item-row-{{ m.item_id }}" style="{% if m.returned %}opacity:.5{% endif %}">
+              <td style="padding:5px 8px;color:var(--muted)">{{ m.order_number or '—' }}{% if m.order_retailer %} · {{ m.order_retailer }}{% endif %}{% if m.order_date %} · {{ m.order_date }}{% endif %}</td>
+              <td style="padding:5px 8px;text-align:right;font-family:var(--mono)">{{ m.quantity }} × ${{ "{:,.2f}".format(m.unit_price or 0) }}</td>
+              <td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(m.line_total or 0) }}</td>
+              <td style="padding:5px 8px;text-align:center;width:28px">
+                <button onclick="removeItem('{{ m.item_id }}','{{ "{:,.2f}".format(m.line_total or 0) }}',true)"
+                        title="Remove this order from the line" style="background:none;border:none;cursor:pointer;color:#f87171;font-size:13px;padding:2px 4px">✕</button>
+              </td>
+              <td style="padding:5px 8px;text-align:center" id="return-cell-{{ m.item_id }}">
+                {% if m.returned %}
+                <span style="font-size:9px;padding:1px 6px;border-radius:8px;font-weight:600;background:rgba(248,113,113,.12);color:#f87171">Returned</span>
+                {% else %}
+                <button onclick="returnItem('{{ m.item_id }}', '{{ (m.order_number or 'this order')|replace("'", "") }}', true)"
+                        class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:9px;color:#f87171">Return</button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </table>
+        </td>
+      </tr>
+      {% endif %}
       {% endfor %}
       </tbody>
     </table>
@@ -233,7 +300,7 @@
      a Sent or Paid invoice too, since the return may come to light after the
      invoice already went out. -->
 <script>
-function returnItem(itemId, description){
+function returnItem(itemId, description, isGrouped){
   const status = "{{ inv.status }}";
   let msg = `Mark "${description}" as returned? It will be excluded from the invoice total.`;
   if (status === 'sent' || status === 'paid') {
@@ -248,6 +315,7 @@ function returnItem(itemId, description){
     body: JSON.stringify({item_id: itemId})
   }).then(r=>r.json()).then(d=>{
     if(d.ok){
+      if (isGrouped) { location.reload(); return; }
       const row = document.getElementById('item-row-'+itemId);
       if (row) row.style.opacity = '.45';
       const cell = document.getElementById('return-cell-'+itemId);
@@ -265,7 +333,7 @@ function returnItem(itemId, description){
 </script>
 
 <script>
-function removeItem(itemId, lineTotal){
+function removeItem(itemId, lineTotal, isGrouped){
   if(!confirm('Remove this item from the invoice? The order may return to Received if no items remain.')) return;
   fetch('{{ url_for("invoicing.remove_item", invoice_id=inv.invoice_id) }}', {
     method: 'POST',
@@ -273,6 +341,7 @@ function removeItem(itemId, lineTotal){
     body: JSON.stringify({item_id: itemId})
   }).then(r=>r.json()).then(d=>{
     if(d.ok){
+      if (isGrouped) { location.reload(); return; }
       document.getElementById('item-row-'+itemId).remove();
       // Update totals display
       document.getElementById('inv-subtotal').textContent = '$'+d.subtotal;
@@ -286,6 +355,30 @@ function removeItem(itemId, lineTotal){
       alert(d.error || 'Error removing item.');
     }
   });
+}
+function toggleGroupPanel(groupId){
+  const panel = document.getElementById('group-panel-' + groupId);
+  const btn = document.getElementById('group-toggle-' + groupId);
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'table-row';
+  btn.textContent = open ? '▸' : '▾';
+}
+async function saveGroupDesc(el){
+  el.style.background = '';
+  el.style.outline = 'none';
+  const newDesc = el.textContent.trim();
+  if(!newDesc){ el.textContent = el.dataset.original || el.textContent; return; }
+  const res = await post(GROUP_URL, {group_id: el.dataset.groupId, description: newDesc});
+  if(res.error){ showFlash('Error: ' + res.error, true); return; }
+  showFlash('Line updated.');
+}
+async function saveGroupPrice(el){
+  const unit_price = parseFloat((el.innerText||'0').replace(/,/g,'')) || 0;
+  const res = await post(GROUP_URL, {group_id: el.dataset.groupId, unit_price});
+  if(res.error){ alert(res.error); return; }
+  // Price changes redistribute across every order behind this line —
+  // reload to show each order's updated share rather than patching in place.
+  location.reload();
 }
 function saveDesc(el){
   el.style.background = '';
@@ -355,6 +448,7 @@ const INV_ID   = "{{ inv.invoice_id }}";
 const CSRF     = "{{ csrf_token() }}";
 const HDR_URL  = `/invoicing/${INV_ID}/update-header`;
 const LINE_URL = `/invoicing/${INV_ID}/update-line`;
+const GROUP_URL = `/invoicing/${INV_ID}/update-group`;
 
 async function post(url, body) {
   const r = await fetch(url, {
