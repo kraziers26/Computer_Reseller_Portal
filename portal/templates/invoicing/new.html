@@ -5,143 +5,92 @@
   <div>
     <a href="{{ url_for('invoicing.index') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoicing</a>
     <h1>{{ 'Edit Invoice' if edit_mode else 'New Invoice' }}</h1>
-    {% if edit_mode %}<p>Editing <strong>{{ existing_invoice.invoice_number }}</strong> · {{ existing_invoice.status|capitalize }}
-      {% if existing_invoice.status != 'draft' %}<span style="color:var(--muted)">— saving rebuilds line items from current order data; any manual price/description edits or returns made on the invoice page will be reset</span>{% endif %}
-    </p>{% else %}<p>Select received orders and set markup</p>{% endif %}
+    {% if edit_mode %}
+    <p>Editing <strong>{{ existing_invoice.invoice_number }}</strong> · {{ existing_invoice.status|capitalize }}
+      {% if existing_invoice.status != 'draft' %}<span style="color:var(--muted)">— saving rebuilds this invoice's lines from what's in the workspace below</span>{% endif %}
+    </p>
+    {% else %}<p>Add received orders on the left, consolidate matching items into one line on the right</p>{% endif %}
   </div>
 </div>
 
 <form method="POST" id="invoiceForm">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="lines_json" id="linesJsonField">
   {% if edit_mode %}
   <input type="hidden" name="invoice_number" value="{{ existing_invoice.invoice_number }}">
   {% endif %}
 
   <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start">
 
-    <!-- Left: Order selector -->
+    <!-- Left: Build / Preview -->
     <div style="min-width:0;overflow:hidden">
-      <!-- Filters + Search -->
-      <div class="card" style="margin-bottom:12px;padding:12px 16px">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <input type="text" id="searchOrders" placeholder="🔍 Search items, SKUs, orders..."
-                 style="width:220px" oninput="filterOrders()">
-          <select id="filterRetailer" style="width:130px" onchange="filterOrders()">
-            <option value="">All retailers</option>
-            {% for r in retailers %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
-          </select>
-          <select id="filterPerson" style="width:130px" onchange="filterOrders()">
-            <option value="">All persons</option>
-            {% for p in persons %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
-          </select>
-          <select id="filterCompanyOrders" style="width:150px" onchange="filterOrders()">
-            <option value="">All companies</option>
-            {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
-          </select>
-          {% if batches %}
-          <select id="filterBatch" style="width:160px" onchange="filterOrders()">
-            <option value="">All batches</option>
-            {% for batch_id, batch_name in batches %}<option value="{{ batch_id }}">{{ batch_name }}</option>{% endfor %}
-          </select>
-          {% endif %}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <button type="button" id="stepBuildBtn" onclick="setStep('build')"
+                style="text-align:left;border-radius:8px;padding:8px 12px;cursor:pointer;border:2px solid var(--accent);background:rgba(79,110,247,.12)">
+          <div style="font-size:13px;font-weight:600;color:var(--accent2)">Build</div>
+          <div style="font-size:11px;color:var(--accent2);margin-top:2px">Add and consolidate orders</div>
+        </button>
+        <button type="button" id="stepPreviewBtn" onclick="setStep('preview')"
+                style="text-align:left;border-radius:8px;padding:8px 12px;cursor:pointer;border:1px solid var(--border);background:transparent">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">Preview</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">See the final invoice layout</div>
+        </button>
+      </div>
+
+      <!-- Build pane -->
+      <div id="buildPane">
+        <div class="card" style="margin-bottom:12px;padding:12px 16px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <input type="text" id="poolFilter" placeholder="🔍 Search items, SKUs, orders..." style="width:220px" oninput="renderPool()">
+            <select id="filterRetailer" style="width:130px" onchange="renderPool()"><option value="">All retailers</option></select>
+            <select id="filterPerson" style="width:130px" onchange="renderPool()"><option value="">All persons</option></select>
+            <select id="filterCompanyOrders" style="width:150px" onchange="renderPool()"><option value="">All companies</option></select>
+            <select id="filterBatch" style="width:160px" onchange="renderPool()"><option value="">All batches</option></select>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--muted)">Items under $1 are automatically excluded · + adds one item, + Add all adds every item on that order</div>
         </div>
-        <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
-            <input type="checkbox" id="selectAll" style="width:auto" onchange="toggleAll(this)"> Select all visible
-          </label>
-          <span id="selectedCount" style="font-size:12px;color:var(--muted)">
-            {% if edit_mode %}{{ existing_txn_ids|length }} pre-selected{% else %}0 selected{% endif %}
-          </span>
-          <span style="font-size:11px;color:var(--muted)">· Items under $1 are automatically excluded from invoices</span>
+
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start">
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Received orders</div>
+            <div id="poolCard" class="card" style="padding:0"></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Invoice lines</span>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="newLine()">+ New line</button>
+            </div>
+            <div id="modulesList"></div>
+          </div>
         </div>
       </div>
 
-      <!-- Order table with expanded items -->
-      <div class="card" style="padding:0">
-        {% if not orders %}
-        <div style="text-align:center;padding:40px;color:var(--muted)">No received orders available to invoice.</div>
-        {% else %}
-        <div id="ordersContainer">
-          {% for o in orders %}
-          {% set tid = o.transaction_id|string %}
-          {% set items = order_items.get(tid, []) %}
-          {% set no_items = items|length == 0 %}
-          {% set is_preselected = tid in existing_txn_ids %}
-          {% set item_search = items|map(attribute='item_description')|join(' ')|lower %}
-          {% set sku_search = items|map(attribute='sku_model_color')|join(' ')|lower %}
-          <div class="order-row"
-               data-company="{{ o.company_id }}"
-               data-retailer="{{ o.retailer or '' }}"
-               data-person="{{ o.person_name or '' }}"
-               data-batch="{{ o.print_batch_id or '' }}"
-               data-search="{{ o.order_number|lower }} {{ o.retailer|lower }} {{ o.person_name|lower }} {{ item_search }} {{ sku_search }}"
-               style="border-bottom:1px solid var(--border)">
-
-            <!-- Order header row -->
-            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:{% if is_preselected %}rgba(79,110,247,.05){% else %}transparent{% endif %}">
-              <input type="checkbox" name="txn_ids" value="{{ tid }}"
-                     class="order-check" style="width:auto;flex-shrink:0"
-                     {{ 'checked' if is_preselected }}
-                     onchange="updateCount();highlightRow(this)">
-              <div style="flex:1;min-width:0">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <span style="font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text)">{{ o.order_number[:28] }}</span>
-                  <span style="font-size:11px;color:var(--muted)">{{ o.retailer }}</span>
-                  <span style="font-size:11px;color:var(--muted)">· {{ o.person_name or '—' }}</span>
-                  <span style="font-size:11px;color:var(--muted)">· {{ o.company_name or '—' }}</span>
-                  {% if o.batch_name %}<span style="font-size:11px;color:var(--muted)">· {{ o.batch_name }}</span>{% endif %}
-                </div>
-                {% if items %}
-                <div style="margin-top:5px;padding-left:2px">
-                  {% for item in items %}
-                  <div style="display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:11px;flex-wrap:wrap">
-                    <span style="color:var(--muted);width:6px;flex-shrink:0">·</span>
-                    <span style="color:var(--text);flex:1;min-width:0;word-break:break-word;line-height:1.4">{{ item.item_description }}</span>
-                    {% if item.sku_model_color %}
-                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0">{{ item.sku_model_color[:24] }}</span>
-                    {% endif %}
-                    <span style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0;margin-left:auto">× {{ item.quantity }} &nbsp;<strong>${{ "{:,.2f}".format(item.unit_price or 0) }}</strong></span>
-                  </div>
-                  {% endfor %}
-                </div>
-                {% else %}
-                <div style="margin-top:4px;padding:4px 8px;border-radius:4px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);display:inline-flex;align-items:center;gap:6px">
-                  <span style="font-size:10px;color:#f59e0b">⚠ No line items found — order total will be used as a single invoice line</span>
-                </div>
-                {% endif %}
-              </div>
-              <div style="text-align:right;flex-shrink:0">
-                <div style="font-family:var(--mono);font-size:13px;font-weight:500">${{ "{:,.2f}".format(o.price_total or 0) }}</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:2px">
-                  {% if no_items %}
-                  <span style="color:#f59e0b">no items</span>
-                  {% else %}
-                  {{ items|length }} item{{ 's' if items|length != 1 }}
-                  {% endif %}
-                </div>
-                <div style="margin-top:6px;display:flex;gap:4px;justify-content:flex-end">
-                  <form method="POST" action="{{ url_for('invoicing.hold_order') }}" class="hold-form" style="display:inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="transaction_id" value="{{ tid }}">
-                    <input type="hidden" name="note" class="note-field">
-                    <button type="button" onclick="holdOrReturn(this.form, 'hold', '{{ o.order_number }}')"
-                            class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px" title="Not needed right now — park it for a future invoice">Hold</button>
-                  </form>
-                  <form method="POST" action="{{ url_for('invoicing.return_order') }}" class="return-form" style="display:inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="transaction_id" value="{{ tid }}">
-                    <input type="hidden" name="note" class="note-field">
-                    <button type="button" onclick="holdOrReturn(this.form, 'return', '{{ o.order_number }}')"
-                            class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;color:#f87171" title="Not going out at all">Return</button>
-                  </form>
-                </div>
-              </div>
+      <!-- Preview pane -->
+      <div id="previewPane" style="display:none">
+        <div class="card" style="max-width:640px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+            <div>
+              <div style="font-size:16px;font-weight:600" id="previewCompany"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px">Company letterhead, banking details, and terms come from the issuing company on export</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:14px;font-weight:600" id="previewInvNum"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" id="previewDate"></div>
             </div>
           </div>
-          {% endfor %}
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">To</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:16px" id="previewCustomer"></div>
+          <div id="previewRows" style="border-top:0.5px solid var(--border)"></div>
+          <div style="display:flex;justify-content:flex-end;padding-top:12px;gap:24px">
+            <table style="font-size:13px">
+              <tr><td style="color:var(--muted);padding:2px 10px 2px 0">Subtotal</td><td style="text-align:right" id="previewSubtotal"></td></tr>
+              <tr><td style="color:var(--muted);padding:2px 10px 2px 0" id="previewOtherLabel"></td><td style="text-align:right" id="previewOtherAmount"></td></tr>
+              <tr><td style="font-weight:600;padding:6px 10px 0 0">Total</td><td style="text-align:right;font-weight:600;font-size:15px" id="previewTotal"></td></tr>
+            </table>
+          </div>
         </div>
-        <div id="noResults" style="display:none;text-align:center;padding:32px;color:var(--muted)">No orders match your search.</div>
-        {% endif %}
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">This is a live preview from the Build tab — nothing is saved until you use the button in the sidebar.</div>
       </div>
     </div>
 
@@ -152,7 +101,7 @@
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Issuing Company</div>
-          <select name="company_id" required style="width:100%">
+          <select name="company_id" id="companySelect" required style="width:100%" onchange="renderPreview()">
             {% for c in companies %}
             <option value="{{ c.company_id }}"
               {{ 'selected' if edit_mode and existing_invoice.company_id == c.company_id }}>
@@ -164,7 +113,7 @@
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Customer</div>
-          <select name="customer_id" id="customerSelect" style="width:100%" onchange="toggleNewCustomer(this)">
+          <select name="customer_id" id="customerSelect" style="width:100%" onchange="toggleNewCustomer(this);renderPreview()">
             <option value="">— Select customer —</option>
             {% for c in customers %}
             <option value="{{ c.customer_id }}"
@@ -176,126 +125,361 @@
           </select>
         </label>
         <div id="newCustomerField" style="display:none;margin-bottom:10px">
-          <input type="text" name="new_customer_name" placeholder="Customer name" style="width:100%">
+          <input type="text" name="new_customer_name" id="newCustomerName" placeholder="Customer name" style="width:100%" oninput="renderPreview()">
         </div>
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Invoice Date</div>
-          <input type="date" name="invoice_date"
+          <input type="date" name="invoice_date" id="invoiceDateField"
                  value="{{ existing_invoice.invoice_date|string if edit_mode else today }}"
-                 style="width:100%">
+                 style="width:100%" onchange="renderPreview()">
         </label>
 
         <label style="display:block;margin-bottom:10px">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Batch Markup %</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Markup %</div>
           <input type="number" name="batch_markup" id="batchMarkup"
                  value="{{ existing_invoice.batch_markup_pct if edit_mode else '1.0' }}"
-                 step="0.1" min="0" style="width:100%">
+                 step="0.1" min="0" style="width:100%" oninput="render()">
         </label>
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Label</div>
-          <input type="text" name="other_label"
+          <input type="text" name="other_label" id="otherLabelField"
                  value="{{ existing_invoice.other_label or '' if edit_mode else '' }}"
-                 placeholder="e.g. Shipping" style="width:100%">
+                 placeholder="e.g. Shipping" style="width:100%" oninput="renderPreview()">
         </label>
         <label style="display:block;margin-bottom:16px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Amount</div>
-          <input type="number" name="other_amount"
+          <input type="number" name="other_amount" id="otherAmountField"
                  value="{{ existing_invoice.other_amount or 0 if edit_mode else '0' }}"
-                 step="0.01" min="0" style="width:100%">
+                 step="0.01" min="0" style="width:100%" oninput="renderPreview()">
         </label>
 
-        {% if edit_mode %}
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px" id="submitBtn">
-          Update Invoice
-        </button>
-        {% else %}
-        <div style="display:flex;gap:8px">
-          <button type="submit" class="btn btn-primary" style="flex:1;padding:10px" id="submitBtn" disabled
-                  onclick="document.getElementById('createStatusField').value='draft'">
-            Generate Invoice
-          </button>
-          <button type="submit" class="btn" style="flex:1;padding:10px;background:rgba(251,191,36,.15);color:#fbbf24;border-color:#fbbf24"
-                  id="submitBtnUnpaid" disabled
-                  onclick="document.getElementById('createStatusField').value='unpaid'"
-                  title="Skips Draft — creates the invoice as final and awaiting payment">
-            Generate as Unpaid
-          </button>
-        </div>
-        <input type="hidden" name="create_status" id="createStatusField" value="draft">
+        {% if not edit_mode %}
+        <label style="display:block;margin-bottom:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Invoice Number (optional)</div>
+          <input type="text" name="invoice_number" placeholder="Auto-assigned if left blank" style="width:100%">
+        </label>
         {% endif %}
-        <div id="submitHint" style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;
-             display:{{ 'none' if edit_mode else 'block' }}">
-          Select at least one order above
+      </div>
+
+      <div class="card" style="margin-bottom:12px;padding:12px 16px">
+        <div style="display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--muted)">Lines</span><span id="sidebarLineCount" style="font-weight:600">0</span>
         </div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;padding-top:6px;border-top:0.5px solid var(--border)">
+          <span style="color:var(--muted)">Subtotal</span><span id="sidebarSubtotal" style="font-weight:600"></span>
+        </div>
+      </div>
+
+      {% if edit_mode %}
+      <button type="submit" class="btn btn-primary" style="width:100%;padding:10px" id="submitBtn" disabled>
+        Update Invoice
+      </button>
+      {% else %}
+      <div style="display:flex;gap:8px">
+        <button type="submit" class="btn btn-primary" style="flex:1;padding:10px" id="submitBtn" disabled
+                onclick="document.getElementById('createStatusField').value='draft'">
+          Generate Invoice
+        </button>
+        <button type="submit" class="btn" style="flex:1;padding:10px;background:rgba(251,191,36,.15);color:#fbbf24;border-color:#fbbf24"
+                id="submitBtnUnpaid" disabled
+                onclick="document.getElementById('createStatusField').value='unpaid'"
+                title="Skips Draft — creates the invoice as final and awaiting payment">
+          Generate as Unpaid
+        </button>
+      </div>
+      <input type="hidden" name="create_status" id="createStatusField" value="draft">
+      {% endif %}
+      <div id="submitHint" style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">
+        Add at least one item to an invoice line
       </div>
     </div>
   </div>
 </form>
 
 <script>
-function updateCount(){
-  const checked = document.querySelectorAll('.order-check:checked').length;
-  document.getElementById('selectedCount').textContent = checked + ' selected';
-  const btn = document.getElementById('submitBtn');
-  btn.disabled = checked === 0;
-  const btnUnpaid = document.getElementById('submitBtnUnpaid');
-  if (btnUnpaid) btnUnpaid.disabled = checked === 0;
-  document.getElementById('submitHint').style.display = checked > 0 ? 'none' : 'block';
+const POOL_DATA = {{ pool_json|tojson }};
+const INITIAL_LINES = {{ initial_lines_json|tojson }};
+
+let location = {};
+Object.keys(POOL_DATA.items).forEach(function(id){ location[id] = 'pool'; });
+let modules = [];
+let moduleCounter = 0;
+let openPanelId = null;
+
+INITIAL_LINES.forEach(function(line){
+  const mod = {id: 'm' + (++moduleCounter), name: line.description, itemIds: []};
+  (line.member_ids || []).forEach(function(iid){
+    if (POOL_DATA.items[iid]) { mod.itemIds.push(iid); location[iid] = mod.id; }
+  });
+  if (mod.itemIds.length) modules.push(mod);
+});
+
+function fmt(n){ return '$' + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function markupPct(){ return parseFloat(document.getElementById('batchMarkup').value) || 0; }
+function priceFor(unitCost){ return Math.round(unitCost * (1 + markupPct()/100) * 100) / 100; }
+
+function assign(itemId){
+  const item = POOL_DATA.items[itemId];
+  let target = modules.find(function(m){ return m.name.toLowerCase() === item.description.toLowerCase(); });
+  if (!target) { target = {id:'m' + (++moduleCounter), name: item.description, itemIds: []}; modules.push(target); }
+  target.itemIds.push(itemId);
+  location[itemId] = target.id;
+}
+function quickAddItem(id){ assign(id); render(); }
+function addAllForOrder(tid){
+  Object.keys(location).filter(function(id){ return location[id]==='pool' && POOL_DATA.items[id].transaction_id===tid; })
+    .forEach(assign);
+  render();
+}
+function moveToModule(itemId, targetModuleId){
+  const cur = location[itemId];
+  if (cur !== 'pool') {
+    const src = modules.find(function(m){ return m.id===cur; });
+    src.itemIds = src.itemIds.filter(function(id){ return id!==itemId; });
+    if (src.itemIds.length===0) { modules = modules.filter(function(m){ return m.id!==cur; }); if(openPanelId===cur) openPanelId=null; }
+  }
+  const tgt = modules.find(function(m){ return m.id===targetModuleId; });
+  tgt.itemIds.push(itemId);
+  location[itemId] = targetModuleId;
+  render();
+}
+function removeFromModule(moduleId, itemId){
+  const m = modules.find(function(x){ return x.id===moduleId; });
+  m.itemIds = m.itemIds.filter(function(id){ return id!==itemId; });
+  location[itemId] = 'pool';
+  if (m.itemIds.length===0) { modules = modules.filter(function(x){ return x.id!==moduleId; }); if(openPanelId===moduleId) openPanelId=null; }
+  render();
+}
+function newLine(){ modules.push({id:'m' + (++moduleCounter), name:'New line', itemIds:[]}); render(); }
+
+function populateFilters(){
+  const retailers = new Set(), persons = new Set(), companies = {}, batches = new Set();
+  Object.values(POOL_DATA.orders).forEach(function(o){
+    if (o.retailer) retailers.add(o.retailer);
+    if (o.person_name) persons.add(o.person_name);
+    if (o.company_id) companies[o.company_id] = o.company_name;
+    if (o.batch_name) batches.add(o.batch_name);
+  });
+  function fill(selId, values){
+    const sel = document.getElementById(selId);
+    Array.from(values).sort().forEach(function(v){
+      const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt);
+    });
+  }
+  fill('filterRetailer', retailers);
+  fill('filterPerson', persons);
+  fill('filterBatch', batches);
+  const companySel = document.getElementById('filterCompanyOrders');
+  Object.keys(companies).sort(function(a,b){ return companies[a].localeCompare(companies[b]); }).forEach(function(cid){
+    const opt = document.createElement('option'); opt.value = cid; opt.textContent = companies[cid]; companySel.appendChild(opt);
+  });
+}
+
+function matchesFilters(item, order){
+  const q = document.getElementById('poolFilter').value.toLowerCase();
+  const retail = document.getElementById('filterRetailer').value;
+  const person = document.getElementById('filterPerson').value;
+  const company = document.getElementById('filterCompanyOrders').value;
+  const batch = document.getElementById('filterBatch').value;
+  if (q && !(item.description.toLowerCase().includes(q) || (order.order_number||'').toLowerCase().includes(q) || (item.sku||'').toLowerCase().includes(q))) return false;
+  if (retail && order.retailer !== retail) return false;
+  if (person && order.person_name !== person) return false;
+  if (company && String(order.company_id) !== company) return false;
+  if (batch && order.batch_name !== batch) return false;
+  return true;
+}
+
+function renderPool(){
+  const orderNums = Object.keys(POOL_DATA.orders).filter(function(tid){
+    return Object.keys(POOL_DATA.items).some(function(id){
+      const it = POOL_DATA.items[id];
+      return it.transaction_id===tid && location[id]==='pool' && matchesFilters(it, POOL_DATA.orders[tid]);
+    });
+  });
+  document.getElementById('poolCard').innerHTML = orderNums.length ? orderNums.map(function(tid){
+    const o = POOL_DATA.orders[tid];
+    const ids = Object.keys(POOL_DATA.items).filter(function(id){
+      const it = POOL_DATA.items[id];
+      return it.transaction_id===tid && location[id]==='pool' && matchesFilters(it, o);
+    });
+    const itemRows = ids.map(function(id){
+      const it = POOL_DATA.items[id];
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0 5px 12px;font-size:12px;border-top:0.5px solid var(--border)">' +
+        '<span style="color:var(--text)">' + it.description + (it.sku ? ' <span style="color:var(--muted);font-family:var(--mono);font-size:10px">' + it.sku + '</span>' : '') + ' <span style="color:var(--muted)">&times; ' + it.quantity + '</span></span>' +
+        '<button type="button" data-action="additem" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:1px 8px;font-size:12px" title="Add as its own line">+</button></div>';
+    }).join('');
+    return '<div style="border-bottom:1px solid var(--border);padding:10px 12px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+      '<div style="min-width:0">' +
+      '<span style="font-family:var(--mono);font-size:12px;font-weight:500">' + o.order_number + '</span> ' +
+      '<span style="font-size:11px;color:var(--muted)">' + o.retailer + ' · ' + (o.person_name||'—') + ' · ' + (o.company_name||'—') + (o.batch_name ? ' · ' + o.batch_name : '') + '</span></div>' +
+      '<div style="display:flex;gap:4px;flex-shrink:0">' +
+      holdReturnForms(tid, o.order_number) +
+      '<button type="button" data-action="addall" data-id="' + tid + '" class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px;color:var(--accent2)">+ Add all</button>' +
+      '</div></div>' + itemRows + '</div>';
+  }).join('') : '<div style="text-align:center;padding:40px;color:var(--muted)">No received orders match — everything eligible may already be on this invoice.</div>';
+}
+
+function holdReturnForms(tid, orderNumber){
+  return '<form method="POST" action="{{ url_for('invoicing.hold_order') }}" class="hold-form" style="display:inline">' +
+    '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="transaction_id" value="' + tid + '"><input type="hidden" name="note" class="note-field">' +
+    '<button type="button" onclick="holdOrReturn(this.form,\'hold\',\'' + orderNumber + '\')" class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px" title="Park for a future invoice">Hold</button></form>' +
+    '<form method="POST" action="{{ url_for('invoicing.return_order') }}" class="return-form" style="display:inline">' +
+    '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="transaction_id" value="' + tid + '"><input type="hidden" name="note" class="note-field">' +
+    '<button type="button" onclick="holdOrReturn(this.form,\'return\',\'' + orderNumber + '\')" class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:10px;color:#f87171" title="Not going out at all">Return</button></form>';
 }
 
 function holdOrReturn(form, action, orderNumber){
-  const verb = action === 'hold' ? 'Hold' : 'Return';
-  const msg  = action === 'hold'
-    ? `Hold ${orderNumber}? It'll come off this list and show up in Held Items, ready to release into a future invoice.`
-    : `Mark ${orderNumber} as returned? It won't be invoiced.`;
+  const msg = action === 'hold'
+    ? 'Hold ' + orderNumber + '? It comes off this list and shows up in Held Items, ready to release into a future invoice.'
+    : 'Mark ' + orderNumber + ' as returned? It won\'t be invoiced.';
   if (!confirm(msg)) return;
-  const note = prompt(`${verb} reason (optional):`, '');
+  const note = prompt((action==='hold'?'Hold':'Return') + ' reason (optional):', '');
   form.querySelector('.note-field').value = note || '';
   form.submit();
 }
 
-function highlightRow(cb){
-  const row = cb.closest('.order-row');
-  row.querySelector('div').style.background = cb.checked ? 'rgba(79,110,247,.05)' : 'transparent';
+function renderModules(){
+  let subtotal = 0;
+  document.getElementById('modulesList').innerHTML = modules.map(function(m){
+    const qty = m.itemIds.reduce(function(s,id){ return s + POOL_DATA.items[id].quantity; }, 0);
+    const price = m.itemIds.length ? priceFor(POOL_DATA.items[m.itemIds[0]].unit_cost) : 0;
+    const lineTotal = m.itemIds.reduce(function(s,id){ return s + priceFor(POOL_DATA.items[id].unit_cost) * POOL_DATA.items[id].quantity; }, 0);
+    subtotal += lineTotal;
+    const rows = m.itemIds.map(function(id){
+      const it = POOL_DATA.items[id];
+      const o = POOL_DATA.orders[it.transaction_id] || {};
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px;color:var(--muted)">' +
+        '<span>' + (o.order_number||'') + ' · ' + (o.retailer||'') + ' · ' + it.quantity + ' unit' + (it.quantity>1?'s':'') + '</span>' +
+        '<button type="button" data-action="remove" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:#f87171" title="Remove from this line">✕</button></div>';
+    }).join('');
+    const movable = Object.keys(location).filter(function(id){ return location[id]!==m.id; });
+    const panelOpen = openPanelId===m.id;
+    const panelRows = movable.map(function(id){
+      const it = POOL_DATA.items[id];
+      const o = POOL_DATA.orders[it.transaction_id] || {};
+      const src = location[id]==='pool' ? 'Unassigned' : (modules.find(function(x){return x.id===location[id];})||{name:'another line'}).name;
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">' +
+        '<span style="color:var(--muted)">' + (o.order_number||'') + ' · ' + it.description + ' (' + src + ')</span>' +
+        '<button type="button" data-action="moveto" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:var(--accent2)">+</button></div>';
+    }).join('') || '<div style="font-size:12px;color:var(--muted);padding:2px 0">Nothing else to add</div>';
+    return '<div class="card" style="padding:0;margin-bottom:10px;overflow:hidden">' +
+      '<div style="padding:10px 14px;border-bottom:0.5px solid var(--border)">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+      '<span contenteditable="true" spellcheck="false" data-module="' + m.id + '" data-action="rename" style="font-size:14px;font-weight:500;outline:none">' + m.name + '</span>' +
+      '<span style="font-size:13px;font-weight:600;white-space:nowrap;font-family:var(--mono)">' + qty + ' × ' + fmt(price) + ' = ' + fmt(lineTotal) + '</span></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + m.itemIds.length + (m.itemIds.length===1?' order':' orders') + '</div></div>' +
+      '<div style="padding:6px 14px">' + rows + '</div>' +
+      '<div style="padding:6px 14px 10px;border-top:0.5px solid var(--border)">' +
+      '<button type="button" data-action="togglepanel" data-module="' + m.id + '" class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 8px">+ Add to this line</button>' +
+      (panelOpen ? '<div style="margin-top:6px">' + panelRows + '</div>' : '') + '</div></div>';
+  }).join('') || '<div class="card" style="text-align:center;padding:24px;color:var(--muted)">Add items from the left to start building lines</div>';
+
+  const other = parseFloat(document.getElementById('otherAmountField').value) || 0;
+  document.getElementById('sidebarLineCount').textContent = modules.length;
+  document.getElementById('sidebarSubtotal').textContent = fmt(subtotal);
+
+  const hasLines = modules.some(function(m){ return m.itemIds.length>0; });
+  document.getElementById('submitBtn').disabled = !hasLines;
+  const unpaidBtn = document.getElementById('submitBtnUnpaid');
+  if (unpaidBtn) unpaidBtn.disabled = !hasLines;
+  document.getElementById('submitHint').style.display = hasLines ? 'none' : 'block';
 }
 
-function toggleAll(cb){
-  document.querySelectorAll('.order-row:not([style*="display: none"]) .order-check').forEach(c=>{
-    c.checked = cb.checked;
-    highlightRow(c);
-  });
-  updateCount();
+function renderPreview(){
+  const companySel = document.getElementById('companySelect');
+  document.getElementById('previewCompany').textContent = companySel.selectedOptions[0] ? companySel.selectedOptions[0].textContent.trim() : '';
+  document.getElementById('previewInvNum').textContent = 'Invoice #' + ('{{ existing_invoice.invoice_number if edit_mode else "" }}' || 'Pending');
+  const dateVal = document.getElementById('invoiceDateField').value;
+  document.getElementById('previewDate').textContent = dateVal;
+  const customerSel = document.getElementById('customerSelect');
+  const newCustomerName = document.getElementById('newCustomerName').value.trim();
+  document.getElementById('previewCustomer').textContent = newCustomerName ||
+    (customerSel.value && customerSel.value !== '__new__' ? customerSel.selectedOptions[0].textContent.trim() : '—');
+
+  let subtotal = 0;
+  document.getElementById('previewRows').innerHTML = modules.filter(function(m){ return m.itemIds.length>0; }).map(function(m){
+    const qty = m.itemIds.reduce(function(s,id){ return s + POOL_DATA.items[id].quantity; }, 0);
+    const lineTotal = m.itemIds.reduce(function(s,id){ return s + priceFor(POOL_DATA.items[id].unit_cost) * POOL_DATA.items[id].quantity; }, 0);
+    const price = qty ? lineTotal/qty : 0;
+    subtotal += lineTotal;
+    return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:13px">' +
+      '<span>' + m.name + '</span><span style="font-weight:500;font-family:var(--mono)">' + qty + ' × ' + fmt(price) + ' = ' + fmt(lineTotal) + '</span></div>';
+  }).join('') || '<div style="font-size:12px;color:var(--muted);padding:12px 0">No lines yet</div>';
+
+  const otherLabel = document.getElementById('otherLabelField').value || 'Other';
+  const otherAmount = parseFloat(document.getElementById('otherAmountField').value) || 0;
+  document.getElementById('previewSubtotal').textContent = fmt(subtotal);
+  document.getElementById('previewOtherLabel').textContent = otherLabel;
+  document.getElementById('previewOtherAmount').textContent = fmt(otherAmount);
+  document.getElementById('previewTotal').textContent = fmt(subtotal + otherAmount);
 }
 
-function filterOrders(){
-  const q       = document.getElementById('searchOrders').value.toLowerCase();
-  const retail  = document.getElementById('filterRetailer').value.toLowerCase();
-  const person  = document.getElementById('filterPerson').value.toLowerCase();
-  const company = document.getElementById('filterCompanyOrders').value;
-  const batchEl = document.getElementById('filterBatch');
-  const batch   = batchEl ? batchEl.value : '';
-  let visible = 0;
-  document.querySelectorAll('.order-row').forEach(row=>{
-    const matchQ = !q       || row.dataset.search.includes(q);
-    const matchR = !retail  || row.dataset.retailer.toLowerCase() === retail;
-    const matchP = !person  || row.dataset.person.toLowerCase() === person;
-    const matchC = !company || row.dataset.company === company;
-    const matchB = !batch   || row.dataset.batch === batch;
-    const show = matchQ && matchR && matchP && matchC && matchB;
-    row.style.display = show ? '' : 'none';
-    if(show) visible++;
-  });
-  document.getElementById('noResults').style.display = visible === 0 ? 'block' : 'none';
+function render(){
+  renderPool();
+  renderModules();
+  renderPreview();
+}
+
+function setStep(step){
+  const buildBtn = document.getElementById('stepBuildBtn'), previewBtn = document.getElementById('stepPreviewBtn');
+  document.getElementById('buildPane').style.display = step==='build' ? 'block' : 'none';
+  document.getElementById('previewPane').style.display = step==='preview' ? 'block' : 'none';
+  buildBtn.style.border = step==='build' ? '2px solid var(--accent)' : '1px solid var(--border)';
+  buildBtn.style.background = step==='build' ? 'rgba(79,110,247,.12)' : 'transparent';
+  previewBtn.style.border = step==='preview' ? '2px solid var(--accent)' : '1px solid var(--border)';
+  previewBtn.style.background = step==='preview' ? 'rgba(79,110,247,.12)' : 'transparent';
+  if (step==='preview') renderPreview();
 }
 
 function toggleNewCustomer(sel){
   document.getElementById('newCustomerField').style.display = sel.value === '__new__' ? 'block' : 'none';
-  if(sel.value === '__new__') sel.value = '';
+  if (sel.value === '__new__') sel.value = '';
 }
 
-// Init count
-updateCount();
+document.getElementById('poolCard').addEventListener('click', function(e){
+  const addBtn = e.target.closest('[data-action="additem"]');
+  if (addBtn) { quickAddItem(addBtn.dataset.id); return; }
+  const allBtn = e.target.closest('[data-action="addall"]');
+  if (allBtn) { addAllForOrder(allBtn.dataset.id); }
+});
+document.getElementById('modulesList').addEventListener('click', function(e){
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+  if (action==='remove') removeFromModule(btn.dataset.module, btn.dataset.id);
+  else if (action==='moveto') moveToModule(btn.dataset.id, btn.dataset.module);
+  else if (action==='togglepanel') { openPanelId = (openPanelId===btn.dataset.module) ? null : btn.dataset.module; render(); }
+});
+document.getElementById('modulesList').addEventListener('blur', function(e){
+  const el = e.target.closest('[data-action="rename"]');
+  if (!el) return;
+  const m = modules.find(function(x){ return x.id===el.dataset.module; });
+  if (m) m.name = el.textContent.trim() || m.name;
+  renderPreview();
+}, true);
+
+document.getElementById('invoiceForm').addEventListener('submit', function(e){
+  const payload = modules.filter(function(m){ return m.itemIds.length>0; }).map(function(m){
+    return {
+      description: m.name,
+      members: m.itemIds.map(function(id){
+        const it = POOL_DATA.items[id];
+        const o = POOL_DATA.orders[it.transaction_id] || {};
+        return {
+          item_id: id, transaction_id: it.transaction_id, order_number: o.order_number || '',
+          description: it.description, sku: it.sku, quantity: it.quantity, unit_cost: it.unit_cost,
+        };
+      }),
+    };
+  });
+  if (payload.length === 0) { e.preventDefault(); alert('Add at least one item to the invoice.'); return; }
+  document.getElementById('linesJsonField').value = JSON.stringify(payload);
+});
+
+populateFilters();
+render();
 </script>
 {% endblock %}
