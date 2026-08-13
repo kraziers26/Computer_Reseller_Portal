@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from ..auth_utils import require_role
 from ..db import db_cursor
-import uuid, io
+import uuid, io, json
 from datetime import date
 
 invoicing_bp = Blueprint('invoicing', __name__, url_prefix='/invoicing')
@@ -111,6 +111,108 @@ def _load_received_orders(cur, include_txn_ids=None):
             order_items.setdefault(tid, []).append(item)
 
     return orders, order_items
+
+
+def _strip_order_tag(desc, order_number):
+    """Undo the '[ORD-X] ' prefix _save_invoice bakes into a member row's
+    stored description, so the builder shows the clean item name."""
+    prefix = f"[{order_number}] " if order_number else None
+    if prefix and desc and desc.startswith(prefix):
+        return desc[len(prefix):]
+    return desc or ''
+
+
+def _build_pool_payload(orders, order_items):
+    """Transform _load_received_orders()'s output into the order/item JSON
+    structure the Build tab's JS works with directly (embedded via tojson)."""
+    orders_out = {}
+    items_out = {}
+    for o in orders:
+        tid = str(o['transaction_id'])
+        orders_out[tid] = {
+            'order_number': o['order_number'] or '',
+            'retailer': o['retailer'] or '',
+            'date': str(o['purchase_date']) if o['purchase_date'] else '',
+            'person_name': o['person_name'] or '',
+            'company_id': o['company_id'],
+            'company_name': o['company_name'] or '',
+            'batch_name': o['batch_name'] or '',
+        }
+        lines = order_items.get(tid, [])
+        if lines:
+            for item in lines:
+                iid = str(item['item_id'])
+                items_out[iid] = {
+                    'transaction_id': tid,
+                    'description': item['item_description'] or '',
+                    'sku': item['sku_model_color'] or '',
+                    'quantity': int(item['quantity'] or 1),
+                    'unit_cost': float(item['unit_price'] or 0),
+                }
+        else:
+            # No qualifying line items on this order — fall back to a single
+            # synthetic line using the order total, same as the old explode logic.
+            items_out[f'{tid}-total'] = {
+                'transaction_id': tid,
+                'description': (f"Order {o['order_number']}" if o['order_number']
+                                 else (o['retailer'] or 'Order')),
+                'sku': '',
+                'quantity': 1,
+                'unit_cost': float(o['price_total'] or 0),
+            }
+    return {'orders': orders_out, 'items': items_out}
+
+
+def _get_display_lines(cur, invoice_id):
+    """Fetch an invoice's line items aggregated by consolidation group.
+
+    Returns an ordered list of dicts, each either:
+      {'kind': 'single', 'item': <row>}
+      {'kind': 'group', 'group_id', 'description', 'members': [<rows>],
+       'qty', 'unit_price', 'line_total', 'all_returned'}
+
+    Grouping is purely a display-time aggregation — every underlying
+    invoice_items row keeps its own transaction_id, cost, and returned flag,
+    so the universal lock rule, remove-item, and return-item logic elsewhere
+    in the app don't need to know groups exist. A group's qty/price/total
+    only count its non-returned members, matching how ungrouped subtotal
+    math already excludes returned lines.
+    """
+    cur.execute("""
+        SELECT ii.*, t.order_number, t.retailer AS order_retailer,
+               t.purchase_date AS order_date,
+               lg.description AS group_description, lg.sort_order AS group_sort_order
+        FROM invoice_items ii
+        LEFT JOIN transactions t          ON ii.transaction_id = t.transaction_id
+        LEFT JOIN invoice_line_groups lg  ON ii.group_id = lg.group_id
+        WHERE ii.invoice_id=%s
+        ORDER BY COALESCE(lg.sort_order, ii.sort_order), ii.sort_order
+    """, (invoice_id,))
+    items = cur.fetchall()
+
+    display_lines = []
+    seen_groups = {}
+    for it in items:
+        if it['group_id']:
+            gid = str(it['group_id'])
+            if gid not in seen_groups:
+                entry = {'kind': 'group', 'group_id': gid,
+                         'description': it['group_description'], 'members': []}
+                seen_groups[gid] = entry
+                display_lines.append(entry)
+            seen_groups[gid]['members'].append(it)
+        else:
+            display_lines.append({'kind': 'single', 'item': it})
+
+    for entry in display_lines:
+        if entry['kind'] == 'group':
+            active = [m for m in entry['members'] if not m['returned']]
+            entry['qty'] = sum(int(m['quantity'] or 0) for m in active)
+            entry['line_total'] = round(sum(float(m['line_total'] or 0) for m in active), 2)
+            entry['unit_price'] = round(entry['line_total'] / entry['qty'], 2) if entry['qty'] else 0
+            entry['all_returned'] = len(active) == 0
+
+    return display_lines
 
 
 # ── Hold / Return (pre-invoice) ─────────────────────────────────────────────
@@ -342,21 +444,13 @@ def new_invoice():
         companies = cur.fetchall()
         cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
         customers = cur.fetchall()
-        retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
-        persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
-        _seen = {}
-        for o in orders:
-            if o['print_batch_id'] and o['print_batch_id'] not in _seen:
-                _seen[o['print_batch_id']] = o['batch_name']
-        batches = sorted(_seen.items(), key=lambda kv: kv[1].lower())
+        pool_payload = _build_pool_payload(orders, order_items)
 
     return render_template('invoicing/new.html',
-                           orders=orders, order_items=order_items,
                            companies=companies, customers=customers,
-                           retailers=retailers, persons=persons, batches=batches,
+                           pool_json=pool_payload, initial_lines_json=[],
                            today=str(date.today()),
-                           edit_mode=False, existing_invoice=None,
-                           existing_txn_ids=[])
+                           edit_mode=False, existing_invoice=None)
 
 
 # ── Edit Invoice ──────────────────────────────────────────────────────────────
@@ -383,33 +477,64 @@ def edit_invoice(invoice_id):
             flash('Invoice not found.', 'error')
             return redirect(url_for('invoicing.index'))
 
-        # Current orders on this invoice
+        # Current (non-returned) lines on this invoice — returned lines are
+        # done for good and shouldn't reappear as editable/re-addable.
         cur.execute("""
-            SELECT DISTINCT transaction_id::text FROM invoice_items
-            WHERE invoice_id=%s
+            SELECT ii.item_id, ii.transaction_id, ii.item_description, ii.sku,
+                   ii.quantity, ii.unit_cost, ii.group_id, ii.sort_order,
+                   t.order_number,
+                   lg.description AS group_description, lg.sort_order AS group_sort_order
+            FROM invoice_items ii
+            LEFT JOIN transactions t         ON ii.transaction_id = t.transaction_id
+            LEFT JOIN invoice_line_groups lg ON ii.group_id = lg.group_id
+            WHERE ii.invoice_id=%s AND NOT ii.returned
+            ORDER BY COALESCE(lg.sort_order, ii.sort_order), ii.sort_order
         """, (sid,))
-        existing_txn_ids = [r['transaction_id'] for r in cur.fetchall()]
+        existing_rows = cur.fetchall()
+        existing_txn_ids = sorted({str(r['transaction_id']) for r in existing_rows})
 
         orders, order_items = _load_received_orders(cur, include_txn_ids=existing_txn_ids)
         cur.execute("SELECT company_id, company_name, company_short_code FROM dim_companies WHERE is_active=TRUE ORDER BY company_name")
         companies = cur.fetchall()
         cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
         customers = cur.fetchall()
-        retailers = sorted(set(o['retailer'] for o in orders if o['retailer']))
-        persons   = sorted(set(o['person_name'] for o in orders if o['person_name']))
-        _seen = {}
-        for o in orders:
-            if o['print_batch_id'] and o['print_batch_id'] not in _seen:
-                _seen[o['print_batch_id']] = o['batch_name']
-        batches = sorted(_seen.items(), key=lambda kv: kv[1].lower())
+
+        pool_payload = _build_pool_payload(orders, order_items)
+
+        # Swap in the actual invoice_items rows for this invoice's own orders
+        # (using the invoice_items.item_id as the pool key) so the builder
+        # reflects exactly what's invoiced today, not a re-guess from
+        # whatever transaction_items currently says.
+        for iid, entry in list(pool_payload['items'].items()):
+            if entry['transaction_id'] in existing_txn_ids:
+                del pool_payload['items'][iid]
+
+        initial_lines = []
+        seen_groups = {}
+        for row in existing_rows:
+            iid = str(row['item_id'])
+            clean_desc = _strip_order_tag(row['item_description'], row['order_number'])
+            pool_payload['items'][iid] = {
+                'transaction_id': str(row['transaction_id']),
+                'description': clean_desc,
+                'sku': row['sku'] or '',
+                'quantity': int(row['quantity'] or 1),
+                'unit_cost': float(row['unit_cost'] or 0),
+            }
+            if row['group_id']:
+                gid = str(row['group_id'])
+                if gid not in seen_groups:
+                    seen_groups[gid] = {'description': row['group_description'], 'member_ids': []}
+                    initial_lines.append(seen_groups[gid])
+                seen_groups[gid]['member_ids'].append(iid)
+            else:
+                initial_lines.append({'description': clean_desc, 'member_ids': [iid]})
 
     return render_template('invoicing/new.html',
-                           orders=orders, order_items=order_items,
                            companies=companies, customers=customers,
-                           retailers=retailers, persons=persons, batches=batches,
+                           pool_json=pool_payload, initial_lines_json=initial_lines,
                            today=str(date.today()),
-                           edit_mode=True, existing_invoice=inv,
-                           existing_txn_ids=existing_txn_ids)
+                           edit_mode=True, existing_invoice=inv)
 
 
 # ── Shared save logic ─────────────────────────────────────────────────────────
@@ -422,13 +547,34 @@ def _save_invoice(existing_id=None):
     other_amount = request.form.get('other_amount', type=float) or 0.0
     other_label  = request.form.get('other_label', '').strip()
     invoice_date = request.form.get('invoice_date') or str(date.today())
-    txn_ids      = request.form.getlist('txn_ids')
     create_status = request.form.get('create_status', 'draft')
     if create_status not in ('draft', 'unpaid'):
         create_status = 'draft'
 
-    if not txn_ids:
-        flash('Select at least one order.', 'error')
+    try:
+        lines_payload = json.loads(request.form.get('lines_json') or '[]')
+    except (ValueError, TypeError):
+        lines_payload = []
+
+    # Flatten + validate the builder's lines. Each line with 2+ members
+    # becomes a consolidated group; a line with exactly 1 member behaves
+    # like a normal single-order line, same as before.
+    parsed_lines = []
+    all_txn_ids = set()
+    for line in lines_payload:
+        members = [m for m in (line.get('members') or [])
+                   if m.get('transaction_id') and m.get('item_id')]
+        if not members:
+            continue
+        for m in members:
+            all_txn_ids.add(str(m['transaction_id']))
+        parsed_lines.append({
+            'description': (line.get('description') or '').strip() or 'Item',
+            'members': members,
+        })
+
+    if not parsed_lines:
+        flash('Add at least one item to the invoice.', 'error')
         return redirect(url_for('invoicing.edit_invoice', invoice_id=existing_id)
                         if existing_id else url_for('invoicing.new_invoice'))
 
@@ -445,20 +591,20 @@ def _save_invoice(existing_id=None):
                         (customer_id, new_customer))
 
         if existing_id:
-            # Edit: find orders that were removed → release back to received
+            # Edit: find orders that were removed entirely → release back to received
             cur.execute("SELECT DISTINCT transaction_id::text FROM invoice_items WHERE invoice_id=%s",
                         (existing_id,))
             old_ids = set(r['transaction_id'] for r in cur.fetchall())
-            new_ids = set(txn_ids)
-            released = old_ids - new_ids
+            released = old_ids - all_txn_ids
             if released:
                 cur.execute("""
                     UPDATE transactions SET fulfillment_status='received',
                         fulfillment_status_updated_at=NOW()
                     WHERE transaction_id = ANY(%s::uuid[])
                 """, (list(released),))
-            # Delete old items
+            # Clear old items/groups for a clean rebuild from the submitted lines
             cur.execute("DELETE FROM invoice_items WHERE invoice_id=%s", (existing_id,))
+            cur.execute("DELETE FROM invoice_line_groups WHERE invoice_id=%s", (existing_id,))
             invoice_id = existing_id
             custom_num = request.form.get('invoice_number', '').strip()
             # Allow changing the number; validate uniqueness if changed
@@ -486,90 +632,46 @@ def _save_invoice(existing_id=None):
             else:
                 inv_number = get_next_invoice_number(cur, code)
 
-        # Build line items — one per order line, no cross-order consolidation.
-        # Each transaction's items are listed separately for individual PDF tracking.
-        # Step 1: get all qualifying line items
-        cur.execute("""
-            SELECT t.transaction_id, t.order_number, t.retailer,
-                   t.price_total,
-                   ti.item_description, ti.sku_model_color,
-                   ti.quantity, ti.unit_price
-            FROM transactions t
-            LEFT JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
-              AND ti.unit_price >= %s
-            WHERE t.transaction_id = ANY(%s::uuid[]) AND t.is_active=TRUE
-            ORDER BY t.retailer, t.order_number, ti.item_description
-        """, (MIN_ITEM_PRICE, txn_ids))
-        raw_rows = cur.fetchall()
-
-        # Step 2: group by transaction so we can detect orders with no items
-        from collections import defaultdict
-        txn_lines = defaultdict(list)
-        txn_meta  = {}
-        for row in raw_rows:
-            tid = str(row['transaction_id'])
-            txn_meta[tid] = {
-                'transaction_id': tid,
-                'order_number':   row['order_number'] or '',
-                'retailer':       row['retailer'] or '',
-                'price_total':    float(row['price_total'] or 0),
-            }
-            if row['item_description'] is not None:   # LEFT JOIN produced a real item row
-                txn_lines[tid].append(row)
-
+        # Build invoice_items straight from the builder's submitted lines.
+        # A line with 2+ members also gets an invoice_line_groups row; each
+        # member row still carries its own transaction/cost/price exactly
+        # like a normal single-order line always has.
         subtotal = 0.0
         line_items = []
+        group_rows = []
         sort_idx = 0
-        for tid in txn_ids:                           # preserve selected order
-            meta  = txn_meta.get(tid)
-            if not meta:
-                continue
-            lines = txn_lines.get(tid, [])
-            order_ref = meta['order_number']
-
-            if lines:
-                for row in lines:
-                    desc  = (row['item_description'] or row['retailer'] or '').strip()
-                    price = float(row['unit_price'] or 0)
-                    qty   = int(row['quantity'] or 1)
-                    item_markup = float(request.form.get(f'markup_{sort_idx}', markup_pct))
-                    unit_price  = round(price * (1 + item_markup / 100), 2)
-                    line_total  = round(unit_price * qty, 2)
-                    subtotal   += line_total
-                    display_desc = f"[{order_ref}] {desc}" if order_ref else desc
-                    line_items.append({
-                        'item_id':        str(uuid.uuid4()),
-                        'transaction_id': tid,
-                        'description':    display_desc,
-                        'sku':            row['sku_model_color'] or '',
-                        'qty':            qty,
-                        'unit_cost':      price,
-                        'markup_pct':     item_markup,
-                        'unit_price':     unit_price,
-                        'line_total':     line_total,
-                        'sort_order':     sort_idx,
-                    })
-                    sort_idx += 1
-            else:
-                # No qualifying line items — fall back to order total as one line
-                price = meta['price_total']
-                item_markup = float(request.form.get(f'markup_{sort_idx}', markup_pct))
-                unit_price  = round(price * (1 + item_markup / 100), 2)
-                line_total  = unit_price              # qty = 1
-                subtotal   += line_total
-                desc = f"Order {order_ref}" if order_ref else meta['retailer']
-                display_desc = f"[{order_ref}] {desc}" if order_ref else desc
+        for li_index, line in enumerate(parsed_lines):
+            members = line['members']
+            group_id = None
+            if len(members) > 1:
+                group_id = str(uuid.uuid4())
+                group_rows.append({
+                    'group_id': group_id,
+                    'description': line['description'],
+                    'sort_order': li_index,
+                })
+            for m in members:
+                tid = str(m['transaction_id'])
+                qty = max(1, int(m.get('quantity') or 1))
+                unit_cost = float(m.get('unit_cost') or 0)
+                unit_price = round(unit_cost * (1 + markup_pct / 100), 2)
+                line_total = round(unit_price * qty, 2)
+                subtotal += line_total
+                order_number = m.get('order_number') or ''
+                desc = (m.get('description') or '').strip()
+                display_desc = f"[{order_number}] {desc}" if order_number else desc
                 line_items.append({
                     'item_id':        str(uuid.uuid4()),
                     'transaction_id': tid,
                     'description':    display_desc,
-                    'sku':            '',
-                    'qty':            1,
-                    'unit_cost':      price,
-                    'markup_pct':     item_markup,
+                    'sku':            m.get('sku') or '',
+                    'qty':            qty,
+                    'unit_cost':      unit_cost,
+                    'markup_pct':     markup_pct,
                     'unit_price':     unit_price,
-                    'line_total':     round(line_total, 2),
+                    'line_total':     line_total,
                     'sort_order':     sort_idx,
+                    'group_id':       group_id,
                 })
                 sort_idx += 1
 
@@ -596,23 +698,29 @@ def _save_invoice(existing_id=None):
                   invoice_date, markup_pct,
                   subtotal, other_amount, other_label or None, total, create_status))
 
+        for g in group_rows:
+            cur.execute("""
+                INSERT INTO invoice_line_groups (group_id, invoice_id, description, sort_order)
+                VALUES (%s,%s,%s,%s)
+            """, (g['group_id'], invoice_id, g['description'], g['sort_order']))
+
         for li in line_items:
             cur.execute("""
                 INSERT INTO invoice_items
                     (item_id, invoice_id, transaction_id, item_description, sku,
-                     quantity, unit_cost, markup_pct, unit_price, line_total, sort_order)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     quantity, unit_cost, markup_pct, unit_price, line_total, sort_order, group_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (li['item_id'], invoice_id, li['transaction_id'],
                   li['description'], li['sku'], li['qty'],
                   li['unit_cost'], li['markup_pct'], li['unit_price'],
-                  li['line_total'], li['sort_order']))
+                  li['line_total'], li['sort_order'], li['group_id']))
 
-        # Mark all selected transactions as invoiced
+        # Mark every transaction referenced across all lines as invoiced
         cur.execute("""
             UPDATE transactions SET fulfillment_status='invoiced',
                 fulfillment_status_updated_at=NOW()
             WHERE transaction_id = ANY(%s::uuid[])
-        """, (txn_ids,))
+        """, (list(all_txn_ids),))
 
     action = 'updated' if existing_id else 'created'
     flash(f'Invoice {inv_number} {action}!', 'success')
@@ -678,14 +786,20 @@ def remove_item(invoice_id):
             return jsonify({'error': 'Invoice not found'}), 404
 
         cur.execute(
-            "SELECT transaction_id FROM invoice_items WHERE item_id=%s AND invoice_id=%s",
+            "SELECT transaction_id, group_id FROM invoice_items WHERE item_id=%s AND invoice_id=%s",
             (item_id, sid))
         row = cur.fetchone()
         if not row:
             return jsonify({'error': 'Item not found'}), 404
         txn_id = str(row['transaction_id'])
+        group_id = row['group_id']
 
         cur.execute("DELETE FROM invoice_items WHERE item_id=%s", (item_id,))
+
+        if group_id:
+            cur.execute("SELECT 1 FROM invoice_items WHERE group_id=%s LIMIT 1", (group_id,))
+            if not cur.fetchone():
+                cur.execute("DELETE FROM invoice_line_groups WHERE group_id=%s", (group_id,))
 
         cur.execute(
             "SELECT COUNT(*) AS n FROM invoice_items "
@@ -820,16 +934,14 @@ def view_invoice(invoice_id):
             flash('Invoice not found.', 'error')
             return redirect(url_for('invoicing.index'))
 
-        cur.execute("SELECT * FROM invoice_items WHERE invoice_id=%s ORDER BY sort_order",
-                    (str(invoice_id),))
-        items = cur.fetchall()
+        lines = _get_display_lines(cur, str(invoice_id))
 
         cur.execute("SELECT customer_id, customer_name FROM dim_customers WHERE is_active=TRUE ORDER BY customer_name")
         customers = cur.fetchall()
 
     code = (inv['company_short_code'] or 'SE').upper()
     co   = COMPANY_DATA.get(code, COMPANY_DATA['SE'])
-    return render_template('invoicing/view.html', inv=inv, items=items, co=co,
+    return render_template('invoicing/view.html', inv=inv, lines=lines, co=co,
                            customers=customers)
 
 
@@ -1011,6 +1123,74 @@ def update_line(invoice_id):
     })
 
 
+# ── Update a consolidated line's description / price (any status) ────────────
+# A group's price isn't stored directly — it's the sum of its member rows —
+# so setting a new price here redistributes it across members proportionally
+# by their existing quantity share, keeping each member's own accounting
+# intact for returns and internal tracking.
+
+@invoicing_bp.route('/<uuid:invoice_id>/update-group', methods=['POST'])
+@login_required
+@require_role('admin')
+def update_group(invoice_id):
+    sid  = str(invoice_id)
+    data = request.get_json()
+    group_id = data.get('group_id')
+    if not group_id:
+        return jsonify({'error': 'Missing group_id'}), 400
+
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT 1 FROM invoice_line_groups WHERE group_id=%s AND invoice_id=%s",
+                    (group_id, sid))
+        if not cur.fetchone():
+            return jsonify({'error': 'Line not found'}), 404
+
+        if 'description' in data:
+            new_desc = (data.get('description') or '').strip()
+            if not new_desc:
+                return jsonify({'error': 'Description cannot be empty'}), 400
+            cur.execute("UPDATE invoice_line_groups SET description=%s WHERE group_id=%s",
+                        (new_desc, group_id))
+
+        if 'unit_price' in data:
+            try:
+                new_price = round(float(data.get('unit_price') or 0), 2)
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid price'}), 400
+
+            cur.execute("""
+                SELECT item_id, quantity FROM invoice_items
+                WHERE group_id=%s AND invoice_id=%s AND NOT returned
+                ORDER BY sort_order
+            """, (group_id, sid))
+            members = cur.fetchall()
+            total_qty = sum(m['quantity'] for m in members)
+            if total_qty > 0:
+                new_group_total = round(new_price * total_qty, 2)
+                allocated = 0.0
+                for i, m in enumerate(members):
+                    if i == len(members) - 1:
+                        member_total = round(new_group_total - allocated, 2)
+                    else:
+                        member_total = round(new_group_total * (m['quantity'] / total_qty), 2)
+                        allocated += member_total
+                    member_unit_price = round(member_total / m['quantity'], 2) if m['quantity'] else 0
+                    cur.execute(
+                        "UPDATE invoice_items SET unit_price=%s, line_total=%s WHERE item_id=%s",
+                        (member_unit_price, member_total, m['item_id']))
+
+        cur.execute("SELECT COALESCE(SUM(line_total),0) AS s FROM invoice_items WHERE invoice_id=%s AND NOT returned",
+                    (sid,))
+        new_subtotal = round(float(cur.fetchone()['s']), 2)
+        cur.execute("SELECT other_amount FROM invoices WHERE invoice_id=%s", (sid,))
+        other = float(cur.fetchone()['other_amount'] or 0)
+        new_total = round(new_subtotal + other, 2)
+        cur.execute("UPDATE invoices SET subtotal=%s, total=%s WHERE invoice_id=%s",
+                    (new_subtotal, new_total, sid))
+
+    return jsonify({'ok': True, 'subtotal': f"{new_subtotal:,.2f}", 'total': f"{new_total:,.2f}"})
+
+
 # ── Export Excel ──────────────────────────────────────────────────────────────
 
 @invoicing_bp.route('/<uuid:invoice_id>/export-excel')
@@ -1029,9 +1209,22 @@ def export_excel(invoice_id):
             WHERE i.invoice_id=%s
         """, (str(invoice_id),))
         inv = cur.fetchone()
-        cur.execute("SELECT * FROM invoice_items WHERE invoice_id=%s ORDER BY sort_order",
-                    (str(invoice_id),))
-        items = cur.fetchall()
+        display_lines = _get_display_lines(cur, str(invoice_id))
+
+    # Flatten to what the client actually sees: one row per line, consolidated
+    # lines already summed, returned-out lines dropped, no order metadata.
+    items = []
+    for entry in display_lines:
+        if entry['kind'] == 'single':
+            if not entry['item']['returned']:
+                items.append(entry['item'])
+        elif not entry['all_returned']:
+            items.append({
+                'item_description': entry['description'],
+                'unit_price': entry['unit_price'],
+                'quantity': entry['qty'],
+                'line_total': entry['line_total'],
+            })
 
     code = (inv['company_short_code'] or 'SE').upper()
     co   = COMPANY_DATA.get(code, COMPANY_DATA['SE'])
@@ -1267,9 +1460,20 @@ def export_pdf(invoice_id):
             WHERE i.invoice_id=%s
         """, (str(invoice_id),))
         inv = cur.fetchone()
-        cur.execute("SELECT * FROM invoice_items WHERE invoice_id=%s ORDER BY sort_order",
-                    (str(invoice_id),))
-        items = cur.fetchall()
+        display_lines = _get_display_lines(cur, str(invoice_id))
+
+    items = []
+    for entry in display_lines:
+        if entry['kind'] == 'single':
+            if not entry['item']['returned']:
+                items.append(entry['item'])
+        elif not entry['all_returned']:
+            items.append({
+                'item_description': entry['description'],
+                'unit_price': entry['unit_price'],
+                'quantity': entry['qty'],
+                'line_total': entry['line_total'],
+            })
 
     code = (inv['company_short_code'] or 'SE').upper()
     co   = COMPANY_DATA.get(code, COMPANY_DATA['SE'])
