@@ -202,8 +202,8 @@
 const POOL_DATA = {{ pool_json|tojson }};
 const INITIAL_LINES = {{ initial_lines_json|tojson }};
 
-let location = {};
-Object.keys(POOL_DATA.items).forEach(function(id){ location[id] = 'pool'; });
+let itemLoc = {};
+Object.keys(POOL_DATA.items).forEach(function(id){ itemLoc[id] = 'pool'; });
 let modules = [];
 let moduleCounter = 0;
 let openPanelId = null;
@@ -211,7 +211,7 @@ let openPanelId = null;
 INITIAL_LINES.forEach(function(line){
   const mod = {id: 'm' + (++moduleCounter), name: line.description, itemIds: []};
   (line.member_ids || []).forEach(function(iid){
-    if (POOL_DATA.items[iid]) { mod.itemIds.push(iid); location[iid] = mod.id; }
+    if (POOL_DATA.items[iid]) { mod.itemIds.push(iid); itemLoc[iid] = mod.id; }
   });
   if (mod.itemIds.length) modules.push(mod);
 });
@@ -225,16 +225,16 @@ function assign(itemId){
   let target = modules.find(function(m){ return m.name.toLowerCase() === item.description.toLowerCase(); });
   if (!target) { target = {id:'m' + (++moduleCounter), name: item.description, itemIds: []}; modules.push(target); }
   target.itemIds.push(itemId);
-  location[itemId] = target.id;
+  itemLoc[itemId] = target.id;
 }
 function quickAddItem(id){ assign(id); render(); }
 function addAllForOrder(tid){
-  Object.keys(location).filter(function(id){ return location[id]==='pool' && POOL_DATA.items[id].transaction_id===tid; })
+  Object.keys(itemLoc).filter(function(id){ return itemLoc[id]==='pool' && POOL_DATA.items[id].transaction_id===tid; })
     .forEach(assign);
   render();
 }
 function moveToModule(itemId, targetModuleId){
-  const cur = location[itemId];
+  const cur = itemLoc[itemId];
   if (cur !== 'pool') {
     const src = modules.find(function(m){ return m.id===cur; });
     src.itemIds = src.itemIds.filter(function(id){ return id!==itemId; });
@@ -242,13 +242,13 @@ function moveToModule(itemId, targetModuleId){
   }
   const tgt = modules.find(function(m){ return m.id===targetModuleId; });
   tgt.itemIds.push(itemId);
-  location[itemId] = targetModuleId;
+  itemLoc[itemId] = targetModuleId;
   render();
 }
 function removeFromModule(moduleId, itemId){
   const m = modules.find(function(x){ return x.id===moduleId; });
   m.itemIds = m.itemIds.filter(function(id){ return id!==itemId; });
-  location[itemId] = 'pool';
+  itemLoc[itemId] = 'pool';
   if (m.itemIds.length===0) { modules = modules.filter(function(x){ return x.id!==moduleId; }); if(openPanelId===moduleId) openPanelId=null; }
   render();
 }
@@ -295,14 +295,14 @@ function renderPool(){
   const orderNums = Object.keys(POOL_DATA.orders).filter(function(tid){
     return Object.keys(POOL_DATA.items).some(function(id){
       const it = POOL_DATA.items[id];
-      return it.transaction_id===tid && location[id]==='pool' && matchesFilters(it, POOL_DATA.orders[tid]);
+      return it.transaction_id===tid && itemLoc[id]==='pool' && matchesFilters(it, POOL_DATA.orders[tid]);
     });
   });
   document.getElementById('poolCard').innerHTML = orderNums.length ? orderNums.map(function(tid){
     const o = POOL_DATA.orders[tid];
     const ids = Object.keys(POOL_DATA.items).filter(function(id){
       const it = POOL_DATA.items[id];
-      return it.transaction_id===tid && location[id]==='pool' && matchesFilters(it, o);
+      return it.transaction_id===tid && itemLoc[id]==='pool' && matchesFilters(it, o);
     });
     const itemRows = ids.map(function(id){
       const it = POOL_DATA.items[id];
@@ -355,12 +355,12 @@ function renderModules(){
         '<span>' + (o.order_number||'') + ' · ' + (o.retailer||'') + ' · ' + it.quantity + ' unit' + (it.quantity>1?'s':'') + '</span>' +
         '<button type="button" data-action="remove" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:#f87171" title="Remove from this line">✕</button></div>';
     }).join('');
-    const movable = Object.keys(location).filter(function(id){ return location[id]!==m.id; });
+    const movable = Object.keys(itemLoc).filter(function(id){ return itemLoc[id]!==m.id; });
     const panelOpen = openPanelId===m.id;
     const panelRows = movable.map(function(id){
       const it = POOL_DATA.items[id];
       const o = POOL_DATA.orders[it.transaction_id] || {};
-      const src = location[id]==='pool' ? 'Unassigned' : (modules.find(function(x){return x.id===location[id];})||{name:'another line'}).name;
+      const src = itemLoc[id]==='pool' ? 'Unassigned' : (modules.find(function(x){return x.id===itemLoc[id];})||{name:'another line'}).name;
       return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">' +
         '<span style="color:var(--muted)">' + (o.order_number||'') + ' · ' + it.description + ' (' + src + ')</span>' +
         '<button type="button" data-action="moveto" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:var(--accent2)">+</button></div>';
