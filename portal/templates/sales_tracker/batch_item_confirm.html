@@ -40,18 +40,44 @@
     <div class="form-row">
       <div class="form-group">
         <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Client name</label>
-        <input type="text" name="client_name" value="{{ parsed.client_name or '' }}" required>
+        <input type="text" name="client_name" id="clientNameInput" value="{{ parsed.client_name or '' }}" required oninput="checkClientOwner()">
       </div>
       <div class="form-group">
         <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Or select existing client</label>
-        <select name="client_id">
+        <select name="client_id" id="clientSelect" onchange="checkClientOwner()">
           <option value="">— use name above —</option>
           {% for c in existing_clients %}
-          <option value="{{ c.client_id }}">{{ c.client_name }}</option>
+          <option value="{{ c.client_id }}" data-owned="{{ '1' if c.account_owner_user_id else '' }}">{{ c.client_name }}</option>
           {% endfor %}
         </select>
       </div>
     </div>
+
+    <div id="ownerPrompt" style="display:{{ 'block' if needs_owner else 'none' }};background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.3);padding:14px 16px;border-radius:var(--r-sm);margin-bottom:16px">
+      <strong id="ownerPromptTitle" style="color:#22d3ee">
+        {{ "New client — please complete setup before saving" if not matched_client else "This client has no owner assigned yet" }}
+      </strong>
+      <div class="form-row" id="newClientFields" style="margin-top:10px;{{ '' if not matched_client else 'display:none' }}">
+        <div class="form-group">
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Address</label>
+          <input type="text" name="client_address" value="{{ parsed.client_address or '' }}">
+        </div>
+        <div class="form-group">
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Phone</label>
+          <input type="text" name="client_phone" value="{{ parsed.client_phone or '' }}">
+        </div>
+      </div>
+      <div class="form-group" style="max-width:260px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Assign to (owner) *</label>
+        <select name="client_owner_id" id="clientOwnerSelect" {{ 'required' if needs_owner }}>
+          <option value="">— select —</option>
+          {% for u in users %}
+          <option value="{{ u.user_id }}">{{ u.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
     <div class="form-group">
       <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Company (commission credited to)</label>
       <select name="company_id" style="max-width:260px">
@@ -108,4 +134,31 @@
     </button>
   </div>
 </form>
+
+<script>
+function checkClientOwner() {
+  var select = document.getElementById('clientSelect');
+  var nameInput = document.getElementById('clientNameInput');
+  var prompt = document.getElementById('ownerPrompt');
+  var title = document.getElementById('ownerPromptTitle');
+  var newFields = document.getElementById('newClientFields');
+  var ownerSelect = document.getElementById('clientOwnerSelect');
+
+  var selectedOption = select.options[select.selectedIndex];
+  var pickedExisting = select.value !== '';
+  var isOwned = pickedExisting && selectedOption.getAttribute('data-owned') === '1';
+
+  nameInput.required = !pickedExisting;
+
+  if (!pickedExisting || !isOwned) {
+    prompt.style.display = 'block';
+    ownerSelect.required = true;
+    title.textContent = pickedExisting ? 'This client has no owner assigned yet' : 'New client — please complete setup before saving';
+    newFields.style.display = pickedExisting ? 'none' : 'grid';
+  } else {
+    prompt.style.display = 'none';
+    ownerSelect.required = false;
+  }
+}
+</script>
 {% endblock %}
