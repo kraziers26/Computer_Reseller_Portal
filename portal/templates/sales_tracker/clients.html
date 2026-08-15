@@ -8,17 +8,28 @@
 
 <div class="card">
   <div class="table-wrap"><table>
-    <tr><th>Client</th><th>Orders</th><th>Revenue</th><th>Commission</th><th>Last order</th></tr>
+    <tr><th>Client</th><th>Owner (Person By)</th><th>Orders</th><th>Revenue</th><th>Commission</th><th>Last order</th></tr>
     {% for c in clients %}
     <tr>
       <td>{{ c.client_name }}</td>
+      <td>
+        <form method="POST" action="{{ url_for('sales_tracker.update_client_owner', client_id=c.client_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <select name="account_owner_user_id" onchange="this.form.submit()" style="width:150px">
+            <option value="">Unassigned</option>
+            {% for s in salesmen %}
+            <option value="{{ s.user_id }}" {{ 'selected' if c.account_owner_user_id==s.user_id }}>{{ s.username }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </td>
       <td>{{ c.order_count }}</td>
       <td>${{ "{:,.2f}".format(c.total_revenue) }}</td>
       <td>{{ "${:,.2f}".format(c.total_commission) if c.total_commission is not none else "—" }}</td>
       <td>{{ c.last_order_date.strftime('%-m/%-d/%Y') if c.last_order_date else "—" }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="5" style="color:var(--muted)">No clients yet — upload an invoice to get started</td></tr>
+    <tr><td colspan="6" style="color:var(--muted)">No clients yet — upload an invoice to get started</td></tr>
     {% endfor %}
   </table></div>
 </div>
