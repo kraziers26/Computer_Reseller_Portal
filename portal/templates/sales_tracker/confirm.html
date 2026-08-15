@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Confirm invoice — Sales Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Confirm invoice #{{ parsed.invoice_number }}</h1>
+  <p>Review the parsed data before saving — nothing is written until you confirm</p>
+</div>
+
+{% if dup_invoice %}
+<div class="alert alert-warning" style="display:block;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#fbbf24;padding:14px 16px;border-radius:var(--r-sm);margin-bottom:16px">
+  <strong>Invoice #{{ parsed.invoice_number }} already exists.</strong><br>
+  Current version: dated {{ dup_invoice.invoice_date.strftime('%-m/%-d/%Y') }}, total ${{ "{:,.2f}".format(dup_invoice.total) }},
+  uploaded {{ dup_invoice.uploaded_at.strftime('%b %-d, %Y') }}.<br>
+  This upload: dated {{ parsed.invoice_date }}, total ${{ "{:,.2f}".format(parsed.computed_total) }}.
+</div>
+{% endif %}
+
+<form method="POST">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="card">
+    <div class="card-title">Invoice details</div>
+    <div class="form-row-3">
+      <div class="form-group">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Invoice date</label>
+        <input type="date" name="invoice_date" value="{{ iso_date }}" required>
+      </div>
+      <div class="form-group">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Total</label>
+        <input type="number" step="0.01" name="total" value="{{ parsed.computed_total }}" required>
+      </div>
+      <div class="form-group">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Commission (1% default, editable)</label>
+        <input type="number" step="0.01" name="commission_amount" value="{{ default_commission }}">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Client name</label>
+        <input type="text" name="client_name" value="{{ parsed.client_name or '' }}" required>
+      </div>
+      <div class="form-group">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Or select existing client</label>
+        <select name="client_id">
+          <option value="">— use name above —</option>
+          {% for c in existing_clients %}
+          <option value="{{ c.client_id }}">{{ c.client_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Company (commission credited to)</label>
+      <select name="company_id" style="max-width:260px">
+        <option value="">— select —</option>
+        {% for c in companies %}
+        <option value="{{ c.company_id }}">{{ c.company_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="card-title">Line items ({{ parsed.line_items|length }})</div>
+    <div class="table-wrap"><table>
+      <tr><th>Code</th><th>Description</th><th>Type</th><th>Qty</th><th>Price</th><th>Amount</th><th>Customs only</th></tr>
+      {% for li in parsed.line_items %}
+      <tr>
+        <td><input type="text" name="item_code[]" value="{{ li.item_code or '' }}" style="width:150px" class="mono"></td>
+        <td><input type="text" name="item_description[]" value="{{ li.description }}" style="min-width:280px"></td>
+        <td>
+          <select name="item_type[]" style="width:100px">
+            {% for t in ['laptop','desktop','aio','other'] %}
+            <option value="{{ t }}" {{ 'selected' if li.product_type==t }}>{{ t|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><input type="number" name="item_qty[]" value="{{ li.quantity }}" style="width:60px"></td>
+        <td><input type="number" step="0.01" name="item_price[]" value="{{ li.price_each }}" style="width:90px"></td>
+        <td><input type="number" step="0.01" name="item_amount[]" value="{{ li.amount }}" style="width:90px"></td>
+        <td style="text-align:center"><input type="checkbox" name="item_customs[]" value="{{ loop.index0 }}" {{ 'checked' if li.is_customs_only }} style="width:auto"></td>
+      </tr>
+      {% endfor %}
+    </table></div>
+  </div>
+
+  <div class="card" style="margin-top:16px;display:flex;align-items:center;gap:16px">
+    {% if dup_invoice %}
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)">
+      <input type="checkbox" name="confirm_replace" value="yes" required style="width:auto">
+      I understand this replaces the existing invoice #{{ parsed.invoice_number }} on record
+    </label>
+    {% endif %}
+    <button type="submit" class="btn btn-primary" style="margin-left:auto">
+      {{ 'Replace and save' if dup_invoice else 'Save invoice' }}
+    </button>
+    <a href="{{ url_for('sales_tracker.upload') }}" class="btn btn-ghost">Cancel</a>
+  </div>
+</form>
+{% endblock %}
