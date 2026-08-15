@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Batch Review — Sales Tracker{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Batch Review</h1>
+  <p>{{ draft.completed_count }}/{{ draft.total_files }} submitted · {{ items|selectattr('parse_status','eq','parsed')|list|length }} remaining</p></div>
+  <div class="flex gap-8">
+    {% if next_item %}
+    <a href="{{ url_for('sales_tracker.batch_item_confirm', draft_id=draft.draft_id, item_id=next_item.item_id) }}" class="btn btn-primary">Review Next →</a>
+    {% endif %}
+    {% if draft.status == 'active' and items|selectattr('parse_status','eq','parsed')|list|length == 0 %}
+    <a href="{{ url_for('sales_tracker.batch_summary', draft_id=draft.draft_id) }}" class="btn btn-success">View Summary</a>
+    {% endif %}
+    <form method="POST" action="{{ url_for('sales_tracker.batch_discard', draft_id=draft.draft_id) }}"
+          onsubmit="return confirm('Discard this entire batch?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost btn-sm">Discard Batch</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap"><table>
+    <tr><th>#</th><th>File</th><th>Invoice #</th><th>Client</th><th>Total</th><th>Status</th><th></th></tr>
+    {% for item in items %}
+    {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
+    <tr style="{{ 'opacity:.5' if item.parse_status in ('submitted','skipped','failed') else '' }}">
+      <td style="color:var(--muted)">{{ item.position + 1 }}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px">{{ item.filename }}</td>
+      <td class="mono">{{ inv.get('invoice_number', '—') if inv else '—' }}</td>
+      <td>{{ inv.get('client_name', '—') if inv else '—' }}</td>
+      <td>{% if inv and inv.get('computed_total') %}${{ "%.2f"|format(inv.get('computed_total')|float) }}{% else %}—{% endif %}</td>
+      <td>
+        {% if item.parse_status == 'parsed' %}<span class="badge badge-info">Ready</span>
+        {% elif item.parse_status == 'submitted' %}<span class="badge badge-success">Submitted</span>
+        {% elif item.parse_status == 'skipped' %}<span class="badge badge-muted">Skipped</span>
+        {% elif item.parse_status == 'failed' %}<span class="badge badge-danger">Failed — {{ item.error_message }}</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if item.parse_status == 'parsed' %}
+        <a href="{{ url_for('sales_tracker.batch_item_confirm', draft_id=draft.draft_id, item_id=item.item_id) }}" class="btn btn-ghost btn-sm">Review</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}
