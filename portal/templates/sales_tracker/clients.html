@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Clients — Sales Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Sales clients</h1>
+  <p>{{ clients|length }} client{{ 's' if clients|length != 1 }}</p>
+</div>
+
+<div class="card">
+  <div class="table-wrap"><table>
+    <tr><th>Client</th><th>Orders</th><th>Revenue</th><th>Commission</th><th>Last order</th></tr>
+    {% for c in clients %}
+    <tr>
+      <td>{{ c.client_name }}</td>
+      <td>{{ c.order_count }}</td>
+      <td>${{ "{:,.2f}".format(c.total_revenue) }}</td>
+      <td>{{ "${:,.2f}".format(c.total_commission) if c.total_commission is not none else "—" }}</td>
+      <td>{{ c.last_order_date.strftime('%-m/%-d/%Y') if c.last_order_date else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" style="color:var(--muted)">No clients yet — upload an invoice to get started</td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}
