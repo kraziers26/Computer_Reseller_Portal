@@ -45,6 +45,7 @@ def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
     commission_amount = form.get('commission_amount', type=float)
     total = form.get('total', type=float)
     invoice_date = form.get('invoice_date')
+    submitted_by = form.get('user_id', type=int) or current_user.id
 
     if not client_id:
         cur.execute("SELECT client_id FROM dim_sales_clients WHERE LOWER(client_name) = LOWER(%s)",
@@ -69,10 +70,10 @@ def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
     cur.execute("""
         INSERT INTO sales_invoices
             (sales_invoice_id, invoice_number, invoice_date, client_id,
-             total, commission_amount, company_id, source_file_path)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             total, commission_amount, company_id, source_file_path, submitted_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (new_id, parsed['invoice_number'], invoice_date, client_id,
-          total, commission_amount, company_id, source_filename))
+          total, commission_amount, company_id, source_filename, submitted_by))
 
     descs   = form.getlist('item_description[]')
     codes   = form.getlist('item_code[]')
@@ -184,12 +185,13 @@ def invoices():
         cur.execute("""
             SELECT i.sales_invoice_id, i.invoice_number, i.invoice_date, i.total,
                    i.commission_amount, i.company_id, comp.company_name,
-                   c.client_name,
+                   c.client_name, u.username AS submitted_by_name,
                    (SELECT COUNT(*) FROM sales_invoices h
                     WHERE h.invoice_number = i.invoice_number) AS version_count
             FROM sales_invoices i
             JOIN dim_sales_clients c ON i.client_id = c.client_id
             LEFT JOIN dim_companies comp ON i.company_id = comp.company_id
+            LEFT JOIN dim_users u ON i.submitted_by = u.user_id
             WHERE i.is_superseded = FALSE
             ORDER BY i.invoice_date DESC
         """)
@@ -214,6 +216,94 @@ def update_commission(invoice_id):
     return redirect(url_for('sales_tracker.invoices'))
 
 
+@sales_tracker_bp.route('/invoices/<uuid:invoice_id>/delete', methods=['POST'])
+@login_required
+@require_role('contributor')
+def delete_invoice(invoice_id):
+    with db_cursor() as (cur, conn):
+        cur.execute("SELECT invoice_number FROM sales_invoices WHERE sales_invoice_id = %s", (str(invoice_id),))
+        row = cur.fetchone()
+        if not row:
+            flash('Invoice not found.', 'error')
+            return redirect(url_for('sales_tracker.invoices'))
+        # Delete every stored version of this invoice number (active + any
+        # superseded history), not just the row that was clicked — deleting
+        # from the list means "this invoice shouldn't be on record", not
+        # "hide the latest snapshot but keep stale duplicates around".
+        cur.execute("DELETE FROM sales_invoices WHERE invoice_number = %s", (row['invoice_number'],))
+    flash(f"Invoice #{row['invoice_number']} deleted.", 'success')
+    return redirect(url_for('sales_tracker.invoices'))
+
+
+@sales_tracker_bp.route('/invoices/<uuid:invoice_id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_role('contributor')
+def edit_invoice(invoice_id):
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT * FROM sales_invoices WHERE sales_invoice_id = %s", (str(invoice_id),))
+        invoice = cur.fetchone()
+        if not invoice:
+            flash('Invoice not found.', 'error')
+            return redirect(url_for('sales_tracker.invoices'))
+
+        cur.execute("SELECT * FROM sales_invoice_items WHERE sales_invoice_id = %s", (str(invoice_id),))
+        items = cur.fetchall()
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active = TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT client_id, client_name FROM dim_sales_clients ORDER BY client_name")
+        existing_clients = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
+        users = cur.fetchall()
+
+    if request.method == 'POST':
+        client_id = request.form.get('client_id', type=int)
+        company_id = request.form.get('company_id', type=int)
+        commission_amount = request.form.get('commission_amount', type=float)
+        total = request.form.get('total', type=float)
+        invoice_date = request.form.get('invoice_date')
+        submitted_by = request.form.get('user_id', type=int)
+
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                UPDATE sales_invoices
+                SET invoice_date = %s, client_id = %s, total = %s,
+                    commission_amount = %s, company_id = %s, submitted_by = %s
+                WHERE sales_invoice_id = %s
+            """, (invoice_date, client_id, total, commission_amount, company_id,
+                  submitted_by, str(invoice_id)))
+
+            # Line items are fully replaced on save, same convention as the
+            # existing Invoicing module's edit flow.
+            cur.execute("DELETE FROM sales_invoice_items WHERE sales_invoice_id = %s", (str(invoice_id),))
+
+            descs   = request.form.getlist('item_description[]')
+            codes   = request.form.getlist('item_code[]')
+            qtys    = request.form.getlist('item_qty[]')
+            prices  = request.form.getlist('item_price[]')
+            amounts = request.form.getlist('item_amount[]')
+            types   = request.form.getlist('item_type[]')
+            customs = set(request.form.getlist('item_customs[]'))
+
+            for i, desc in enumerate(descs):
+                if not desc.strip():
+                    continue
+                cur.execute("""
+                    INSERT INTO sales_invoice_items
+                        (sales_invoice_id, item_code, description, product_type,
+                         quantity, price_each, amount, is_customs_only)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (str(invoice_id), codes[i], desc.strip(), types[i] or 'other',
+                      int(qtys[i] or 0), float(prices[i] or 0),
+                      float(amounts[i] or 0), str(i) in customs))
+
+        flash(f"Invoice #{invoice['invoice_number']} updated.", 'success')
+        return redirect(url_for('sales_tracker.invoices'))
+
+    return render_template('sales_tracker/edit.html', invoice=invoice, items=items,
+        companies=companies, existing_clients=existing_clients, users=users,
+        iso_date=invoice['invoice_date'].isoformat() if invoice['invoice_date'] else '')
+
+
 # ── Clients ──────────────────────────────────────────────────────────────────
 
 @sales_tracker_bp.route('/clients')
@@ -221,9 +311,53 @@ def update_commission(invoice_id):
 @require_role('contributor')
 def clients():
     with db_cursor() as (cur, _):
-        cur.execute("SELECT * FROM v_sales_by_client ORDER BY total_revenue DESC")
+        # LEFT JOIN (not the v_sales_by_client view, which inner-joins and
+        # would hide newly-added clients with zero orders yet)
+        cur.execute("""
+            SELECT c.client_id, c.client_name,
+                   COUNT(i.sales_invoice_id) FILTER (WHERE i.is_superseded = FALSE) AS order_count,
+                   COALESCE(SUM(i.total) FILTER (WHERE i.is_superseded = FALSE), 0) AS total_revenue,
+                   COALESCE(SUM(i.commission_amount) FILTER (WHERE i.is_superseded = FALSE), 0) AS total_commission,
+                   MAX(i.invoice_date) FILTER (WHERE i.is_superseded = FALSE) AS last_order_date
+            FROM dim_sales_clients c
+            LEFT JOIN sales_invoices i ON i.client_id = c.client_id
+            GROUP BY c.client_id, c.client_name
+            ORDER BY total_revenue DESC, c.client_name
+        """)
         client_rows = cur.fetchall()
     return render_template('sales_tracker/clients.html', clients=client_rows)
+
+
+@sales_tracker_bp.route('/clients/new', methods=['GET', 'POST'])
+@login_required
+@require_role('contributor')
+def new_client():
+    if request.method == 'POST':
+        client_name = request.form.get('client_name', '').strip()
+        address = request.form.get('address', '').strip() or None
+        phone = request.form.get('phone', '').strip() or None
+
+        if not client_name:
+            flash('Client name is required.', 'error')
+            return render_template('sales_tracker/new_client.html')
+
+        with db_cursor() as (cur, conn):
+            cur.execute("SELECT client_id FROM dim_sales_clients WHERE LOWER(client_name) = LOWER(%s)",
+                        (client_name,))
+            if cur.fetchone():
+                flash(f'A client named "{client_name}" already exists.', 'error')
+                return render_template('sales_tracker/new_client.html',
+                    client_name=client_name, address=address, phone=phone)
+
+            cur.execute("""
+                INSERT INTO dim_sales_clients (client_name, address, phone)
+                VALUES (%s, %s, %s)
+            """, (client_name, address, phone))
+
+        flash(f'Client "{client_name}" added.', 'success')
+        return redirect(url_for('sales_tracker.clients'))
+
+    return render_template('sales_tracker/new_client.html')
 
 
 # ── Upload (single file → session flow, multiple files → batch draft) ────────
@@ -324,6 +458,8 @@ def confirm():
         companies = cur.fetchall()
         cur.execute("SELECT client_id, client_name FROM dim_sales_clients ORDER BY client_name")
         existing_clients = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
+        users = cur.fetchall()
         cur.execute("""
             SELECT sales_invoice_id, invoice_date, total, uploaded_at
             FROM sales_invoices WHERE invoice_number = %s AND is_superseded = FALSE
@@ -331,6 +467,7 @@ def confirm():
         dup_invoice = cur.fetchone()
 
     ctx = dict(parsed=parsed, companies=companies, existing_clients=existing_clients,
+               users=users, current_user_id=current_user.id,
                dup_invoice=dup_invoice,
                default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
                iso_date=_to_iso_date(parsed.get('invoice_date')),
@@ -404,6 +541,8 @@ def batch_item_confirm(draft_id, item_id):
         companies = cur.fetchall()
         cur.execute("SELECT client_id, client_name FROM dim_sales_clients ORDER BY client_name")
         existing_clients = cur.fetchall()
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
+        users = cur.fetchall()
 
         cur.execute("""
             SELECT COUNT(*) AS n FROM sales_batch_draft_items
@@ -439,7 +578,8 @@ def batch_item_confirm(draft_id, item_id):
                   f"confirm to replace it.", 'error')
             return render_template('sales_tracker/batch_item_confirm.html',
                 draft=draft, item=item, parsed=parsed, companies=companies,
-                existing_clients=existing_clients, dup_invoice=dup_invoice,
+                existing_clients=existing_clients, users=users, current_user_id=current_user.id,
+                dup_invoice=dup_invoice,
                 default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
                 iso_date=_to_iso_date(parsed.get('invoice_date')), remaining=remaining)
 
@@ -474,7 +614,8 @@ def batch_item_confirm(draft_id, item_id):
 
     return render_template('sales_tracker/batch_item_confirm.html',
         draft=draft, item=item, parsed=parsed, companies=companies,
-        existing_clients=existing_clients, dup_invoice=None,
+        existing_clients=existing_clients, users=users, current_user_id=current_user.id,
+        dup_invoice=None,
         default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
         iso_date=_to_iso_date(parsed.get('invoice_date')), remaining=remaining)
 
