@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Upload invoice — Sales Tracker{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Upload invoice</h1>
+  <p>Upload a Sunrise International Group Corp invoice PDF to parse and review before saving</p>
+</div>
+
+<div class="card" style="max-width:520px">
+  <form method="POST" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-group">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Invoice PDF</label>
+      <input type="file" name="pdf" accept="application/pdf" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Parse invoice →</button>
+  </form>
+</div>
+{% endblock %}
