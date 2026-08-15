@@ -153,6 +153,7 @@ select option{background:var(--surface2)}
     <div class="dept-switcher">
       <button class="dept-btn active" id="dept-inv-btn" onclick="switchDept('inv')">📦 Inventory</button>
       <button class="dept-btn" id="dept-deal-btn" onclick="switchDept('deal')">🔍 Deal Scan</button>
+      <button class="dept-btn" id="dept-sales-btn" onclick="switchDept('sales')">💰 Sales</button>
     </div>
     <nav>
       <div class="nav-dept visible" id="nav-inv">
@@ -315,6 +316,27 @@ select option{background:var(--surface2)}
         </a>
       </div><!-- /nav-deal -->
 
+      <!-- ── Sales Tracker nav ── -->
+      <div class="nav-dept" id="nav-sales">
+        <div class="nav-section">Sales Tracker</div>
+        <a href="{{ url_for('sales_tracker.overview') }}" class="{{ 'active' if request.endpoint == 'sales_tracker.overview' }}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Overview
+        </a>
+        <a href="{{ url_for('sales_tracker.invoices') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('sales_tracker.invoices') or request.endpoint == 'sales_tracker.update_commission' }}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Invoices
+        </a>
+        <a href="{{ url_for('sales_tracker.clients') }}" class="{{ 'active' if request.endpoint == 'sales_tracker.clients' }}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          Clients
+        </a>
+        <a href="{{ url_for('sales_tracker.upload') }}" class="{{ 'active' if request.endpoint in ('sales_tracker.upload', 'sales_tracker.confirm') }}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Upload Invoice
+        </a>
+      </div><!-- /nav-sales -->
+
     </nav>
     <div class="sidebar-footer">
       <div class="user-chip">
@@ -332,20 +354,23 @@ select option{background:var(--surface2)}
   function switchDept(dept) {
     document.getElementById('nav-inv').classList.toggle('visible', dept === 'inv');
     document.getElementById('nav-deal').classList.toggle('visible', dept === 'deal');
+    document.getElementById('nav-sales').classList.toggle('visible', dept === 'sales');
     document.getElementById('dept-inv-btn').classList.toggle('active', dept === 'inv');
     document.getElementById('dept-deal-btn').classList.toggle('active', dept === 'deal');
+    document.getElementById('dept-sales-btn').classList.toggle('active', dept === 'sales');
     document.getElementById('dept-logo-sub').textContent =
-      dept === 'inv' ? 'Inventory & Processing' : 'Deal Scan / Suggestions';
+      dept === 'inv' ? 'Inventory & Processing' : dept === 'deal' ? 'Deal Scan / Suggestions' : 'Sales Tracker';
     try { localStorage.setItem('igamer_dept', dept); } catch(e) {}
   }
   (function() {
-    // Auto-switch to Deal Scan if on a deals page
+    // Auto-switch based on current page
     var isDeal = window.location.pathname.startsWith('/deals') ||
                  window.location.pathname.startsWith('/walmart-deals');
+    var isSales = window.location.pathname.startsWith('/sales');
     var stored;
     try { stored = localStorage.getItem('igamer_dept'); } catch(e) {}
-    var dept = isDeal ? 'deal' : (stored || 'inv');
-    if (dept === 'deal') switchDept('deal');
+    var dept = isSales ? 'sales' : isDeal ? 'deal' : (stored || 'inv');
+    if (dept !== 'inv') switchDept(dept);
   })();
 
   // ── Manage section collapse ───────────────────────────────────────────────
