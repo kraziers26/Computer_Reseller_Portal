@@ -38,6 +38,7 @@
       <div class="form-group">
         <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Client name</label>
         <input type="text" name="client_name" id="clientNameInput" value="{{ parsed.client_name or '' }}" required oninput="checkClientOwner()">
+        {% if parsed.client_name %}<div style="font-size:11px;color:var(--success);margin-top:4px">✓ Parsed from invoice — edit if wrong</div>{% endif %}
       </div>
       <div class="form-group">
         <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Or select existing client</label>
@@ -58,10 +59,12 @@
         <div class="form-group">
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Address</label>
           <input type="text" name="client_address" value="{{ parsed.client_address or '' }}">
+          {% if parsed.client_address %}<div style="font-size:11px;color:var(--success);margin-top:4px">✓ Parsed from invoice — edit if wrong</div>{% endif %}
         </div>
         <div class="form-group">
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Phone</label>
           <input type="text" name="client_phone" value="{{ parsed.client_phone or '' }}">
+          {% if parsed.client_phone %}<div style="font-size:11px;color:var(--success);margin-top:4px">✓ Parsed from invoice — edit if wrong</div>{% endif %}
         </div>
       </div>
       <div class="form-group" style="max-width:260px">
@@ -145,11 +148,7 @@ function checkClientOwner() {
   var pickedExisting = select.value !== '';
   var isOwned = pickedExisting && selectedOption.getAttribute('data-owned') === '1';
 
-  if (pickedExisting) {
-    nameInput.required = false;
-  } else {
-    nameInput.required = true;
-  }
+  nameInput.required = !pickedExisting;
 
   if (!pickedExisting || !isOwned) {
     prompt.style.display = 'block';
