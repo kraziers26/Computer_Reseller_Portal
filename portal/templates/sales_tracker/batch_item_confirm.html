@@ -61,6 +61,14 @@
         {% endfor %}
       </select>
     </div>
+    <div class="form-group">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Person By *</label>
+      <select name="user_id" required style="max-width:260px">
+        {% for u in users %}
+        <option value="{{ u.user_id }}" {{ 'selected' if u.user_id == current_user_id }}>{{ u.username }}</option>
+        {% endfor %}
+      </select>
+    </div>
   </div>
 
   <div class="card" style="margin-top:16px">
