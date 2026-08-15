@@ -6,27 +6,71 @@
   <a href="{{ url_for('sales_tracker.upload') }}" class="btn btn-primary">+ Upload invoice</a>
 </div>
 
+<div class="card" style="margin-bottom:16px">
+  <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:end">
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Salesman</div>
+      <select name="salesman" onchange="this.form.submit()">
+        <option value="">All salesmen</option>
+        {% for s in salesmen %}<option value="{{ s.user_id }}" {{ 'selected' if filters.salesman==s.user_id }}>{{ s.username }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Year</div>
+      <select name="year" onchange="this.form.submit()">
+        <option value="">All years</option>
+        {% for y in years %}<option value="{{ y }}" {{ 'selected' if filters.year==y }}>{{ y }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Month</div>
+      <select name="month" onchange="this.form.submit()">
+        <option value="">All months</option>
+        {% set month_names = ['January','February','March','April','May','June','July','August','September','October','November','December'] %}
+        {% for m in range(1, 13) %}<option value="{{ m }}" {{ 'selected' if filters.month==m }}>{{ month_names[m-1] }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+      <select name="company" onchange="this.form.submit()">
+        <option value="">All companies</option>
+        {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Client</div>
+      <select name="client" onchange="this.form.submit()">
+        <option value="">All clients</option>
+        {% for c in all_clients %}<option value="{{ c.client_id }}" {{ 'selected' if filters.client==c.client_id }}>{{ c.client_name }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if filters.salesman or filters.year or filters.month or filters.company or filters.client %}
+    <div><a href="{{ url_for('sales_tracker.overview') }}" class="btn btn-ghost btn-sm" style="width:100%;text-align:center">Clear filters</a></div>
+    {% endif %}
+  </form>
+</div>
+
 <div class="metrics">
-  <div class="metric"><div class="metric-label">Total revenue</div><div class="metric-value accent">${{ "{:,.2f}".format(kpis.total_revenue) }}</div></div>
-  <div class="metric"><div class="metric-label">Units sold</div><div class="metric-value">{{ units }}</div></div>
-  <div class="metric"><div class="metric-label">Active clients</div><div class="metric-value">{{ client_count }}</div></div>
-  <div class="metric"><div class="metric-label">Avg order value</div><div class="metric-value">${{ "{:,.2f}".format(avg_order) }}</div></div>
+  <div class="metric"><div class="metric-label">Total commissions made</div><div class="metric-value accent">${{ "{:,.2f}".format(kpis.total_commission) }}</div></div>
+  <div class="metric"><div class="metric-label">Number of sales</div><div class="metric-value">{{ kpis.number_of_sales }}</div></div>
+  <div class="metric"><div class="metric-label">Total volume of sales</div><div class="metric-value">${{ "{:,.2f}".format(kpis.total_volume) }}</div></div>
+  <div class="metric"><div class="metric-label">Distinct clients sold to</div><div class="metric-value">{{ kpis.distinct_clients }}</div></div>
 </div>
 
 <div class="card">
-  <div class="card-title">Revenue by month</div>
+  <div class="card-title">Commission by month</div>
   {% if by_month %}
   <div style="display:flex;align-items:flex-end;gap:24px;height:140px;padding-top:10px">
     {% for m in by_month %}
     <div style="display:flex;flex-direction:column;align-items:center;gap:8px;flex:1">
-      <div style="font-size:12px;font-weight:500">${{ "{:,.0f}".format(m.revenue) }}</div>
-      <div style="width:56px;border-radius:4px 4px 0 0;background:var(--accent);height:{{ (m.revenue / max_month_rev * 100)|round(0)|int }}px"></div>
+      <div style="font-size:12px;font-weight:500">${{ "{:,.2f}".format(m.commission or 0) }}</div>
+      <div style="width:56px;border-radius:4px 4px 0 0;background:var(--accent);height:{{ ((m.commission or 0) / max_month_commission * 100)|round(0)|int }}px"></div>
       <div style="font-size:11px;color:var(--muted)">{{ m.month }}</div>
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <p style="color:var(--muted);font-size:13px">No invoices yet.</p>
+  <p style="color:var(--muted);font-size:13px">No invoices match these filters.</p>
   {% endif %}
 </div>
 
@@ -34,14 +78,28 @@
   <div class="card">
     <div class="card-title">Top clients</div>
     <div class="table-wrap"><table>
-      <tr><th>Client</th><th>Orders</th><th>Revenue</th></tr>
+      <tr><th>Client</th><th>Owner (Person By)</th><th>Orders</th><th>Revenue</th></tr>
       {% for c in top_clients %}
-      <tr><td>{{ c.client_name }}</td><td>{{ c.order_count }}</td><td>${{ "{:,.2f}".format(c.total_revenue) }}</td></tr>
+      <tr><td>{{ c.client_name }}</td><td>{{ c.owner_name or "—" }}</td><td>{{ c.order_count }}</td><td>${{ "{:,.2f}".format(c.total_revenue) }}</td></tr>
       {% else %}
-      <tr><td colspan="3" style="color:var(--muted)">No clients yet</td></tr>
+      <tr><td colspan="4" style="color:var(--muted)">No clients yet</td></tr>
       {% endfor %}
     </table></div>
   </div>
+  <div class="card">
+    <div class="card-title">Top salesmen</div>
+    <div class="table-wrap"><table>
+      <tr><th>Person By</th><th>Orders</th><th>Revenue</th><th>Commission</th></tr>
+      {% for s in top_salesmen %}
+      <tr><td>{{ s.username }}</td><td>{{ s.order_count }}</td><td>${{ "{:,.2f}".format(s.total_revenue) }}</td><td>${{ "{:,.2f}".format(s.total_commission) }}</td></tr>
+      {% else %}
+      <tr><td colspan="4" style="color:var(--muted)">No sales yet</td></tr>
+      {% endfor %}
+    </table></div>
+  </div>
+</div>
+
+<div class="form-row" style="margin-top:16px;align-items:start">
   <div class="card">
     <div class="card-title">Top products</div>
     <div class="table-wrap"><table>
@@ -53,27 +111,26 @@
       {% endfor %}
     </table></div>
   </div>
-</div>
-
-{% if mix_rows %}
-<div class="card" style="margin-top:16px">
-  <div class="card-title">Product mix</div>
-  <div style="display:flex;height:20px;border-radius:20px;overflow:hidden;margin-bottom:12px">
-    {% set colors = {'laptop': 'var(--accent)', 'desktop': 'var(--info)', 'aio': 'var(--warning)', 'other': 'var(--hint)'} %}
-    {% for r in mix_rows %}
-    <div style="width:{{ (r.units / mix_total * 100)|round(1) }}%;background:{{ colors.get(r.product_type, 'var(--hint)') }}"></div>
-    {% endfor %}
+  {% if mix_rows %}
+  <div class="card">
+    <div class="card-title">Product mix</div>
+    <div style="display:flex;height:20px;border-radius:20px;overflow:hidden;margin-bottom:12px">
+      {% set colors = {'laptop': 'var(--accent)', 'desktop': 'var(--info)', 'aio': 'var(--warning)', 'other': 'var(--hint)'} %}
+      {% for r in mix_rows %}
+      <div style="width:{{ (r.units / mix_total * 100)|round(1) }}%;background:{{ colors.get(r.product_type, 'var(--hint)') }}"></div>
+      {% endfor %}
+    </div>
+    <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);flex-wrap:wrap">
+      {% for r in mix_rows %}
+      <span style="display:inline-flex;align-items:center;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ colors.get(r.product_type, 'var(--hint)') }}"></span>
+        {{ r.product_type|capitalize }} — {{ (r.units / mix_total * 100)|round(0)|int }}%
+      </span>
+      {% endfor %}
+    </div>
   </div>
-  <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);flex-wrap:wrap">
-    {% for r in mix_rows %}
-    <span style="display:inline-flex;align-items:center;gap:6px">
-      <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:{{ colors.get(r.product_type, 'var(--hint)') }}"></span>
-      {{ r.product_type|capitalize }} — {{ (r.units / mix_total * 100)|round(0)|int }}%
-    </span>
-    {% endfor %}
-  </div>
+  {% endif %}
 </div>
-{% endif %}
 
 <div class="card" style="margin-top:16px">
   <div class="card-title">
@@ -81,7 +138,7 @@
     <a href="{{ url_for('sales_tracker.invoices') }}" style="font-size:12px;color:var(--accent2);text-decoration:none;margin-left:auto">View all →</a>
   </div>
   <div class="table-wrap"><table>
-    <tr><th>Invoice</th><th>Date</th><th>Client</th><th>Total</th><th>Commission</th><th>Status</th></tr>
+    <tr><th>Invoice</th><th>Date</th><th>Client</th><th>Total</th><th>Commission</th><th>Person By</th><th>Status</th></tr>
     {% for inv in recent_invoices %}
     <tr>
       <td class="mono">{{ inv.invoice_number }}</td>
@@ -89,10 +146,11 @@
       <td>{{ inv.client_name }}</td>
       <td>${{ "{:,.2f}".format(inv.total) }}</td>
       <td>{{ "${:,.2f}".format(inv.commission_amount) if inv.commission_amount is not none else "—" }}</td>
+      <td>{{ inv.submitted_by_name or "—" }}</td>
       <td>{% if inv.version_count > 1 %}<span class="badge badge-warning">{{ inv.version_count }} uploads · using final</span>{% else %}<span class="badge badge-muted">Reviewed</span>{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="6" style="color:var(--muted)">No invoices uploaded yet</td></tr>
+    <tr><td colspan="7" style="color:var(--muted)">No invoices match these filters</td></tr>
     {% endfor %}
   </table></div>
 </div>
