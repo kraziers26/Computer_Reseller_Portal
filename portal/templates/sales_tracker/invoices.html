@@ -8,7 +8,7 @@
 
 <div class="card">
   <div class="table-wrap"><table>
-    <tr><th>Invoice</th><th>Date</th><th>Client</th><th>Total</th><th>Company</th><th>Commission</th><th>Status</th><th></th></tr>
+    <tr><th>Invoice</th><th>Date</th><th>Client</th><th>Total</th><th>Company</th><th>Commission</th><th>Person By</th><th>Status</th><th></th></tr>
     {% for inv in invoices %}
     <tr>
       <td class="mono">{{ inv.invoice_number }}</td>
@@ -28,6 +28,7 @@
                  style="width:100px" onchange="this.form.submit()">
         </form>
       </td>
+      <td>{{ inv.submitted_by_name or "—" }}</td>
       <td>
         {% if inv.version_count > 1 %}
         <span class="badge badge-warning">{{ inv.version_count }} uploads · using final</span>
@@ -35,10 +36,18 @@
         <span class="badge badge-muted">Reviewed</span>
         {% endif %}
       </td>
-      <td></td>
+      <td style="white-space:nowrap">
+        <a href="{{ url_for('sales_tracker.edit_invoice', invoice_id=inv.sales_invoice_id) }}" class="btn btn-ghost btn-sm">Edit</a>
+        <form method="POST" action="{{ url_for('sales_tracker.delete_invoice', invoice_id=inv.sales_invoice_id) }}"
+              style="display:inline"
+              onsubmit="return confirm('Delete invoice #{{ inv.invoice_number }}? This removes all {{ inv.version_count }} stored version{{ 's' if inv.version_count != 1 }} of it and cannot be undone.')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+        </form>
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="8" style="color:var(--muted)">No invoices uploaded yet</td></tr>
+    <tr><td colspan="9" style="color:var(--muted)">No invoices uploaded yet</td></tr>
     {% endfor %}
   </table></div>
 </div>
