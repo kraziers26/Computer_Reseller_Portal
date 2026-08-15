@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Invoices — Sales Tracker{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Sales invoices</h1><p>{{ invoices|length }} invoice{{ 's' if invoices|length != 1 }}</p></div>
+  <a href="{{ url_for('sales_tracker.upload') }}" class="btn btn-primary">+ Upload invoice</a>
+</div>
+
+<div class="card">
+  <div class="table-wrap"><table>
+    <tr><th>Invoice</th><th>Date</th><th>Client</th><th>Total</th><th>Company</th><th>Commission</th><th>Status</th><th></th></tr>
+    {% for inv in invoices %}
+    <tr>
+      <td class="mono">{{ inv.invoice_number }}</td>
+      <td>{{ inv.invoice_date.strftime('%-m/%-d/%Y') }}</td>
+      <td>{{ inv.client_name }}</td>
+      <td>${{ "{:,.2f}".format(inv.total) }}</td>
+      <td colspan="2">
+        <form method="POST" action="{{ url_for('sales_tracker.update_commission', invoice_id=inv.sales_invoice_id) }}" style="display:flex;gap:6px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <select name="company_id" onchange="this.form.submit()" style="width:130px">
+            <option value="">Company —</option>
+            {% for c in companies %}
+            <option value="{{ c.company_id }}" {{ 'selected' if inv.company_id==c.company_id }}>{{ c.company_name }}</option>
+            {% endfor %}
+          </select>
+          <input type="number" step="0.01" name="commission_amount" value="{{ inv.commission_amount }}"
+                 style="width:100px" onchange="this.form.submit()">
+        </form>
+      </td>
+      <td>
+        {% if inv.version_count > 1 %}
+        <span class="badge badge-warning">{{ inv.version_count }} uploads · using final</span>
+        {% else %}
+        <span class="badge badge-muted">Reviewed</span>
+        {% endif %}
+      </td>
+      <td></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" style="color:var(--muted)">No invoices uploaded yet</td></tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}
