@@ -193,7 +193,9 @@ def overview():
             ORDER BY sort_key
         """, params)
         by_month = cur.fetchall()
-        max_month_commission = max([float(r['commission'] or 0) for r in by_month], default=1) or 1
+        for r in by_month:
+            r['commission'] = float(r['commission'] or 0)
+        max_month_commission = max([r['commission'] for r in by_month], default=1) or 1
 
         # Top clients, with account owner ("whose client is it")
         cur.execute(f"""
