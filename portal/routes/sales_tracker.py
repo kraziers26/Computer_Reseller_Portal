@@ -34,6 +34,24 @@ def _run_parser(pdf_path):
     return parse_sales_invoice(pdf_path)
 
 
+def _resolve_client(cur, client_name=None, client_id=None):
+    """Looks up a client by id (preferred) or case-insensitive name.
+    Returns the row (including account_owner_user_id) or None."""
+    if client_id:
+        cur.execute("""
+            SELECT client_id, client_name, address, phone, account_owner_user_id
+            FROM dim_sales_clients WHERE client_id = %s
+        """, (client_id,))
+    elif client_name:
+        cur.execute("""
+            SELECT client_id, client_name, address, phone, account_owner_user_id
+            FROM dim_sales_clients WHERE LOWER(client_name) = LOWER(%s)
+        """, (client_name,))
+    else:
+        return None
+    return cur.fetchone()
+
+
 def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
     """Shared save logic for both the single-file confirm flow and batch
     item confirm — resolves/creates the client, supersedes the previous
@@ -46,19 +64,36 @@ def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
     total = form.get('total', type=float)
     invoice_date = form.get('invoice_date')
     submitted_by = form.get('user_id', type=int) or current_user.id
+    client_owner_id = form.get('client_owner_id', type=int)
+    client_address = form.get('client_address', '').strip() or None
+    client_phone = form.get('client_phone', '').strip() or None
 
     if not client_id:
-        cur.execute("SELECT client_id FROM dim_sales_clients WHERE LOWER(client_name) = LOWER(%s)",
-                    (client_name,))
-        row = cur.fetchone()
-        if row:
-            client_id = row['client_id']
+        matched = _resolve_client(cur, client_name=client_name)
+        if matched:
+            client_id = matched['client_id']
+            # Only fill in the owner if it was actually still unassigned —
+            # guards against a stale resubmit clobbering an assignment made
+            # by someone else in the meantime.
+            if matched['account_owner_user_id'] is None and client_owner_id:
+                cur.execute("""
+                    UPDATE dim_sales_clients SET account_owner_user_id = %s
+                    WHERE client_id = %s AND account_owner_user_id IS NULL
+                """, (client_owner_id, client_id))
         else:
             cur.execute("""
-                INSERT INTO dim_sales_clients (client_name, address, phone)
-                VALUES (%s, %s, %s) RETURNING client_id
-            """, (client_name, parsed.get('client_address'), parsed.get('client_phone')))
+                INSERT INTO dim_sales_clients (client_name, address, phone, account_owner_user_id)
+                VALUES (%s, %s, %s, %s) RETURNING client_id
+            """, (client_name, client_address or parsed.get('client_address'),
+                  client_phone or parsed.get('client_phone'), client_owner_id))
             client_id = cur.fetchone()['client_id']
+    else:
+        matched = _resolve_client(cur, client_id=client_id)
+        if matched and matched['account_owner_user_id'] is None and client_owner_id:
+            cur.execute("""
+                UPDATE dim_sales_clients SET account_owner_user_id = %s
+                WHERE client_id = %s AND account_owner_user_id IS NULL
+            """, (client_owner_id, client_id))
 
     if dup_invoice:
         cur.execute("""
@@ -535,7 +570,10 @@ def confirm():
     with db_cursor() as (cur, _):
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active = TRUE ORDER BY company_name")
         companies = cur.fetchall()
-        cur.execute("SELECT client_id, client_name FROM dim_sales_clients ORDER BY client_name")
+        cur.execute("""
+            SELECT client_id, client_name, account_owner_user_id
+            FROM dim_sales_clients ORDER BY client_name
+        """)
         existing_clients = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
         users = cur.fetchall()
@@ -545,9 +583,14 @@ def confirm():
         """, (parsed['invoice_number'],))
         dup_invoice = cur.fetchone()
 
+        submitted_client_name = request.form.get('client_name', parsed.get('client_name', '')).strip()
+        submitted_client_id = request.form.get('client_id', type=int)
+        matched_client = _resolve_client(cur, client_name=submitted_client_name, client_id=submitted_client_id)
+        needs_owner = (matched_client is None) or (matched_client['account_owner_user_id'] is None)
+
     ctx = dict(parsed=parsed, companies=companies, existing_clients=existing_clients,
                users=users, current_user_id=current_user.id,
-               dup_invoice=dup_invoice,
+               dup_invoice=dup_invoice, matched_client=matched_client, needs_owner=needs_owner,
                default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
                iso_date=_to_iso_date(parsed.get('invoice_date')),
                form_action=url_for('sales_tracker.confirm'), batch=None)
@@ -559,6 +602,11 @@ def confirm():
                   f"(uploaded {dup_invoice['uploaded_at']:%b %d, %Y}, total "
                   f"${dup_invoice['total']:,.2f}). Review the differences below and "
                   f"confirm to replace it.", 'error')
+            return render_template('sales_tracker/confirm.html', **ctx)
+
+        if needs_owner and not request.form.get('client_owner_id', type=int):
+            flash('This client needs an owner assigned before the invoice can be saved '
+                  '— fill in the highlighted section below.', 'error')
             return render_template('sales_tracker/confirm.html', **ctx)
 
         tmp_path = parsed.get('_tmp_path')
@@ -618,7 +666,10 @@ def batch_item_confirm(draft_id, item_id):
 
         cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active = TRUE ORDER BY company_name")
         companies = cur.fetchall()
-        cur.execute("SELECT client_id, client_name FROM dim_sales_clients ORDER BY client_name")
+        cur.execute("""
+            SELECT client_id, client_name, account_owner_user_id
+            FROM dim_sales_clients ORDER BY client_name
+        """)
         existing_clients = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
         users = cur.fetchall()
@@ -629,9 +680,20 @@ def batch_item_confirm(draft_id, item_id):
         """, (draft_id,))
         remaining = cur.fetchone()['n']
 
-    parsed = item['invoice_data']
-    if isinstance(parsed, str):
-        parsed = json.loads(parsed)
+        parsed = item['invoice_data']
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+
+        submitted_client_name = request.form.get('client_name', parsed.get('client_name', '')).strip()
+        submitted_client_id = request.form.get('client_id', type=int)
+        matched_client = _resolve_client(cur, client_name=submitted_client_name, client_id=submitted_client_id)
+        needs_owner = (matched_client is None) or (matched_client['account_owner_user_id'] is None)
+
+    render_ctx = dict(draft=draft, item=item, parsed=parsed, companies=companies,
+        existing_clients=existing_clients, users=users, current_user_id=current_user.id,
+        matched_client=matched_client, needs_owner=needs_owner,
+        default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
+        iso_date=_to_iso_date(parsed.get('invoice_date')), remaining=remaining)
 
     if request.method == 'POST':
         action = request.form.get('action')
@@ -656,11 +718,13 @@ def batch_item_confirm(draft_id, item_id):
             flash(f"Invoice #{parsed['invoice_number']} already exists — "
                   f"confirm to replace it.", 'error')
             return render_template('sales_tracker/batch_item_confirm.html',
-                draft=draft, item=item, parsed=parsed, companies=companies,
-                existing_clients=existing_clients, users=users, current_user_id=current_user.id,
-                dup_invoice=dup_invoice,
-                default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
-                iso_date=_to_iso_date(parsed.get('invoice_date')), remaining=remaining)
+                dup_invoice=dup_invoice, **render_ctx)
+
+        if needs_owner and not request.form.get('client_owner_id', type=int):
+            flash('This client needs an owner assigned before the invoice can be saved '
+                  '— fill in the highlighted section below.', 'error')
+            return render_template('sales_tracker/batch_item_confirm.html',
+                dup_invoice=None, **render_ctx)
 
         with db_cursor() as (cur, conn):
             new_id = _commit_sales_invoice(cur, parsed, request.form, dup_invoice, item['filename'])
@@ -691,12 +755,7 @@ def batch_item_confirm(draft_id, item_id):
 
         return redirect(url_for('sales_tracker.batch_review', draft_id=draft_id))
 
-    return render_template('sales_tracker/batch_item_confirm.html',
-        draft=draft, item=item, parsed=parsed, companies=companies,
-        existing_clients=existing_clients, users=users, current_user_id=current_user.id,
-        dup_invoice=None,
-        default_commission=round((parsed.get('computed_total') or 0) * 0.01, 2),
-        iso_date=_to_iso_date(parsed.get('invoice_date')), remaining=remaining)
+    return render_template('sales_tracker/batch_item_confirm.html', dup_invoice=None, **render_ctx)
 
 
 @sales_tracker_bp.route('/upload/batch/<draft_id>/preview/<item_id>')
