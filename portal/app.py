@@ -27,6 +27,7 @@ def create_app():
     from .routes.invoicing  import invoicing_bp
     from .routes.deals         import deals_bp
     from .routes.walmart_deals import walmart_deals_bp
+    from .routes.sales_tracker import sales_tracker_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(upload_bp)
@@ -36,6 +37,7 @@ def create_app():
     app.register_blueprint(invoicing_bp)
     app.register_blueprint(deals_bp)
     app.register_blueprint(walmart_deals_bp)
+    app.register_blueprint(sales_tracker_bp)
 
     # ── Security (must be after blueprints so CSRF & Talisman cover all routes) ──
     from .security import init_security
