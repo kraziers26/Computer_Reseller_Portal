@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Clients — Sales Tracker{% endblock %}
 {% block content %}
-<div class="page-header">
-  <h1>Sales clients</h1>
-  <p>{{ clients|length }} client{{ 's' if clients|length != 1 }}</p>
+<div class="page-header page-header-row">
+  <div><h1>Sales clients</h1><p>{{ clients|length }} client{{ 's' if clients|length != 1 }}</p></div>
+  <a href="{{ url_for('sales_tracker.new_client') }}" class="btn btn-primary">+ Add client</a>
 </div>
 
 <div class="card">
