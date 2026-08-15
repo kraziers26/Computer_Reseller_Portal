@@ -104,75 +104,133 @@ def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
 @login_required
 @require_role('contributor')
 def overview():
+    f_salesman = request.args.get('salesman', type=int)
+    f_year     = request.args.get('year', type=int)
+    f_month    = request.args.get('month', type=int)
+    f_company  = request.args.get('company', type=int)
+    f_client   = request.args.get('client', type=int)
+
+    conditions = ["i.is_superseded = FALSE"]
+    params = []
+    if f_salesman:
+        conditions.append("i.submitted_by = %s"); params.append(f_salesman)
+    if f_year:
+        conditions.append("EXTRACT(YEAR FROM i.invoice_date) = %s"); params.append(f_year)
+    if f_month:
+        conditions.append("EXTRACT(MONTH FROM i.invoice_date) = %s"); params.append(f_month)
+    if f_company:
+        conditions.append("i.company_id = %s"); params.append(f_company)
+    if f_client:
+        conditions.append("i.client_id = %s"); params.append(f_client)
+    where = " AND ".join(conditions)
+
     with db_cursor() as (cur, _):
+        # Filter option lists
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
+        salesmen = cur.fetchall()
         cur.execute("""
-            SELECT COALESCE(SUM(total), 0)              AS total_revenue,
-                   COUNT(*)                              AS invoice_count,
-                   COALESCE(SUM(commission_amount), 0)   AS total_commission
-            FROM sales_invoices WHERE is_superseded = FALSE
+            SELECT DISTINCT EXTRACT(YEAR FROM invoice_date)::int AS year
+            FROM sales_invoices WHERE is_superseded = FALSE ORDER BY year DESC
         """)
+        years = [r['year'] for r in cur.fetchall()]
+        cur.execute("SELECT company_id, company_name FROM dim_companies WHERE is_active = TRUE ORDER BY company_name")
+        companies = cur.fetchall()
+        cur.execute("SELECT client_id, client_name FROM dim_sales_clients ORDER BY client_name")
+        all_clients = cur.fetchall()
+
+        # KPIs
+        cur.execute(f"""
+            SELECT COALESCE(SUM(i.commission_amount), 0) AS total_commission,
+                   COUNT(*)                              AS number_of_sales,
+                   COALESCE(SUM(i.total), 0)              AS total_volume,
+                   COUNT(DISTINCT i.client_id)            AS distinct_clients
+            FROM sales_invoices i WHERE {where}
+        """, params)
         kpis = cur.fetchone()
 
-        cur.execute("""
-            SELECT COALESCE(SUM(li.quantity), 0) AS units
-            FROM sales_invoice_items li
-            JOIN sales_invoices i ON li.sales_invoice_id = i.sales_invoice_id
-            WHERE i.is_superseded = FALSE
-        """)
-        units = cur.fetchone()['units']
-
-        cur.execute("SELECT COUNT(*) AS n FROM dim_sales_clients")
-        client_count = cur.fetchone()['n']
-
-        cur.execute("""
-            SELECT TO_CHAR(invoice_date, 'Mon YYYY') AS month,
-                   SUM(total) AS revenue,
-                   MIN(DATE_TRUNC('month', invoice_date)) AS sort_key
-            FROM sales_invoices WHERE is_superseded = FALSE
-            GROUP BY TO_CHAR(invoice_date, 'Mon YYYY')
+        # Commission by month
+        cur.execute(f"""
+            SELECT TO_CHAR(i.invoice_date, 'Mon YYYY') AS month,
+                   SUM(i.commission_amount) AS commission,
+                   MIN(DATE_TRUNC('month', i.invoice_date)) AS sort_key
+            FROM sales_invoices i WHERE {where}
+            GROUP BY TO_CHAR(i.invoice_date, 'Mon YYYY')
             ORDER BY sort_key
-        """)
+        """, params)
         by_month = cur.fetchall()
-        max_month_rev = max([float(r['revenue']) for r in by_month], default=1) or 1
+        max_month_commission = max([float(r['commission'] or 0) for r in by_month], default=1) or 1
 
-        cur.execute("SELECT * FROM v_sales_by_client ORDER BY total_revenue DESC LIMIT 5")
+        # Top clients, with account owner ("whose client is it")
+        cur.execute(f"""
+            SELECT c.client_id, c.client_name, u.username AS owner_name,
+                   COUNT(i.sales_invoice_id) AS order_count,
+                   SUM(i.total) AS total_revenue
+            FROM sales_invoices i
+            JOIN dim_sales_clients c ON i.client_id = c.client_id
+            LEFT JOIN dim_users u ON c.account_owner_user_id = u.user_id
+            WHERE {where}
+            GROUP BY c.client_id, c.client_name, u.username
+            ORDER BY total_revenue DESC LIMIT 5
+        """, params)
         top_clients = cur.fetchall()
 
-        cur.execute("SELECT * FROM v_sales_by_product ORDER BY total_revenue DESC LIMIT 5")
+        # Top salesmen (Person By)
+        cur.execute(f"""
+            SELECT u.user_id, u.username,
+                   COUNT(i.sales_invoice_id) AS order_count,
+                   COALESCE(SUM(i.total), 0) AS total_revenue,
+                   COALESCE(SUM(i.commission_amount), 0) AS total_commission
+            FROM sales_invoices i
+            JOIN dim_users u ON i.submitted_by = u.user_id
+            WHERE {where}
+            GROUP BY u.user_id, u.username
+            ORDER BY total_commission DESC LIMIT 5
+        """, params)
+        top_salesmen = cur.fetchall()
+
+        cur.execute(f"""
+            SELECT li.item_code, MAX(li.description) AS description,
+                   MAX(li.product_type) AS product_type,
+                   SUM(li.quantity) AS units_sold, SUM(li.amount) AS total_revenue
+            FROM sales_invoice_items li
+            JOIN sales_invoices i ON li.sales_invoice_id = i.sales_invoice_id
+            WHERE {where} AND li.is_customs_only = FALSE
+            GROUP BY li.item_code ORDER BY total_revenue DESC LIMIT 5
+        """, params)
         top_products = cur.fetchall()
 
-        cur.execute("""
+        cur.execute(f"""
             SELECT COALESCE(li.product_type, 'other') AS product_type,
                    SUM(li.quantity) AS units
             FROM sales_invoice_items li
             JOIN sales_invoices i ON li.sales_invoice_id = i.sales_invoice_id
-            WHERE i.is_superseded = FALSE AND li.is_customs_only = FALSE
+            WHERE {where} AND li.is_customs_only = FALSE
             GROUP BY COALESCE(li.product_type, 'other')
             ORDER BY units DESC
-        """)
+        """, params)
         mix_rows = cur.fetchall()
         mix_total = sum(r['units'] for r in mix_rows) or 1
 
-        cur.execute("""
+        cur.execute(f"""
             SELECT i.sales_invoice_id, i.invoice_number, i.invoice_date, i.total,
-                   i.commission_amount, c.client_name,
+                   i.commission_amount, c.client_name, u.username AS submitted_by_name,
                    (SELECT COUNT(*) FROM sales_invoices h
                     WHERE h.invoice_number = i.invoice_number) AS version_count
             FROM sales_invoices i
             JOIN dim_sales_clients c ON i.client_id = c.client_id
-            WHERE i.is_superseded = FALSE
+            LEFT JOIN dim_users u ON i.submitted_by = u.user_id
+            WHERE {where}
             ORDER BY i.uploaded_at DESC LIMIT 10
-        """)
+        """, params)
         recent_invoices = cur.fetchall()
 
-    avg_order = (float(kpis['total_revenue']) / kpis['invoice_count']) if kpis['invoice_count'] else 0
-
     return render_template('sales_tracker/overview.html',
-        kpis=kpis, units=units, client_count=client_count,
-        by_month=by_month, max_month_rev=max_month_rev,
-        top_clients=top_clients, top_products=top_products,
-        mix_rows=mix_rows, mix_total=mix_total,
-        recent_invoices=recent_invoices, avg_order=avg_order)
+        kpis=kpis, by_month=by_month, max_month_commission=max_month_commission,
+        top_clients=top_clients, top_salesmen=top_salesmen, top_products=top_products,
+        mix_rows=mix_rows, mix_total=mix_total, recent_invoices=recent_invoices,
+        salesmen=salesmen, years=years, companies=companies, all_clients=all_clients,
+        filters={'salesman': f_salesman, 'year': f_year, 'month': f_month,
+                 'company': f_company, 'client': f_client})
 
 
 # ── Invoices ─────────────────────────────────────────────────────────────────
@@ -314,50 +372,71 @@ def clients():
         # LEFT JOIN (not the v_sales_by_client view, which inner-joins and
         # would hide newly-added clients with zero orders yet)
         cur.execute("""
-            SELECT c.client_id, c.client_name,
+            SELECT c.client_id, c.client_name, c.account_owner_user_id,
+                   u.username AS owner_name,
                    COUNT(i.sales_invoice_id) FILTER (WHERE i.is_superseded = FALSE) AS order_count,
                    COALESCE(SUM(i.total) FILTER (WHERE i.is_superseded = FALSE), 0) AS total_revenue,
                    COALESCE(SUM(i.commission_amount) FILTER (WHERE i.is_superseded = FALSE), 0) AS total_commission,
                    MAX(i.invoice_date) FILTER (WHERE i.is_superseded = FALSE) AS last_order_date
             FROM dim_sales_clients c
+            LEFT JOIN dim_users u ON c.account_owner_user_id = u.user_id
             LEFT JOIN sales_invoices i ON i.client_id = c.client_id
-            GROUP BY c.client_id, c.client_name
+            GROUP BY c.client_id, c.client_name, c.account_owner_user_id, u.username
             ORDER BY total_revenue DESC, c.client_name
         """)
         client_rows = cur.fetchall()
-    return render_template('sales_tracker/clients.html', clients=client_rows)
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
+        salesmen = cur.fetchall()
+    return render_template('sales_tracker/clients.html', clients=client_rows, salesmen=salesmen)
+
+
+@sales_tracker_bp.route('/clients/<int:client_id>/owner', methods=['POST'])
+@login_required
+@require_role('contributor')
+def update_client_owner(client_id):
+    owner_id = request.form.get('account_owner_user_id', type=int)
+    with db_cursor() as (cur, _):
+        cur.execute("UPDATE dim_sales_clients SET account_owner_user_id = %s WHERE client_id = %s",
+                    (owner_id, client_id))
+    flash('Client owner updated.', 'success')
+    return redirect(url_for('sales_tracker.clients'))
 
 
 @sales_tracker_bp.route('/clients/new', methods=['GET', 'POST'])
 @login_required
 @require_role('contributor')
 def new_client():
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT user_id, username FROM dim_users WHERE is_active = TRUE ORDER BY username")
+        salesmen = cur.fetchall()
+
     if request.method == 'POST':
         client_name = request.form.get('client_name', '').strip()
         address = request.form.get('address', '').strip() or None
         phone = request.form.get('phone', '').strip() or None
+        owner_id = request.form.get('account_owner_user_id', type=int)
 
         if not client_name:
             flash('Client name is required.', 'error')
-            return render_template('sales_tracker/new_client.html')
+            return render_template('sales_tracker/new_client.html', salesmen=salesmen)
 
         with db_cursor() as (cur, conn):
             cur.execute("SELECT client_id FROM dim_sales_clients WHERE LOWER(client_name) = LOWER(%s)",
                         (client_name,))
             if cur.fetchone():
                 flash(f'A client named "{client_name}" already exists.', 'error')
-                return render_template('sales_tracker/new_client.html',
+                return render_template('sales_tracker/new_client.html', salesmen=salesmen,
                     client_name=client_name, address=address, phone=phone)
 
             cur.execute("""
-                INSERT INTO dim_sales_clients (client_name, address, phone)
-                VALUES (%s, %s, %s)
-            """, (client_name, address, phone))
+                INSERT INTO dim_sales_clients (client_name, address, phone, account_owner_user_id)
+                VALUES (%s, %s, %s, %s)
+            """, (client_name, address, phone, owner_id))
 
         flash(f'Client "{client_name}" added.', 'success')
         return redirect(url_for('sales_tracker.clients'))
 
-    return render_template('sales_tracker/new_client.html')
+    return render_template('sales_tracker/new_client.html', salesmen=salesmen)
 
 
 # ── Upload (single file → session flow, multiple files → batch draft) ────────
