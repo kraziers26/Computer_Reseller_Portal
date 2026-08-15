@@ -559,6 +559,19 @@ def upload():
     return render_template('sales_tracker/upload.html', active_draft=active_draft)
 
 
+@sales_tracker_bp.route('/upload/preview-pdf')
+@login_required
+@require_role('contributor')
+def serve_pdf():
+    if 'pending_sales_invoice' not in session:
+        return 'No pending invoice', 404
+    data = json.loads(session['pending_sales_invoice'])
+    tmp_path = data.get('_tmp_path', '')
+    if tmp_path and os.path.exists(tmp_path):
+        return send_file(tmp_path, mimetype='application/pdf')
+    return 'PDF not found', 404
+
+
 @sales_tracker_bp.route('/upload/confirm', methods=['GET', 'POST'])
 @login_required
 @require_role('contributor')
