@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Batch Summary — Sales Tracker{% endblock %}
+{% block content %}
+<div class="page-header page-header-row">
+  <div><h1>Batch complete</h1><p>{{ draft.completed_count }}/{{ draft.total_files }} invoices saved</p></div>
+  <a href="{{ url_for('sales_tracker.upload') }}" class="btn btn-primary">+ Upload another batch</a>
+</div>
+
+<div class="card">
+  <div class="table-wrap"><table>
+    <tr><th>File</th><th>Invoice #</th><th>Total</th><th>Status</th></tr>
+    {% for item in items %}
+    <tr>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px">{{ item.filename }}</td>
+      <td class="mono">{{ item.saved_invoice_number or '—' }}</td>
+      <td>{% if item.saved_total %}${{ "{:,.2f}".format(item.saved_total) }}{% else %}—{% endif %}</td>
+      <td>
+        {% if item.parse_status == 'submitted' %}<span class="badge badge-success">Saved</span>
+        {% elif item.parse_status == 'skipped' %}<span class="badge badge-muted">Skipped</span>
+        {% elif item.parse_status == 'failed' %}<span class="badge badge-danger">Failed</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}
