@@ -52,7 +52,7 @@ def _resolve_client(cur, client_name=None, client_id=None):
     return cur.fetchone()
 
 
-def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
+def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename, pdf_bytes=None):
     """Shared save logic for both the single-file confirm flow and batch
     item confirm — resolves/creates the client, supersedes the previous
     invoice version if replacing, and inserts the invoice + line items.
@@ -105,10 +105,10 @@ def _commit_sales_invoice(cur, parsed, form, dup_invoice, source_filename):
     cur.execute("""
         INSERT INTO sales_invoices
             (sales_invoice_id, invoice_number, invoice_date, client_id,
-             total, commission_amount, company_id, source_file_path, submitted_by)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             total, commission_amount, company_id, source_file_path, submitted_by, pdf_bytes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (new_id, parsed['invoice_number'], invoice_date, client_id,
-          total, commission_amount, company_id, source_filename, submitted_by))
+          total, commission_amount, company_id, source_filename, submitted_by, pdf_bytes))
 
     descs   = form.getlist('item_description[]')
     codes   = form.getlist('item_code[]')
@@ -335,7 +335,12 @@ def delete_invoice(invoice_id):
 @require_role('contributor')
 def edit_invoice(invoice_id):
     with db_cursor() as (cur, _):
-        cur.execute("SELECT * FROM sales_invoices WHERE sales_invoice_id = %s", (str(invoice_id),))
+        cur.execute("""
+            SELECT sales_invoice_id, invoice_number, invoice_date, client_id, total,
+                   commission_amount, company_id, submitted_by, source_file_path,
+                   (pdf_bytes IS NOT NULL) AS has_pdf
+            FROM sales_invoices WHERE sales_invoice_id = %s
+        """, (str(invoice_id),))
         invoice = cur.fetchone()
         if not invoice:
             flash('Invoice not found.', 'error')
@@ -397,6 +402,19 @@ def edit_invoice(invoice_id):
     return render_template('sales_tracker/edit.html', invoice=invoice, items=items,
         companies=companies, existing_clients=existing_clients, users=users,
         iso_date=invoice['invoice_date'].isoformat() if invoice['invoice_date'] else '')
+
+
+@sales_tracker_bp.route('/invoices/<uuid:invoice_id>/pdf')
+@login_required
+@require_role('contributor')
+def serve_invoice_pdf(invoice_id):
+    import io
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT pdf_bytes FROM sales_invoices WHERE sales_invoice_id = %s", (str(invoice_id),))
+        row = cur.fetchone()
+    if not row or not row['pdf_bytes']:
+        return 'No PDF stored for this invoice', 404
+    return send_file(io.BytesIO(bytes(row['pdf_bytes'])), mimetype='application/pdf')
 
 
 # ── Clients ──────────────────────────────────────────────────────────────────
@@ -625,8 +643,14 @@ def confirm():
             return render_template('sales_tracker/confirm.html', **ctx)
 
         tmp_path = parsed.get('_tmp_path')
+        pdf_bytes = None
+        if tmp_path and os.path.exists(tmp_path):
+            with open(tmp_path, 'rb') as f:
+                pdf_bytes = f.read()
+
         with db_cursor() as (cur, conn):
-            _commit_sales_invoice(cur, parsed, request.form, dup_invoice, parsed.get('_source_filename'))
+            _commit_sales_invoice(cur, parsed, request.form, dup_invoice,
+                                   parsed.get('_source_filename'), pdf_bytes=pdf_bytes)
 
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -742,7 +766,8 @@ def batch_item_confirm(draft_id, item_id):
                 dup_invoice=None, **render_ctx)
 
         with db_cursor() as (cur, conn):
-            new_id = _commit_sales_invoice(cur, parsed, request.form, dup_invoice, item['filename'])
+            new_id = _commit_sales_invoice(cur, parsed, request.form, dup_invoice, item['filename'],
+                                            pdf_bytes=item.get('pdf_bytes'))
             cur.execute("""
                 UPDATE sales_batch_draft_items
                 SET parse_status = 'submitted', sales_invoice_id = %s, submitted_at = NOW()
