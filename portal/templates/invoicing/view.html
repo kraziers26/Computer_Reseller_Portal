@@ -107,25 +107,25 @@
       {% set item = line.item %}
       <tr style="border-bottom:0.5px solid var(--border);{% if item.returned %}opacity:.45{% endif %}" id="item-row-{{ item.item_id }}">
         <td style="padding:10px 10px">
-          <div class="editable-desc" data-item-id="{{ item.item_id }}"
-               contenteditable="true" spellcheck="false"
-               style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px -4px;
-                      transition:background .15s;line-height:1.4"
-               onmouseenter="this.style.background='var(--surface2)'"
-               onmouseleave="if(document.activeElement!==this)this.style.background=''"
-               onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
-               onblur="saveDesc(this)"
-               >{{ item.item_description }}</div>
-          <div class="editable-sku" data-item-id="{{ item.item_id }}"
-               contenteditable="true" spellcheck="false"
-               style="outline:none;cursor:text;border-radius:3px;padding:1px 4px;margin:1px -4px 0;
-                      font-size:11px;color:var(--muted);font-family:var(--mono);transition:background .15s"
-               onmouseenter="this.style.background='var(--surface2)'"
-               onmouseleave="if(document.activeElement!==this)this.style.background=''"
-               onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
-               onblur="saveSku(this)"
-               data-placeholder="Model / SKU"
-               >{{ item.sku or '' }}</div>
+          <div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0;line-height:1.4">
+            <div class="editable-desc" data-item-id="{{ item.item_id }}"
+                 contenteditable="true" spellcheck="false"
+                 style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px 0 -2px -4px"
+                 onmouseenter="this.style.background='var(--surface2)'"
+                 onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                 onblur="saveDesc(this)"
+                 >{{ item.item_description }}</div><span style="color:var(--muted);white-space:nowrap;padding:2px 2px">&nbsp;- Model/SKU:&nbsp;</span><div class="editable-sku" data-item-id="{{ item.item_id }}"
+                 contenteditable="true" spellcheck="false"
+                 style="outline:none;cursor:text;border-radius:3px;padding:2px 4px;margin:-2px -4px -2px 0;
+                        color:var(--muted);font-family:var(--mono);font-size:12px"
+                 onmouseenter="this.style.background='var(--surface2)'"
+                 onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                 onblur="saveSku(this)"
+                 data-placeholder="add model / SKU"
+                 >{{ item.sku or '' }}</div>
+          </div>
         </td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">
           $<span class="line-editable" data-field="unit_price" data-item-id="{{ item.item_id }}"
@@ -170,15 +170,25 @@
           <div style="display:flex;align-items:center;gap:6px">
             <button type="button" onclick="toggleGroupPanel('{{ line.group_id }}')" id="group-toggle-{{ line.group_id }}"
                     style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:11px;padding:0;line-height:1;flex-shrink:0">▸</button>
-            <div class="editable-desc" data-group-id="{{ line.group_id }}"
-                 contenteditable="true" spellcheck="false"
-                 style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px -4px;flex:1;
-                        transition:background .15s;line-height:1.4"
-                 onmouseenter="this.style.background='var(--surface2)'"
-                 onmouseleave="if(document.activeElement!==this)this.style.background=''"
-                 onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
-                 onblur="saveGroupDesc(this)"
-                 >{{ line.description }}</div>
+            <div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:0;line-height:1.4;flex:1">
+              <div class="editable-desc" data-group-id="{{ line.group_id }}"
+                   contenteditable="true" spellcheck="false"
+                   style="outline:none;cursor:text;border-radius:4px;padding:2px 4px;margin:-2px 0 -2px -4px"
+                   onmouseenter="this.style.background='var(--surface2)'"
+                   onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                   onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                   onblur="saveGroupDesc(this)"
+                   >{{ line.description }}</div><span style="color:var(--muted);white-space:nowrap;padding:2px 2px">&nbsp;- Model/SKU:&nbsp;</span><div class="editable-sku" data-group-id="{{ line.group_id }}"
+                   contenteditable="true" spellcheck="false"
+                   style="outline:none;cursor:text;border-radius:3px;padding:2px 4px;margin:-2px -4px -2px 0;
+                          color:var(--muted);font-family:var(--mono);font-size:12px"
+                   onmouseenter="this.style.background='var(--surface2)'"
+                   onmouseleave="if(document.activeElement!==this)this.style.background=''"
+                   onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
+                   onblur="saveGroupSku(this)"
+                   data-placeholder="add model / SKU"
+                   >{{ line.sku or '' }}</div>
+            </div>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px;margin-left:19px">{{ line.members|length }} order{{ 's' if line.members|length != 1 }}</div>
         </td>
@@ -371,6 +381,14 @@ async function saveGroupDesc(el){
   const res = await post(GROUP_URL, {group_id: el.dataset.groupId, description: newDesc});
   if(res.error){ showFlash('Error: ' + res.error, true); return; }
   showFlash('Line updated.');
+}
+async function saveGroupSku(el){
+  el.style.background = '';
+  el.style.outline = 'none';
+  const newSku = el.textContent.trim();
+  const res = await post(GROUP_URL, {group_id: el.dataset.groupId, sku: newSku});
+  if(res.error){ showFlash('Error: ' + res.error, true); return; }
+  showFlash('Model / SKU updated.');
 }
 async function saveGroupPrice(el){
   const unit_price = parseFloat((el.innerText||'0').replace(/,/g,'')) || 0;
