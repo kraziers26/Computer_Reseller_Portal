@@ -163,6 +163,13 @@ def _build_pool_payload(orders, order_items):
     return {'orders': orders_out, 'items': items_out}
 
 
+def _with_sku_suffix(description, sku):
+    """Client-facing description text: append ' - Model/SKU: X' only when
+    there's an actual value — an export shouldn't show a dangling empty label."""
+    sku = (sku or '').strip()
+    return f"{description} - Model/SKU: {sku}" if sku else description
+
+
 def _get_display_lines(cur, invoice_id):
     """Fetch an invoice's line items aggregated by consolidation group.
 
@@ -181,7 +188,8 @@ def _get_display_lines(cur, invoice_id):
     cur.execute("""
         SELECT ii.*, t.order_number, t.retailer AS order_retailer,
                t.purchase_date AS order_date,
-               lg.description AS group_description, lg.sort_order AS group_sort_order
+               lg.description AS group_description, lg.sku AS group_sku,
+               lg.sort_order AS group_sort_order
         FROM invoice_items ii
         LEFT JOIN transactions t          ON ii.transaction_id = t.transaction_id
         LEFT JOIN invoice_line_groups lg  ON ii.group_id = lg.group_id
@@ -197,7 +205,8 @@ def _get_display_lines(cur, invoice_id):
             gid = str(it['group_id'])
             if gid not in seen_groups:
                 entry = {'kind': 'group', 'group_id': gid,
-                         'description': it['group_description'], 'members': []}
+                         'description': it['group_description'], 'sku': it['group_sku'],
+                         'members': []}
                 seen_groups[gid] = entry
                 display_lines.append(entry)
             seen_groups[gid]['members'].append(it)
@@ -645,9 +654,11 @@ def _save_invoice(existing_id=None):
             group_id = None
             if len(members) > 1:
                 group_id = str(uuid.uuid4())
+                group_sku = next((m.get('sku') for m in members if (m.get('sku') or '').strip()), '')
                 group_rows.append({
                     'group_id': group_id,
                     'description': line['description'],
+                    'sku': group_sku or None,
                     'sort_order': li_index,
                 })
             for m in members:
@@ -700,9 +711,9 @@ def _save_invoice(existing_id=None):
 
         for g in group_rows:
             cur.execute("""
-                INSERT INTO invoice_line_groups (group_id, invoice_id, description, sort_order)
-                VALUES (%s,%s,%s,%s)
-            """, (g['group_id'], invoice_id, g['description'], g['sort_order']))
+                INSERT INTO invoice_line_groups (group_id, invoice_id, description, sku, sort_order)
+                VALUES (%s,%s,%s,%s,%s)
+            """, (g['group_id'], invoice_id, g['description'], g['sku'], g['sort_order']))
 
         for li in line_items:
             cur.execute("""
@@ -1152,6 +1163,11 @@ def update_group(invoice_id):
             cur.execute("UPDATE invoice_line_groups SET description=%s WHERE group_id=%s",
                         (new_desc, group_id))
 
+        if 'sku' in data:
+            new_sku = (data.get('sku') or '').strip()
+            cur.execute("UPDATE invoice_line_groups SET sku=%s WHERE group_id=%s",
+                        (new_sku or None, group_id))
+
         if 'unit_price' in data:
             try:
                 new_price = round(float(data.get('unit_price') or 0), 2)
@@ -1216,16 +1232,21 @@ def export_excel(invoice_id):
     items = []
     for entry in display_lines:
         if entry['kind'] == 'single':
-            if not entry['item']['returned']:
-                items.append(entry['item'])
+            it = entry['item']
+            if not it['returned']:
+                items.append({
+                    'item_description': _with_sku_suffix(it['item_description'], it['sku']),
+                    'unit_price': it['unit_price'],
+                    'quantity': it['quantity'],
+                    'line_total': it['line_total'],
+                })
         elif not entry['all_returned']:
             items.append({
-                'item_description': entry['description'],
+                'item_description': _with_sku_suffix(entry['description'], entry['sku']),
                 'unit_price': entry['unit_price'],
                 'quantity': entry['qty'],
                 'line_total': entry['line_total'],
             })
-
     code = (inv['company_short_code'] or 'SE').upper()
     co   = COMPANY_DATA.get(code, COMPANY_DATA['SE'])
 
@@ -1465,11 +1486,17 @@ def export_pdf(invoice_id):
     items = []
     for entry in display_lines:
         if entry['kind'] == 'single':
-            if not entry['item']['returned']:
-                items.append(entry['item'])
+            it = entry['item']
+            if not it['returned']:
+                items.append({
+                    'item_description': _with_sku_suffix(it['item_description'], it['sku']),
+                    'unit_price': it['unit_price'],
+                    'quantity': it['quantity'],
+                    'line_total': it['line_total'],
+                })
         elif not entry['all_returned']:
             items.append({
-                'item_description': entry['description'],
+                'item_description': _with_sku_suffix(entry['description'], entry['sku']),
                 'unit_price': entry['unit_price'],
                 'quantity': entry['qty'],
                 'line_total': entry['line_total'],
