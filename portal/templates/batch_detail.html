@@ -132,12 +132,9 @@
         </td>
         <td style="padding:8px 12px">
           {% if r.is_editable %}
-          <form method="POST" action="{{ url_for('admin.batch_remove_order', batch_id=batch_id) }}" style="display:inline"
-                onsubmit="return confirm('Remove {{ r.order_number }} from this batch? It will return to the unprinted queue.')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="transaction_id" value="{{ r.transaction_id }}">
-            <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
-          </form>
+          <button type="button" class="btn btn-ghost btn-sm remove-order-btn"
+                  data-tid="{{ r.transaction_id }}"
+                  data-order="{{ r.order_number }}">Remove</button>
           {% else %}
           <button type="button" class="btn btn-ghost btn-sm" disabled
                   style="opacity:.4;cursor:not-allowed" title="{{ r.lock_reason }}">Remove</button>
@@ -157,6 +154,9 @@
 </form>
 
 <script>
+const REMOVE_ORDER_URL = "{{ url_for('admin.batch_remove_order', batch_id=batch_id) }}";
+const REMOVE_CSRF_TOKEN = "{{ csrf_token() }}";
+
 document.getElementById('selectAll').addEventListener('change', function(){
   document.querySelectorAll('.row-check').forEach(c => c.checked = this.checked);
 });
@@ -193,5 +193,41 @@ function toggleAddPanel() {
   panel.style.display = showing ? 'none' : 'block';
   caret.textContent = showing ? '▾ show' : '▴ hide';
 }
+
+// Remove-order buttons: plain fetch POST, kept OUTSIDE any <form> so it can
+// never be swallowed by the surrounding #batchPrintForm (nested <form> tags
+// are invalid HTML and browsers silently drop/reparent them, which was the
+// root cause of "Remove" triggering the combined-PDF print instead).
+document.querySelectorAll('.remove-order-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    const tid = this.dataset.tid;
+    const orderNum = this.dataset.order;
+    if (!confirm(`Remove ${orderNum} from this batch? It will return to the unprinted queue.`)) return;
+
+    this.disabled = true;
+    const originalText = this.textContent;
+    this.textContent = '…';
+
+    const formData = new FormData();
+    formData.append('csrf_token', REMOVE_CSRF_TOKEN);
+    formData.append('transaction_id', tid);
+
+    fetch(REMOVE_ORDER_URL, { method: 'POST', body: formData })
+      .then(res => {
+        if (res.ok) {
+          window.location.reload();
+        } else {
+          alert('Failed to remove order — please try again.');
+          this.disabled = false;
+          this.textContent = originalText;
+        }
+      })
+      .catch(() => {
+        alert('Network error — order was not removed.');
+        this.disabled = false;
+        this.textContent = originalText;
+      });
+  });
+});
 </script>
 {% endblock %}
