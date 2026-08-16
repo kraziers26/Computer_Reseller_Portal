@@ -1,12 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Edit invoice — Sales Tracker{% endblock %}
 {% block content %}
+<style>
+.split-wrap{display:flex;align-items:flex-start;width:100%;min-width:0}
+.split-left{flex:1 1 50%;min-width:0;container-type:inline-size;container-name:splitpane}
+.split-resizer{flex:0 0 16px;cursor:col-resize;align-self:stretch;position:relative}
+.split-resizer::after{content:'';position:absolute;top:0;bottom:0;left:7px;width:2px;background:var(--border);border-radius:2px;transition:background .15s}
+.split-resizer:hover::after,.split-resizer.dragging::after{background:var(--accent)}
+.split-right{flex:1 1 50%;min-width:0;position:sticky;top:20px}
+.split-right iframe{width:100%;height:calc(100vh - 200px);min-height:500px;border:none;border-radius:6px;background:var(--surface2)}
+@container splitpane (max-width:560px){
+  .form-row-3,.form-row{grid-template-columns:1fr}
+}
+@media (max-width:1100px){
+  .split-wrap{flex-direction:column}
+  .split-resizer{display:none}
+  .split-right{position:static;width:100%;margin-top:16px}
+  .split-right iframe{height:600px}
+}
+</style>
+
 <div class="page-header">
   <a href="{{ url_for('sales_tracker.invoices') }}" style="font-size:12px;color:var(--muted);display:inline-block;margin-bottom:6px">← Invoices</a>
   <h1>Edit invoice #{{ invoice.invoice_number }}</h1>
   <p>Invoice number can't be changed here — everything else can be corrected</p>
 </div>
 
+<div class="split-wrap" id="splitWrap">
+<div class="split-left" id="splitLeft">
 <form method="POST">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -84,4 +105,80 @@
     <a href="{{ url_for('sales_tracker.invoices') }}" class="btn btn-ghost">Cancel</a>
   </div>
 </form>
+</div>
+
+<div class="split-resizer" id="splitResizer" title="Drag to resize"></div>
+
+<div class="split-right" id="splitRight">
+  <div class="card" style="padding:12px">
+    <div class="card-title" style="margin-bottom:10px">Invoice Preview</div>
+    {% if invoice.has_pdf %}
+    <iframe src="{{ url_for('sales_tracker.serve_invoice_pdf', invoice_id=invoice.sales_invoice_id) }}" title="Invoice PDF">
+      <p style="color:var(--muted);padding:16px">PDF preview not supported.</p>
+    </iframe>
+    {% else %}
+    <div style="padding:40px 20px;text-align:center;color:var(--muted);font-size:13px;background:var(--surface2);border-radius:6px">
+      <p style="margin-bottom:6px">No PDF stored for this invoice.</p>
+      <p style="font-size:12px;color:var(--hint)">This can happen for invoices saved before PDF storage was added, or ones entered manually. Re-uploading the original file will attach it going forward.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+</div>
+
+<script>
+(function() {
+  var wrap = document.getElementById('splitWrap');
+  var left = document.getElementById('splitLeft');
+  var resizer = document.getElementById('splitResizer');
+  var dragging = false;
+  var STORAGE_KEY = 'salesConfirmSplitPx';
+
+  function clampAndSet(px) {
+    var total = wrap.getBoundingClientRect().width;
+    var min = 340, max = total - 340 - 16;
+    if (max < min) { return; }
+    px = Math.max(min, Math.min(max, px));
+    left.style.flex = '0 0 ' + px + 'px';
+  }
+
+  function startDrag(clientX) {
+    dragging = true;
+    resizer.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }
+  function moveDrag(clientX) {
+    if (!dragging) return;
+    var rect = wrap.getBoundingClientRect();
+    clampAndSet(clientX - rect.left);
+    try { localStorage.setItem(STORAGE_KEY, left.getBoundingClientRect().width); } catch (e) {}
+  }
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  }
+
+  resizer.addEventListener('mousedown', function(e) { startDrag(e.clientX); e.preventDefault(); });
+  window.addEventListener('mousemove', function(e) { moveDrag(e.clientX); });
+  window.addEventListener('mouseup', endDrag);
+
+  resizer.addEventListener('touchstart', function(e) { startDrag(e.touches[0].clientX); }, {passive: true});
+  window.addEventListener('touchmove', function(e) { if (e.touches[0]) moveDrag(e.touches[0].clientX); }, {passive: true});
+  window.addEventListener('touchend', endDrag);
+
+  try {
+    var saved = parseFloat(localStorage.getItem(STORAGE_KEY));
+    if (saved) clampAndSet(saved);
+  } catch (e) {}
+
+  window.addEventListener('resize', function() {
+    var current = left.getBoundingClientRect().width;
+    clampAndSet(current);
+  });
+})();
+</script>
 {% endblock %}
