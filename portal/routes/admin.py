@@ -817,11 +817,12 @@ def print_batch():
                 # Give this batch a metadata row (name defaults to the ID) so it's
                 # renameable right away. Safe if the batch_id already has one
                 # (e.g. topping up an existing batch with more invoices).
+                safe_name = _unique_batch_name(cur, batch_id, batch_id)
                 cur.execute("""
                     INSERT INTO print_batches (batch_id, batch_name, created_by)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (batch_id) DO NOTHING
-                """, (batch_id, batch_id, current_user.id if current_user.is_authenticated else None))
+                """, (batch_id, safe_name, current_user.id if current_user.is_authenticated else None))
             flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
 
     f_retailer  = request.args.get('retailer', '')
@@ -989,6 +990,29 @@ _INVOICE_LOCKED_EXPR = """
         WHERE ii.transaction_id = t.transaction_id AND NOT ii.returned
     )
 """
+
+def _unique_batch_name(cur, batch_id, desired_name):
+    """Return a batch_name guaranteed not to collide with a DIFFERENT batch's
+    name (the unique index is case-insensitive). Appends ' (2)', ' (3)', etc.
+    if the desired name is already taken by another batch_id. Without this,
+    a plain INSERT can throw a UniqueViolation that rolls back the whole
+    transaction -- including the transactions UPDATE that actually batches
+    the orders, silently failing the entire print-batch action."""
+    cur.execute(
+        "SELECT 1 FROM print_batches WHERE LOWER(batch_name) = LOWER(%s) AND batch_id != %s",
+        (desired_name, batch_id))
+    if not cur.fetchone():
+        return desired_name
+    n = 2
+    while True:
+        candidate = f"{desired_name} ({n})"
+        cur.execute(
+            "SELECT 1 FROM print_batches WHERE LOWER(batch_name) = LOWER(%s) AND batch_id != %s",
+            (candidate, batch_id))
+        if not cur.fetchone():
+            return candidate
+        n += 1
+
 
 _EDITABLE_EXPR = f"""
     (
@@ -1251,11 +1275,12 @@ def batch_add_order(batch_id):
 
         # Make sure this batch has a metadata row (covers the edge case of
         # adding to a batch_id that was fully undone down to zero orders).
+        safe_name = _unique_batch_name(cur, batch_id, batch_id)
         cur.execute("""
             INSERT INTO print_batches (batch_id, batch_name, created_by)
             VALUES (%s, %s, %s)
             ON CONFLICT (batch_id) DO NOTHING
-        """, (batch_id, batch_id, current_user.id if current_user.is_authenticated else None))
+        """, (batch_id, safe_name, current_user.id if current_user.is_authenticated else None))
 
         # If a receiving session (open or closed) already exists for this batch,
         # sync the newly-added order into it — same helper used elsewhere for
