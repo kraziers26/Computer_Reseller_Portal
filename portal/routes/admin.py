@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required
 from ..auth_utils import require_role
 from ..db import db_cursor
@@ -806,7 +806,26 @@ def print_batch():
                     (skip_tids,))
             flash(f'{len(skip_tids)} invoice(s) moved to review pile.', 'info')
         if txn_ids and batch_id:
+            force_new = request.form.get('force_new') == '1'
             with db_cursor() as (cur, conn):
+                # If what was typed doesn't match any batch's real ID, but does
+                # match an existing batch's current *name* (people naturally type
+                # what they see in Batch History, not the underlying ID), route
+                # into that real batch instead of quietly creating a look-alike
+                # duplicate -- unless the user explicitly chose "create new" in
+                # the confirm prompt.
+                cur.execute("SELECT batch_id FROM print_batches WHERE batch_id = %s", (batch_id,))
+                exact_match = cur.fetchone()
+                resolved_note = None
+                if not exact_match and not force_new:
+                    cur.execute(
+                        "SELECT batch_id, batch_name FROM print_batches WHERE LOWER(batch_name) = LOWER(%s)",
+                        (batch_id,))
+                    name_match = cur.fetchone()
+                    if name_match:
+                        resolved_note = name_match['batch_name']
+                        batch_id = name_match['batch_id']
+
                 cur.execute("""
                     UPDATE transactions
                     SET print_batch_id=%s, print_date=NOW(),
@@ -823,7 +842,15 @@ def print_batch():
                     VALUES (%s, %s, %s)
                     ON CONFLICT (batch_id) DO NOTHING
                 """, (batch_id, safe_name, current_user.id if current_user.is_authenticated else None))
-            flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
+            if resolved_note:
+                flash(f"{len(txn_ids)} invoice(s) added to the existing batch '{resolved_note}' "
+                      f"— that name was already in use, so they were added there instead of "
+                      f"creating a new batch.", 'success')
+            elif force_new and safe_name != batch_id:
+                flash(f"{len(txn_ids)} invoice(s) tagged as a new batch, named '{safe_name}' "
+                      f"since '{batch_id}' was already taken by another batch.", 'success')
+            else:
+                flash(f'{len(txn_ids)} invoices tagged as batch {batch_id}.', 'success')
 
     f_retailer  = request.args.get('retailer', '')
     f_person    = request.args.get('person_by', type=int)
@@ -882,6 +909,33 @@ def print_batch():
                            filters={'retailer':f_retailer,'person_by':f_person,'company':f_company,
                                     'submitter':f_submitter,'role':f_role,
                                     'date_from':f_date_from,'date_to':f_date_to})
+
+
+@admin_bp.route('/batch/check-name')
+@login_required
+@require_role('admin')
+def check_batch_name():
+    """Used before submitting a new batch: does the typed identifier match an
+    existing batch's real ID (safe top-up, no need to ask), or only its
+    display name (ambiguous -- worth confirming with the user first)?"""
+    name = request.args.get('name', '').strip()
+    if not name:
+        return jsonify({'name_match': False, 'exact_id_match': False})
+
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT 1 FROM print_batches WHERE batch_id = %s", (name,))
+        if cur.fetchone():
+            return jsonify({'name_match': False, 'exact_id_match': True})
+
+        cur.execute(
+            "SELECT batch_id, batch_name FROM print_batches WHERE LOWER(batch_name) = LOWER(%s)",
+            (name,))
+        row = cur.fetchone()
+        if row:
+            return jsonify({'name_match': True, 'exact_id_match': False,
+                             'batch_id': row['batch_id'], 'batch_name': row['batch_name']})
+
+    return jsonify({'name_match': False, 'exact_id_match': False})
 
 
 @admin_bp.route('/batch-history')
