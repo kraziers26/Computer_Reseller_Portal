@@ -6,6 +6,12 @@ Uses pdfplumber's table-mode extraction (not raw text-stream order) because
 table mode correctly preserves visual column order, while item codes are
 pulled from the description text rather than the Item Code column since
 long codes get truncated there (e.g. "DECT1250-7274B...").
+
+Two table layouts have been observed in the wild:
+  1. One table row per line item (the original format).
+  2. All line items on a page collapsed into a SINGLE table row, with each
+     column (qty/code/description/price/amount) holding every value for
+     that page joined by newlines. Both are handled below.
 """
 import re
 import pdfplumber
@@ -20,6 +26,30 @@ SPEC_PATTERNS = {
     'screen':    re.compile(r'(\d{2}(?:\.\d)?)["\u201d]', re.I),
     'os':        re.compile(r'(Windows\s*\d+|Windws\s*\d+)', re.I),
 }
+
+# (cid:NN) codes are PDF-internal glyph indices from subsetted fonts and
+# aren't a stable universal mapping — these are reverse-engineered from
+# specific invoices by cross-referencing against the same text rendered
+# cleanly elsewhere. Unknown cid codes fall back to being stripped rather
+# than left visible as literal "(cid:NN)" junk in the parsed output.
+KNOWN_CID_MAP = {
+    '102': 'f',   # "Out-o(cid:102)-state" -> "Out-of-state" (ff/fi ligature)
+    '36':  '$',
+    '37':  '%',
+    '89':  'Y',   # confirmed via "82(cid:89)20001US" matching "82Y20001US" elsewhere
+}
+
+
+def _clean_cid(text):
+    if not text or '(cid:' not in text:
+        return text
+    # Two consecutive (cid:39) (single-quote glyph) is used as a double-quote
+    # / inch-mark substitute in some invoices, e.g. 14(cid:39)(cid:39) QHD.
+    text = re.sub(r'(\(cid:39\)){2}', '"', text)
+
+    def repl(m):
+        return KNOWN_CID_MAP.get(m.group(1), '')
+    return re.sub(r'\(cid:(\d+)\)', repl, text)
 
 
 def _clean_num(text):
@@ -38,6 +68,14 @@ def _is_item_row(row):
         return False
     desc = ' '.join(c for c in row if c).lower()
     return not any(marker in desc for marker in NON_ITEM_MARKERS)
+
+
+def _is_multi_item_row(cells):
+    """Detects the collapsed layout: first non-empty cell is several
+    newline-separated digit-only lines (one per item on the page)."""
+    first = next((c for c in cells if c), '')
+    lines = [l.strip() for l in first.split('\n') if l.strip()]
+    return len(lines) > 1 and all(l.isdigit() for l in lines)
 
 
 def _extract_item_code(description):
@@ -96,15 +134,85 @@ def _parse_specs(description):
     return specs
 
 
+def _build_line_item(code, desc, qty, price_each, amount):
+    desc_clean = _clean_cid(desc).replace('\n', ' ').strip()
+    code_clean = _clean_cid(code).strip() if code else _extract_item_code(desc_clean)
+    is_customs = 'no commercial value' in desc_clean.lower() or (amount == 0)
+    return {
+        'item_code': code_clean,
+        'description': desc_clean,
+        'product_type': _classify_product_type(desc_clean),
+        'quantity': qty,
+        'price_each': price_each,
+        'amount': amount,
+        'is_customs_only': is_customs,
+        **_parse_specs(desc_clean),
+    }
+
+
+def _parse_multi_item_row(cells):
+    """Splits a collapsed row (all items on a page merged into one row)
+    back into individual line items. Quantity count is the source of truth
+    for how many real items exist — trailing tax-rate/tax-amount entries
+    that get merged into the price/amount columns are simply beyond that
+    count and ignored. Descriptions are one continuous blob; every real
+    item's spec list ends in "Windows 11" (optionally "... Home"), which
+    is used as the split marker."""
+    non_empty = [c for c in cells if c]
+    if len(non_empty) < 4:
+        return []
+
+    qty_col, code_col, desc_col = non_empty[0], non_empty[1], non_empty[2]
+    price_col, amount_col = non_empty[-2], non_empty[-1]
+
+    qtys = [l.strip() for l in qty_col.split('\n') if l.strip()]
+    n = len(qtys)
+    if n < 1:
+        return []
+
+    codes = [l.strip() for l in code_col.split('\n') if l.strip()]
+    prices = [l.strip() for l in price_col.split('\n') if l.strip()]
+    amounts = [l.strip() for l in amount_col.split('\n') if l.strip()]
+
+    # Split the description blob on its OS-line terminator, keeping the
+    # terminator attached to the chunk it closes out.
+    parts = re.split(r'(Windows\s*11(?:\s+Home)?)', desc_col)
+    descs = []
+    i = 0
+    while i < len(parts) - 1 and len(descs) < n:
+        descs.append((parts[i] + parts[i + 1]).strip())
+        i += 2
+
+    items = []
+    for idx in range(n):
+        if not qtys[idx].isdigit():
+            continue
+        qty = int(qtys[idx])
+        code = codes[idx] if idx < len(codes) else None
+        desc = descs[idx] if idx < len(descs) else ''
+        price_each = _clean_num(prices[idx]) if idx < len(prices) else None
+        amount = _clean_num(amounts[idx]) if idx < len(amounts) else None
+        items.append(_build_line_item(code, desc, qty, price_each, amount))
+    return items
+
+
 def _parse_client_block(text):
-    """Bill To cell is one multi-line string: name, address line(s), 'Tel: ...'."""
+    """Bill To cell is one multi-line string: name, address line(s), and a
+    phone number — either explicitly labeled ("Tel: ...") or, in some
+    invoices, a bare line that looks like a phone number with no label."""
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     if not lines:
         return None, None, None
     name = lines[0]
     phone = next((l.split('Tel:')[-1].strip() for l in lines if 'Tel:' in l), None)
-    address_lines = [l for l in lines[1:] if 'Tel:' not in l]
-    address = ', '.join(address_lines) if address_lines else None
+    remaining = [l for l in lines[1:] if 'Tel:' not in l]
+    if not phone:
+        # Bare phone line with no "Tel:" label, e.g. "+30 698 97 08 848".
+        phone_like = next((l for l in remaining if re.match(r'^\+?[\d][\d\s().-]{6,}$', l)), None)
+        if phone_like:
+            phone = phone_like
+            remaining = [l for l in remaining if l != phone_like]
+    address = ', '.join(remaining) if remaining else None
     return name, address, phone
 
 
@@ -163,6 +271,10 @@ def parse_sales_invoice(pdf_path):
                             header['client_phone'] = phone
                         continue
 
+                    if _is_multi_item_row(cells):
+                        line_items.extend(_parse_multi_item_row(cells))
+                        continue
+
                     if _is_item_row(cells):
                         qty = int(cells[0])
                         desc = next((c for c in cells[2:-2] if c and len(c) > 15), '')
@@ -172,18 +284,7 @@ def parse_sales_invoice(pdf_path):
                         nums = [c for c in cells if _clean_num(c) is not None]
                         price_each = _clean_num(nums[0]) if len(nums) >= 2 else None
                         amount = _clean_num(nums[-1]) if nums else None
-                        is_customs = 'no commercial value' in desc.lower() or (amount == 0)
-
-                        line_items.append({
-                            'item_code': code,
-                            'description': desc.replace('\n', ' ').strip(),
-                            'product_type': _classify_product_type(desc),
-                            'quantity': qty,
-                            'price_each': price_each,
-                            'amount': amount,
-                            'is_customs_only': is_customs,
-                            **_parse_specs(desc),
-                        })
+                        line_items.append(_build_line_item(code, desc, qty, price_each, amount))
 
     header['line_items'] = line_items
     header['computed_total'] = round(sum(li['amount'] or 0 for li in line_items), 2)
