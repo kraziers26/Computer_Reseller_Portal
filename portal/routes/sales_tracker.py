@@ -553,11 +553,19 @@ def upload():
                 tmp_path = os.path.join(UPLOAD_FOLDER, f'{uuid.uuid4()}.pdf')
                 f.save(tmp_path)
                 pdf_bytes = open(tmp_path, 'rb').read()
+                error_detail = None
                 try:
                     parsed = _run_parser(tmp_path)
-                    ok = bool(parsed.get('invoice_number') and parsed.get('line_items'))
-                except Exception:
-                    parsed, ok = None, False
+                    if not (parsed.get('invoice_number') and parsed.get('line_items')):
+                        ok = False
+                        error_detail = 'no invoice number or line items detected'
+                    else:
+                        ok = True
+                except Exception as e:
+                    import traceback
+                    print(f"[sales_tracker] Failed to parse {f.filename}: {e!r}")
+                    traceback.print_exc()
+                    parsed, ok, error_detail = None, False, f'{type(e).__name__}: {e}'
                 os.remove(tmp_path)
 
                 if ok:
@@ -570,8 +578,10 @@ def upload():
                     cur.execute("""
                         INSERT INTO sales_batch_draft_items
                             (draft_id, position, filename, parse_status, error_message, pdf_bytes)
-                        VALUES (%s, %s, %s, 'failed', 'Could not parse this PDF', %s)
-                    """, (draft_id, pos, f.filename, pdf_bytes))
+                        VALUES (%s, %s, %s, 'failed', %s, %s)
+                    """, (draft_id, pos, f.filename,
+                          f'Could not parse this PDF ({error_detail})' if error_detail else 'Could not parse this PDF',
+                          pdf_bytes))
 
         flash(f'Batch of {len(valid)} files created.', 'success')
         return redirect(url_for('sales_tracker.batch_review', draft_id=draft_id))
