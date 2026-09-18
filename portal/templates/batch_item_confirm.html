@@ -106,8 +106,8 @@
               <input type="text" name="item_description[]" value="{{ item.item_description }}" placeholder="Item description" style="font-size:12px">
             </div>
             <div class="form-group" style="margin-bottom:0;flex:1">
-              <label style="font-size:11px">SKU</label>
-              <input type="text" name="item_sku[]" value="{{ item.sku_model_color or '' }}" placeholder="SKU" style="font-size:12px;font-family:monospace">
+              <label style="font-size:11px">{{ 'Part Number' if invoice.retailer == 'Apple' else 'SKU' }}</label>
+              <input type="text" name="item_sku[]" value="{{ item.sku_model_color or '' }}" placeholder="{{ 'Part Number' if invoice.retailer == 'Apple' else 'SKU' }}" style="font-size:12px;font-family:monospace">
             </div>
           </div>
           <div class="form-row" style="margin-bottom:0">
@@ -148,6 +148,7 @@
 
 <script>
 let itemCount = {{ (invoice.get('items', [])|length) if invoice is mapping else 0 }};
+const SKU_LABEL = {{ ('Part Number' if invoice.retailer == 'Apple' else 'SKU') | tojson }};
 
 function addItem() {
   document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
@@ -161,8 +162,8 @@ function addItem() {
     <div class="form-row" style="margin-bottom:8px">
       <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
         <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px"></div>
-      <div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">SKU</label>
-        <input type="text" name="item_sku[]" placeholder="SKU" style="font-size:12px;font-family:monospace"></div>
+      <div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">${SKU_LABEL}</label>
+        <input type="text" name="item_sku[]" placeholder="${SKU_LABEL}" style="font-size:12px;font-family:monospace"></div>
     </div>
     <div class="form-row" style="margin-bottom:0">
       <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
