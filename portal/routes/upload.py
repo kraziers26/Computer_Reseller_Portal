@@ -43,7 +43,9 @@ def invoice_to_dict(invoice):
                           'sku_model_color': item.sku_model_color,
                           'quantity': item.quantity,
                           'unit_price': float(item.unit_price),
-                          'line_total': float(item.line_total)})
+                          'line_total': float(item.line_total),
+                          'serial_number': getattr(item, 'serial_number', None),
+                          'imei': getattr(item, 'imei', None)})
         except Exception:
             continue
     return {'retailer': invoice.retailer,
@@ -168,6 +170,8 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
         if form_descs:
             items = []
             skus        = form.getlist('item_sku[]')
+            serials     = form.getlist('item_serial[]')
+            imeis       = form.getlist('item_imei[]')
             qtys        = form.getlist('item_qty[]')
             unit_prices = form.getlist('item_unit_price[]')
             line_totals = form.getlist('item_line_total[]')
@@ -180,11 +184,15 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
                     line_t = float(line_totals[i]) if i < len(line_totals) else 0.0
                     qty    = int(qtys[i]) if i < len(qtys) else 1
                     sku    = skus[i].strip() if i < len(skus) else ''
+                    serial = serials[i].strip() if i < len(serials) else ''
+                    imei   = imeis[i].strip() if i < len(imeis) else ''
                     items.append({'item_description': desc,
                                   'sku_model_color': sku or None,
                                   'quantity': qty,
                                   'unit_price': unit_p,
-                                  'line_total': line_t})
+                                  'line_total': line_t,
+                                  'serial_number': serial or None,
+                                  'imei': imei or None})
                 except (ValueError, IndexError):
                     continue
         else:
@@ -194,11 +202,12 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
             cur.executemany("""
                 INSERT INTO transaction_items
                 (item_id, transaction_id, item_description, sku_model_color,
-                 quantity, unit_price, line_total)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                 quantity, unit_price, line_total, serial_number, imei)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, [(str(uuid.uuid4()), tid, it['item_description'],
                    it.get('sku_model_color'), it['quantity'],
-                   it['unit_price'], it['line_total']) for it in items])
+                   it['unit_price'], it['line_total'],
+                   it.get('serial_number'), it.get('imei')) for it in items])
     return tid
 
 
