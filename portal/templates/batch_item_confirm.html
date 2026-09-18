@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Review Item — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
+{% set v = saved or {} %}
+{% set display_items = saved_items if saved_items is not none else invoice.get('items', []) %}
 <div class="page-header page-header-row">
   <div>
     <h1>Review Invoice</h1>
@@ -30,32 +32,32 @@
         <div class="form-group"><label>Retailer</label>
           <input type="text" value="{{ invoice.retailer }}" readonly style="opacity:.6"></div>
         <div class="form-group"><label>Order Number *</label>
-          <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required></div>
+          <input type="text" name="order_number" value="{{ v.get('order_number', invoice.order_number or '') }}" required></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Purchase Date *</label>
-          <input type="date" name="purchase_date" value="{{ invoice.purchase_date or '' }}" required
-                 style="{{ 'border-color:#f87171' if not invoice.purchase_date else '' }}">
-          {% if not invoice.purchase_date %}<div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Not found — enter manually</div>{% endif %}
+          <input type="date" name="purchase_date" value="{{ v.get('purchase_date', invoice.purchase_date or '') }}" required
+                 style="{{ 'border-color:#f87171' if not v.get('purchase_date', invoice.purchase_date) else '' }}">
+          {% if not v.get('purchase_date', invoice.purchase_date) %}<div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Not found — enter manually</div>{% endif %}
         </div>
         <div class="form-group"><label>Order Type *</label>
           <select name="order_type">
             {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
-            <option value="{{ ot }}" {{ 'selected' if invoice.fulfillment_method==ot }}>{{ ot }}</option>
+            <option value="{{ ot }}" {{ 'selected' if v.get('order_type', invoice.fulfillment_method)==ot }}>{{ ot }}</option>
             {% endfor %}
           </select>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Price Total *</label>
-          <input type="number" name="price_total" step="0.01" value="{{ invoice.price_total or '' }}" required></div>
+          <input type="number" name="price_total" step="0.01" value="{{ v.get('price_total', invoice.price_total or '') }}" required></div>
         <div class="form-group"><label>Costco Taxes</label>
-          <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}" placeholder="Costco only"></div>
+          <input type="number" name="costco_taxes" step="0.01" value="{{ v.get('costco_taxes', invoice.costco_taxes_paid or '') }}" placeholder="Costco only"></div>
       </div>
       {% if invoice.membership_number is defined and invoice.membership_number %}
       <div class="form-row">
         <div class="form-group"><label>Membership Number</label>
-          <input type="text" name="membership_number" value="{{ invoice.membership_number }}" style="font-family:monospace;letter-spacing:.5px"></div>
+          <input type="text" name="membership_number" value="{{ v.get('membership_number', invoice.membership_number) }}" style="font-family:monospace;letter-spacing:.5px"></div>
         <div class="form-group"></div>
       </div>
       {% endif %}
@@ -66,23 +68,23 @@
       <div class="form-row">
         <div class="form-group"><label>Person By *</label>
           <select name="user_id" required>
-            {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id==current_user_id }}>{{ u.username }}</option>{% endfor %}
+            {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id == (v.get('user_id')|int(current_user_id)) }}>{{ u.username }}</option>{% endfor %}
           </select>
         </div>
         <div class="form-group"><label>Purchase Company *</label>
           <select name="company_id" required>
             <option value="">Select company...</option>
-            {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
+            {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if v.get('company_id')|string == c.company_id|string }}>{{ c.company_name }}</option>{% endfor %}
           </select>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
-          <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}" placeholder="e.g. 3015" maxlength="4">
+          <input type="text" name="card_last4" value="{{ v.get('card_last4', invoice.card_last4 or '') }}" placeholder="e.g. 3015" maxlength="4">
           {% if not invoice.card_last4 %}<div style="font-size:11px;color:var(--warning);margin-top:4px">Enter manually or leave blank to flag.</div>{% endif %}
         </div>
         <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
-          <input type="text" name="notes" maxlength="140" placeholder="Optional tag or note"></div>
+          <input type="text" name="notes" maxlength="140" value="{{ v.get('notes', '') }}" placeholder="Optional tag or note"></div>
       </div>
     </div>
 
@@ -92,10 +94,10 @@
         <div class="card-title" style="margin:0">Line items</div>
         <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
       </div>
-      {% set items = invoice.get('items', []) if invoice is mapping else [] %}
+      {% set items = display_items %}
       <div id="items-container">
         {% for item in items %}
-        {% if item.unit_price|float >= 1.0 %}
+        {% if saved_items is not none or item.unit_price|float >= 1.0 %}
         {% set idx = loop.index0 %}
         <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
           <button type="button" onclick="removeItem({{ idx }})"
@@ -138,9 +140,10 @@
     </div>
 
     <div class="flex gap-12 mt-16">
-      <button type="submit" name="action" value="submit" class="btn btn-primary">Submit & Next →</button>
+      <button type="submit" name="action" value="confirm" class="btn btn-primary">{{ 'Save changes' if saved else 'Confirm' }} →</button>
       <button type="submit" name="action" value="skip" class="btn btn-ghost">Skip for Now</button>
     </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">Confirming holds this order in the batch — it is only saved when you submit the whole batch.</div>
   </form>
 
   <!-- PDF Preview -->
@@ -155,7 +158,7 @@
 </div>
 
 <script>
-let itemCount = {{ (invoice.get('items', [])|length) if invoice is mapping else 0 }};
+let itemCount = {{ display_items|length }};
 const SKU_LABEL = {{ ('Part Number' if invoice.retailer == 'Apple' else 'SKU') | tojson }};
 const IS_APPLE = {{ (invoice.retailer == 'Apple') | tojson }};
 
