@@ -5,6 +5,21 @@ from typing import Optional
 import pdfplumber
 
 
+# Products that Apple always serializes — used to decide whether a missing
+# serial should flag the invoice for review. Accessories (cases, cables,
+# adapters, AppleCare, etc.) legitimately have no serial and are exempt.
+SERIALIZED_KEYWORDS = (
+    "IPHONE", "IPAD", "MACBOOK", "IMAC", "MAC MINI", "MAC STUDIO", "MAC PRO",
+    "APPLE WATCH", "WATCH", "AIRPODS", "APPLE TV", "STUDIO DISPLAY",
+    "PRO DISPLAY", "VISION PRO", "HOMEPOD",
+)
+
+
+def is_serialized(description: str) -> bool:
+    d = (description or "").upper()
+    return any(k in d for k in SERIALIZED_KEYWORDS)
+
+
 @dataclass
 class LineItem:
     item_description: str
@@ -12,6 +27,8 @@ class LineItem:
     quantity: int
     unit_price: float
     line_total: float
+    serial_number: Optional[str] = None
+    imei: Optional[str] = None
 
 
 @dataclass
@@ -24,6 +41,7 @@ class AppleInvoice:
     fulfillment_method: str = "Store Pick Up"  # Apple Store = always in-store
     price_total: Optional[float] = None
     sales_tax: Optional[float] = None
+    invoice_format: Optional[str] = None  # 'web_invoice' | 'retail_receipt'
     items: list = field(default_factory=list)
     parse_errors: list = field(default_factory=list)
     needs_review: bool = False
@@ -49,13 +67,35 @@ def extract_text(pdf_path: str) -> str:
 
 def is_apple_invoice(text: str) -> bool:
     return bool(re.search(
-        r'Apple Store|Invoice Receipt|store\.apple\.com|Order Number:\s*W\d+',
+        r'Apple Store|Invoice Receipt|store\.apple\.com|apple\.com/(retail|support)'
+        r'|Order Number:\s*W\d+|Part Number:',
         text, re.IGNORECASE))
 
 
+def detect_format(text: str) -> str:
+    """
+    Two Apple layouts:
+      - 'retail_receipt': in-store email/print receipt. Item blocks with
+        'Part Number:', 'Serial Number:', 'IMEI:', 'Return Date:'; order id
+        like *R##########*; totals use 'Sub-Total'/'Tax'/'Total' with a space
+        after the dollar sign.
+      - 'web_invoice': the online order invoice (formats A/B). 'Order Number: W…',
+        'Serial No.: (…)', 'Sales Tax', no space after the dollar sign.
+    """
+    if re.search(r'Part Number:', text, re.IGNORECASE) and (
+        re.search(r'Return Date:', text, re.IGNORECASE)
+        or re.search(r'\*?R\d{9,12}\*?', text)
+    ):
+        return 'retail_receipt'
+    return 'web_invoice'
+
+
+# --------------------------------------------------------------------------
+# WEB INVOICE (formats A / B) — online order invoice
+# --------------------------------------------------------------------------
+
 def parse_order_header(text: str, invoice: AppleInvoice):
     # Order number — "Order Number: Order Date:\nW1508947786 January 15, 2026"
-    # pdfplumber puts labels on one line and values on the next
     m = re.search(r'Order Number:.*?\n(W\d+)', text, re.DOTALL)
     if not m:
         m = re.search(r'\b(W\d{9,10})\b', text)
@@ -65,11 +105,9 @@ def parse_order_header(text: str, invoice: AppleInvoice):
         invoice.parse_errors.append("order_number not found")
         invoice.needs_review = True
 
-    # Order date — on same line as order number after the W number
-    # "W1508947786 January 15, 2026"
+    # Order date — same line as order number, after the W number
     m = re.search(r'W\d{9,10}\s+([A-Za-z]+ \d{1,2},\s*\d{4})', text)
     if not m:
-        # Fallback: any "Month DD, YYYY" near top
         m = re.search(r'Order Date:.*?([A-Za-z]+ \d{1,2},\s*\d{4})', text, re.DOTALL)
     if m:
         try:
@@ -95,12 +133,11 @@ def parse_order_header(text: str, invoice: AppleInvoice):
 
 
 def parse_totals(text: str, invoice: AppleInvoice):
-    # "For a total of $1,282.93" — reliable on both formats
+    # "For a total of $1,282.93" — reliable on both A/B
     m = re.search(r'For a total of\s+\$([0-9,]+\.\d{2})', text)
     if m:
         invoice.price_total = float(m.group(1).replace(',', ''))
     else:
-        # Fallback: "Total $1,282.93" (Format B)
         m = re.search(r'\bTotal\s+\$([0-9,]+\.\d{2})', text)
         if m:
             invoice.price_total = float(m.group(1).replace(',', ''))
@@ -108,96 +145,231 @@ def parse_totals(text: str, invoice: AppleInvoice):
             invoice.parse_errors.append("price_total not found")
             invoice.needs_review = True
 
-    # Sales tax (Format B has it, Format A doesn't show value)
     m = re.search(r'Sales Tax\s+\$([0-9,]+\.\d{2})', text)
     invoice.sales_tax = float(m.group(1).replace(',', '')) if m else None
 
 
+def _split_product_number(raw_desc: str):
+    prod_num_m = re.search(r'(?:-USA)?\s*([A-Z0-9]{6,12}(?:/[A-Z])?)\s*$', raw_desc)
+    if prod_num_m:
+        product_number = prod_num_m.group(1)
+        item_description = raw_desc[:prod_num_m.start()].strip()
+    else:
+        product_number = ''
+        item_description = raw_desc
+    item_description = re.sub(r'\s*-USA\s*$', '', item_description).strip()
+    return item_description, product_number
+
+
 def parse_line_items(text: str, invoice: AppleInvoice):
     """
-    Apple item line structure (pdfplumber merges table columns):
+    Web-invoice item structure (pdfplumber merges table columns):
 
-    Format A (no Extended Price):
-      IPHONE 17 PRO MAX SILVER 256GB-USAMFXG4LL/A $1,199.00 1 1
-      Serial No.: (D2VK4FTFM3)
-
-    Format B (with Extended Price):
       IPHONE 17 PRO MAX SILVER 256GB-USA MFXG4LL/A $1,199.00 1 1 $1,199.00
-      Serial No.: (M17YJH7FJK)
+      Serial No.: (HJ6LQ7P005)
 
-    Pattern: one long line with product name + product number + price + qty_ordered + qty_fulfilled [+ extended]
-    Anchor: line ending with digits pattern matching table columns
+    Each unit gets its own row so every serial is individually stored. A line
+    with qty > 1 is followed by one 'Serial No.:' line per unit and is expanded
+    into that many qty-1 rows.
     """
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
-    # Find "Order Details" header as start boundary
     details_idx = next((i for i, ln in enumerate(lines)
                         if re.match(r'Order Details', ln, re.IGNORECASE)), 0)
-
-    # Find "Items will be invoiced" as end boundary
     end_idx = next((i for i, ln in enumerate(lines)
                     if re.search(r'Items will be invoiced', ln, re.IGNORECASE)), len(lines))
-
     item_lines = lines[details_idx:end_idx]
 
-    # Item line pattern: ends with "qty qty" or "qty qty $price"
-    # and contains a $ price somewhere
     item_pat = re.compile(
         r'^(.+?)\s+\$([0-9,]+\.\d{2})\s+(\d+)\s+(\d+)(?:\s+\$[0-9,]+\.\d{2})?$'
     )
+    serial_pat = re.compile(r'Serial No\.?:\s*\(?([A-Za-z0-9]+)\)?', re.IGNORECASE)
 
-    for ln in item_lines:
-        m = item_pat.match(ln)
+    i = 0
+    while i < len(item_lines):
+        m = item_pat.match(item_lines[i])
         if not m:
+            i += 1
             continue
 
         raw_desc = m.group(1).strip()
         unit_price = float(m.group(2).replace(',', ''))
         qty_ordered = int(m.group(3))
         qty_fulfilled = int(m.group(4))
-
-        # Use qty_fulfilled as actual quantity (what was actually delivered)
         quantity = qty_fulfilled if qty_fulfilled > 0 else qty_ordered
 
-        # Split product name from product number
-        # Format A: "IPHONE 17 PRO MAX SILVER 256GB-USAMFXG4LL/A" (no space before prod num)
-        # Format B: "IPHONE 17 PRO MAX SILVER 256GB-USA MFXG4LL/A" (space before prod num)
-        # Product number pattern: 6-12 uppercase alphanum chars, often ends in LL/A
-        prod_num_m = re.search(r'(?:-USA)?\s*([A-Z0-9]{6,12}(?:/[A-Z])?)\s*$', raw_desc)
-        if prod_num_m:
-            product_number = prod_num_m.group(1)
-            item_description = raw_desc[:prod_num_m.start()].strip()
+        item_description, product_number = _split_product_number(raw_desc)
+
+        # Collect the serial line(s) that follow this item, one per unit.
+        serials = []
+        j = i + 1
+        while j < len(item_lines):
+            sm = serial_pat.search(item_lines[j])
+            if sm:
+                serials.append(sm.group(1).upper())
+                j += 1
+            else:
+                break
+
+        if serials:
+            for s in serials:
+                invoice.items.append(LineItem(
+                    item_description=item_description,
+                    sku_model_color=product_number,
+                    quantity=1,
+                    unit_price=unit_price,
+                    line_total=unit_price,
+                    serial_number=s,
+                ))
+            if len(serials) != quantity:
+                invoice.parse_errors.append(
+                    f"serial count {len(serials)} != qty {quantity} for {item_description}")
+                invoice.needs_review = True
+            i = j
         else:
-            product_number = ''
-            item_description = raw_desc
-
-        # Clean trailing -USA country suffix from description if still present
-        item_description = re.sub(r'\s*-USA\s*$', '', item_description).strip()
-
-        line_total = round(unit_price * quantity, 2)
-
-        invoice.items.append(LineItem(
-            item_description=item_description,
-            sku_model_color=product_number,
-            quantity=quantity,
-            unit_price=unit_price,
-            line_total=line_total,
-        ))
+            # No serial lines (non-serialized accessory, or a serial Apple
+            # didn't print). Keep the original quantity as a single row.
+            invoice.items.append(LineItem(
+                item_description=item_description,
+                sku_model_color=product_number,
+                quantity=quantity,
+                unit_price=unit_price,
+                line_total=round(unit_price * quantity, 2),
+                serial_number=None,
+            ))
+            i += 1
 
     if not invoice.items:
         invoice.parse_errors.append("No line items found")
         invoice.needs_review = True
 
 
-def validate(invoice: AppleInvoice):
-    if not invoice.items or invoice.price_total is None:
-        return
-    sum_items = round(sum(i.line_total for i in invoice.items), 2)
-    # Apple total includes tax so sum_items (pre-tax) will be less than price_total
-    # Just flag if item totals are zero
-    if sum_items == 0:
-        invoice.parse_errors.append("All line totals zero — check parser")
+# --------------------------------------------------------------------------
+# RETAIL RECEIPT — in-store email/print receipt
+# --------------------------------------------------------------------------
+
+def parse_retail_receipt(text: str, invoice: AppleInvoice):
+    lines = [ln.strip() for ln in text.splitlines()]
+
+    # Order date from the header timestamp: "September 18, 2026 05:21 PM"
+    for ln in lines:
+        m = re.search(r'([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})\s+\d{1,2}:\d{2}\s*(?:AM|PM)', ln)
+        if m:
+            try:
+                dt = datetime.strptime(m.group(1), "%B %d, %Y")
+                invoice.purchase_date = dt.strftime("%Y-%m-%d")
+                invoice.purchase_year_month = dt.strftime("%Y-%m")
+            except ValueError:
+                pass
+            break
+    if not invoice.purchase_date:
+        invoice.parse_errors.append("purchase_date not found")
         invoice.needs_review = True
+
+    # Order number: "*R3121025575*"
+    m = re.search(r'\*?(R\d{9,12})\*?', text)
+    if m:
+        invoice.order_number = m.group(1)
+    else:
+        invoice.parse_errors.append("order_number not found")
+        invoice.needs_review = True
+
+    # Card last 4: "•••• 4360" or "Card Number: •••• 4360"
+    m = re.search(r'(?:[•\*]\s*){2,}\s*(\d{4})', text)
+    if not m:
+        m = re.search(r'Card Number:.*?(\d{4})', text, re.IGNORECASE)
+    if m:
+        invoice.card_last4 = m.group(1)
+    else:
+        invoice.parse_errors.append("card_last4 not found")
+        invoice.needs_review = True
+
+    # Totals — note the space after '$' and the 'Sub-Total'/'Tax'/'Total' labels
+    for ln in lines:
+        mt = re.match(r'Tax\s+\$\s*([\d,]+\.\d{2})', ln, re.IGNORECASE)
+        if mt:
+            invoice.sales_tax = float(mt.group(1).replace(',', ''))
+        mtot = re.match(r'Total\s+\$\s*([\d,]+\.\d{2})', ln, re.IGNORECASE)
+        if mtot and not ln.lower().startswith('sub'):
+            invoice.price_total = float(mtot.group(1).replace(',', ''))
+    if invoice.price_total is None:
+        invoice.parse_errors.append("price_total not found")
+        invoice.needs_review = True
+
+    # Item region: after the header timestamp, up to the legal boilerplate /
+    # totals / payment block.
+    start = 0
+    for i, ln in enumerate(lines):
+        if re.search(r'\d{1,2}:\d{2}\s*(?:AM|PM)', ln):
+            start = i + 1
+            break
+    end = len(lines)
+    for i in range(start, len(lines)):
+        if re.match(r'(Use of |Sub-?Total|Payment Method|Total\s+\$)', lines[i], re.IGNORECASE):
+            end = i
+            break
+
+    price_line = re.compile(r'^(.*\S)\s+\$\s*([\d,]+\.\d{2})$')
+
+    i = start
+    while i < end:
+        pm = price_line.match(lines[i])
+        if not pm:
+            i += 1
+            continue
+        desc = pm.group(1).strip()
+        unit_price = float(pm.group(2).replace(',', ''))
+        part = serial = imei = None
+        j = i + 1
+        while j < end:
+            l2 = lines[j]
+            if re.match(r'Part Number:', l2, re.IGNORECASE):
+                part = l2.split(':', 1)[1].strip()
+            elif re.match(r'Serial Number:', l2, re.IGNORECASE):
+                serial = l2.split(':', 1)[1].strip().upper()
+            elif re.match(r'IMEI:', l2, re.IGNORECASE):
+                imei = l2.split(':', 1)[1].strip()
+            elif re.match(r'Return Date:', l2, re.IGNORECASE):
+                pass
+            elif re.match(r'For Support', l2, re.IGNORECASE):
+                pass
+            elif price_line.match(l2):
+                break  # next item block
+            else:
+                break  # unexpected line — stop this block
+            j += 1
+
+        invoice.items.append(LineItem(
+            item_description=desc,
+            sku_model_color=part or '',
+            quantity=1,
+            unit_price=unit_price,
+            line_total=unit_price,
+            serial_number=serial,
+            imei=imei,
+        ))
+        i = j if j > i else i + 1
+
+    if not invoice.items:
+        invoice.parse_errors.append("No line items found")
+        invoice.needs_review = True
+
+
+# --------------------------------------------------------------------------
+
+def validate(invoice: AppleInvoice):
+    if invoice.items and invoice.price_total is not None:
+        sum_items = round(sum(i.line_total for i in invoice.items), 2)
+        if sum_items == 0:
+            invoice.parse_errors.append("All line totals zero — check parser")
+            invoice.needs_review = True
+
+    # Serialized products must carry a serial; accessories are exempt.
+    for it in invoice.items:
+        if is_serialized(it.item_description) and not it.serial_number:
+            invoice.parse_errors.append(
+                f"missing serial for serialized item: {it.item_description}")
+            invoice.needs_review = True
 
 
 def parse(pdf_path: str) -> Optional[AppleInvoice]:
@@ -205,9 +377,13 @@ def parse(pdf_path: str) -> Optional[AppleInvoice]:
     if not is_apple_invoice(text):
         return None
     invoice = AppleInvoice()
-    parse_order_header(text, invoice)
-    parse_totals(text, invoice)
-    parse_line_items(text, invoice)
+    invoice.invoice_format = detect_format(text)
+    if invoice.invoice_format == 'retail_receipt':
+        parse_retail_receipt(text, invoice)
+    else:
+        parse_order_header(text, invoice)
+        parse_totals(text, invoice)
+        parse_line_items(text, invoice)
     validate(invoice)
     return invoice
 
@@ -230,7 +406,8 @@ def to_db_rows(invoice: AppleInvoice, user_id: int, company_id: int,
         "is_duplicate":        False,
     }
     items = [{"item_description": it.item_description, "sku_model_color": it.sku_model_color,
-              "quantity": it.quantity, "unit_price": it.unit_price, "line_total": it.line_total}
+              "quantity": it.quantity, "unit_price": it.unit_price, "line_total": it.line_total,
+              "serial_number": it.serial_number, "imei": it.imei}
              for it in invoice.items]
     return {"transaction": transaction, "items": items}
 
@@ -246,6 +423,7 @@ if __name__ == "__main__":
         print("Not an Apple invoice."); sys.exit(1)
 
     print(f"\n{'='*50}\nAPPLE INVOICE PARSED\n{'='*50}")
+    print(f"Format:       {invoice.invoice_format}")
     print(f"Order #:      {invoice.order_number}")
     print(f"Date:         {invoice.purchase_date}")
     print(f"Card last 4:  {invoice.card_last4}")
@@ -260,5 +438,6 @@ if __name__ == "__main__":
         print(f"  {i}. {item.item_description}")
         print(f"     SKU: {item.sku_model_color}  |  Qty: {item.quantity}  |  "
               f"Unit: ${item.unit_price:,.2f}  |  Total: ${item.line_total:,.2f}")
+        print(f"     Serial: {item.serial_number or '—'}  |  IMEI: {item.imei or '—'}")
     print(f"\nDB rows:")
     print(json.dumps(to_db_rows(invoice, 999, 999, "test.pdf"), indent=2, default=str))
