@@ -247,7 +247,8 @@ def setup_db():
                 item_description TEXT NOT NULL, sku_model_color TEXT,
                 quantity INTEGER NOT NULL DEFAULT 1,
                 unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
-                line_total NUMERIC(12,2) NOT NULL DEFAULT 0)""")
+                line_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+                serial_number TEXT, imei TEXT)""")
 
             # Seed companies
             cur.execute("""INSERT INTO dim_companies (company_name, company_short_code) VALUES
