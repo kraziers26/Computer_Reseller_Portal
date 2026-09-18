@@ -11,7 +11,7 @@
   <div class="card-title" style="color:var(--warning)">⚠️ Active draft exists</div>
   <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
     You have an unfinished batch from {{ existing_draft.created_at.strftime('%b %d, %Y') }} —
-    {{ existing_draft.completed_count }}/{{ existing_draft.total_files }} submitted.
+    {{ existing_draft.reviewed_count }}/{{ existing_draft.total_files }} confirmed (not saved until the batch is submitted).
   </p>
   <div class="flex gap-12">
     <a href="{{ url_for('upload.batch_review', draft_id=existing_draft.draft_id) }}" class="btn btn-primary">Continue Draft</a>
