@@ -3,21 +3,36 @@
 {% block content %}
 <div class="page-header page-header-row">
   <div><h1>Batch Review</h1>
-  <p>{{ draft.completed_count }}/{{ draft.total_files }} submitted · {{ items|selectattr('parse_status','eq','parsed')|list|length }} remaining</p></div>
+  <p>{{ counts.reviewed }} of {{ draft.total_files }} confirmed · {{ counts.parsed }} left to review{% if counts.skipped %} · {{ counts.skipped }} skipped{% endif %}{% if counts.failed %} · {{ counts.failed }} failed{% endif %}</p></div>
   <div class="flex gap-8">
+    {% if draft.status == 'active' %}
     {% if next_item %}
     <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=next_item.item_id) }}" class="btn btn-primary">Review Next →</a>
     {% endif %}
-    {% if draft.status == 'active' and items|selectattr('parse_status','eq','parsed')|list|length == 0 %}
-    <a href="{{ url_for('upload.batch_summary', draft_id=draft.draft_id) }}" class="btn btn-success">View Summary</a>
+    {% if counts.parsed == 0 and counts.reviewed > 0 %}
+    <form method="POST" action="{{ url_for('upload.batch_submit', draft_id=draft.draft_id) }}"
+          onsubmit="this.querySelector('button').disabled=true; return confirm('Submit {{ counts.reviewed }} order(s)? They will all be saved now.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-success">Submit Batch ({{ counts.reviewed }})</button>
+    </form>
     {% endif %}
     <form method="POST" action="{{ url_for('upload.batch_discard', draft_id=draft.draft_id) }}"
-          onsubmit="return confirm('Discard this entire batch?')">
+          onsubmit="return confirm('Discard this entire batch? Nothing from it will be saved.')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-ghost btn-sm">Discard Batch</button>
     </form>
+    {% elif draft.status == 'completed' %}
+    <a href="{{ url_for('upload.batch_summary', draft_id=draft.draft_id) }}" class="btn btn-success">View Summary</a>
+    {% endif %}
   </div>
 </div>
+
+{% if draft.status == 'active' %}
+<div class="alert alert-info" style="margin-bottom:16px;font-size:13px">
+  <strong>Nothing is saved yet.</strong> Orders you confirm are held in this batch and are only saved when you
+  press <em>Submit Batch</em> after every order is reviewed or skipped. Discarding the batch saves nothing.
+</div>
+{% endif %}
 
 <div class="card">
   <div style="overflow-x:auto">
@@ -37,29 +52,33 @@
       <tbody>
       {% for item in items %}
       {% set inv = item.invoice_data if item.invoice_data is mapping else {} %}
+      {% set fd = item.form_data if item.form_data is mapping else {} %}
       <tr style="border-bottom:1px solid var(--border);{{ 'opacity:.5' if item.parse_status in ('submitted','skipped','failed') else '' }}">
         <td style="padding:8px 12px;color:var(--muted);font-size:12px">{{ item.position + 1 }}</td>
         <td style="padding:8px 12px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">{{ item.filename }}</td>
         <td style="padding:8px 12px">{{ inv.get('retailer', '—') if inv else '—' }}</td>
         <td style="padding:8px 12px;font-family:var(--mono);font-size:11px">
-          {% if inv and inv.get('order_number') %}{{ inv.get('order_number')[:20] }}{% else %}—{% endif %}
+          {% set on = (fd.get('order_number') or [None])[0] or (inv.get('order_number') if inv else None) %}{% if on %}{{ on[:20] }}{% else %}—{% endif %}
         </td>
         <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">
-          {% if inv and inv.get('price_total') %}${{ "%.2f"|format(inv.get('price_total')|float) }}{% else %}—{% endif %}
+          {% set pt = (fd.get('price_total') or [None])[0] or (inv.get('price_total') if inv else None) %}{% if pt %}${{ "%.2f"|format(pt|float) }}{% else %}—{% endif %}
         </td>
         <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">
-          {% if inv and inv.get('card_last4') %}{{ inv.get('card_last4') }}{% elif item.parse_status == 'parsed' %}<span style="color:var(--warning);font-size:11px">⚠ missing</span>{% else %}—{% endif %}
+          {% set cd = (fd.get('card_last4') or [None])[0] or (inv.get('card_last4') if inv else None) %}{% if cd %}{{ cd }}{% elif item.parse_status in ('parsed','reviewed') %}<span style="color:var(--warning);font-size:11px">⚠ missing</span>{% else %}—{% endif %}
         </td>
         <td style="padding:8px 12px">
-          {% if item.parse_status == 'parsed' %}<span class="badge badge-info">Ready</span>
+          {% if item.parse_status == 'parsed' %}<span class="badge badge-info">To review</span>
+          {% elif item.parse_status == 'reviewed' %}<span class="badge badge-success">Confirmed</span>
           {% elif item.parse_status == 'submitted' %}<span class="badge badge-success">Submitted</span>
           {% elif item.parse_status == 'skipped' %}<span class="badge badge-muted">Skipped</span>
           {% elif item.parse_status == 'failed' %}<span class="badge badge-danger">Failed</span>
           {% endif %}
         </td>
         <td style="padding:8px 12px">
-          {% if item.parse_status == 'parsed' %}
+          {% if item.parse_status == 'parsed' and draft.status == 'active' %}
           <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=item.item_id) }}" class="btn btn-ghost btn-sm">Review</a>
+          {% elif item.parse_status in ('reviewed','skipped') and draft.status == 'active' %}
+          <a href="{{ url_for('upload.batch_item_confirm', draft_id=draft.draft_id, item_id=item.item_id) }}" class="btn btn-ghost btn-sm">{{ 'Edit' if item.parse_status == 'reviewed' else 'Review' }}</a>
           {% elif item.parse_status == 'failed' %}
           <a href="{{ url_for('upload.manual_upload') }}" class="btn btn-ghost btn-sm" style="font-size:11px">Manual</a>
           {% endif %}
