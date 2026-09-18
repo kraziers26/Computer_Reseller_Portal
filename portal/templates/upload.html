@@ -8,7 +8,7 @@
 
 {% if active_draft %}
 <div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
-  <span style="font-size:13px;color:#fbbf24">📋 Active batch draft from {{ active_draft.created_at.strftime('%b %d') }} — {{ active_draft.completed_count }}/{{ active_draft.total_files }} submitted</span>
+  <span style="font-size:13px;color:#fbbf24">📋 Active batch draft from {{ active_draft.created_at.strftime('%b %d') }} — {{ active_draft.reviewed_count }}/{{ active_draft.total_files }} confirmed (not saved until you submit the batch)</span>
   <a href="{{ url_for('upload.batch_review', draft_id=active_draft.draft_id) }}" class="btn btn-primary btn-sm" style="margin-left:16px">Continue Batch →</a>
 </div>
 {% endif %}
