@@ -163,6 +163,18 @@
               <input type="text" name="item_sku[]" value="{{ item.sku_model_color or '' }}" placeholder="{{ 'Part Number' if invoice.retailer == 'Apple' else 'SKU' }}" style="font-size:12px;font-family:monospace">
             </div>
           </div>
+          {% if invoice.retailer == 'Apple' %}
+          <div class="form-row" style="margin-bottom:8px">
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label style="font-size:11px">Serial Number</label>
+              <input type="text" name="item_serial[]" value="{{ item.serial_number or '' }}" placeholder="Serial" style="font-size:12px;font-family:monospace">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label style="font-size:11px">IMEI</label>
+              <input type="text" name="item_imei[]" value="{{ item.imei or '' }}" placeholder="IMEI" style="font-size:12px;font-family:monospace">
+            </div>
+          </div>
+          {% endif %}
           <div class="form-row" style="margin-bottom:0">
             <div class="form-group" style="margin-bottom:0">
               <label style="font-size:11px">Qty</label>
@@ -206,6 +218,7 @@
 <script>
 let itemCount = {{ (invoice.get('items', [])|length) if invoice is mapping else 0 }};
 const SKU_LABEL = {{ ('Part Number' if invoice.retailer == 'Apple' else 'SKU') | tojson }};
+const IS_APPLE = {{ (invoice.retailer == 'Apple') | tojson }};
 
 function addItem() {
   document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
@@ -214,6 +227,7 @@ function addItem() {
   div.className = 'item-row';
   div.id = 'item-' + idx;
   div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
+  const serialFields = IS_APPLE ? '<div class="form-row" style="margin-bottom:8px"><div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">Serial Number</label><input type="text" name="item_serial[]" placeholder="Serial" style="font-size:12px;font-family:monospace"></div><div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">IMEI</label><input type="text" name="item_imei[]" placeholder="IMEI" style="font-size:12px;font-family:monospace"></div></div>' : '';
   div.innerHTML = `
     <button type="button" onclick="removeItem(${idx})"
             style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
@@ -227,6 +241,7 @@ function addItem() {
         <input type="text" name="item_sku[]" placeholder="${SKU_LABEL}" style="font-size:12px;font-family:monospace">
       </div>
     </div>
+    ${serialFields}
     <div class="form-row" style="margin-bottom:0">
       <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
         <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
