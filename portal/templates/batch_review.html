@@ -29,8 +29,8 @@
 
 {% if draft.status == 'active' %}
 <div class="alert alert-info" style="margin-bottom:16px;font-size:13px">
-  <strong>Nothing is saved yet.</strong> Orders you confirm are held in this batch and are only saved when you
-  press <em>Submit Batch</em> after every order is reviewed or skipped. Discarding the batch saves nothing.
+  <div><strong>Nothing is saved yet.</strong> Orders you confirm are held in this batch and are only saved when you
+  press <em>Submit Batch</em> after every order is reviewed or skipped. Discarding the batch saves nothing.</div>
 </div>
 {% endif %}
 
@@ -43,6 +43,7 @@
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">File</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
           <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Card</th>
           <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
@@ -60,6 +61,9 @@
         <td style="padding:8px 12px;font-family:var(--mono);font-size:11px">
           {% set on = (fd.get('order_number') or [None])[0] or (inv.get('order_number') if inv else None) %}{% if on %}{{ on[:20] }}{% else %}—{% endif %}
         </td>
+        <td style="padding:8px 12px;font-size:12px">
+          {% set cid = (fd.get('company_id') or [''])[0] %}{{ company_names.get(cid|int) or '—' }}
+        </td>
         <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">
           {% set pt = (fd.get('price_total') or [None])[0] or (inv.get('price_total') if inv else None) %}{% if pt %}${{ "%.2f"|format(pt|float) }}{% else %}—{% endif %}
         </td>
@@ -68,7 +72,7 @@
         </td>
         <td style="padding:8px 12px">
           {% if item.parse_status == 'parsed' %}<span class="badge badge-info">To review</span>
-          {% elif item.parse_status == 'reviewed' %}<span class="badge badge-success">Confirmed</span>
+          {% elif item.parse_status == 'reviewed' %}<span class="badge badge-success">Confirmed</span>{% if (fd.get('company_override') or [''])[0] == '1' %} <span class="badge badge-warning" title="Saved under a company that didn't match the person or card">Company override</span>{% endif %}
           {% elif item.parse_status == 'submitted' %}<span class="badge badge-success">Submitted</span>
           {% elif item.parse_status == 'skipped' %}<span class="badge badge-muted">Skipped</span>
           {% elif item.parse_status == 'failed' %}<span class="badge badge-danger">Failed</span>
