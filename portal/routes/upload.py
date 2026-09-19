@@ -45,9 +45,7 @@ def invoice_to_dict(invoice):
                           'unit_price': float(item.unit_price),
                           'line_total': float(item.line_total),
                           'serial_number': getattr(item, 'serial_number', None),
-                          'imei': getattr(item, 'imei', None),
-                          'tax_amount': getattr(item, 'tax_amount', None),
-                          'landed_cost': getattr(item, 'landed_cost', None)})
+                          'imei': getattr(item, 'imei', None)})
         except Exception:
             continue
     return {'retailer': invoice.retailer,
@@ -65,8 +63,23 @@ def invoice_to_dict(invoice):
             'items': items}
 
 
-def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email):
-    """Write one confirmed transaction to DB. Returns transaction_id."""
+def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email, cur=None):
+    """Write one confirmed transaction to DB. Returns transaction_id.
+
+    Everything (card auto-create, duplicate check, transaction + items) runs on ONE
+    cursor. Pass `cur` to run inside a caller-managed transaction (batch submit) so
+    the caller can roll everything back on failure; without it, this opens and
+    commits its own transaction.
+    """
+    if cur is None:
+        with db_cursor() as (own_cur, _):
+            return _save_transaction(own_cur, form, invoice_data, pdf_bytes,
+                                     form_user_id, current_email)
+    return _save_transaction(cur, form, invoice_data, pdf_bytes,
+                             form_user_id, current_email)
+
+
+def _save_transaction(cur, form, invoice_data, pdf_bytes, form_user_id, current_email):
     company_id   = form.get('company_id', type=int)
     card_last4   = (form.get('card_last4', '').strip() or None)
     if card_last4:
@@ -77,50 +90,52 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
     notes        = (form.get('notes', '').strip())[:140] or None
 
     cashback_rate = cashback_value = None
+    card_unknown = False
     if card_last4:
-        with db_cursor() as (cur, _):
-            # Check if card exists at all (active or not)
-            cur.execute("SELECT card_id, cashback_rate, is_active FROM dim_cards WHERE card_id=%s",
-                        (card_last4,))
-            row = cur.fetchone()
-            if row:
-                cashback_rate  = float(row['cashback_rate'])
-                cashback_value = round(price_total * cashback_rate, 2) if price_total else None
-            else:
-                # Card not in DB — auto-create as unknown so submission doesn't crash
-                # Admin will be alerted via needs_review flag
-                with db_cursor() as (cur2, conn2):
-                    cur2.execute("""
-                        INSERT INTO dim_cards
-                            (card_id, card_name, card_brand, company_id, credit_limit,
-                             cashback_rate, is_active)
-                        VALUES (%s, 'Unknown Card', 'Unknown', 1, 0, 0.01, TRUE)
-                        ON CONFLICT (card_id) DO NOTHING
-                    """, (card_last4,))
-                cashback_rate  = 0.01
-                cashback_value = round(price_total * 0.01, 2) if price_total else None
-                needs_review   = True  # flag for admin to update card details
+        # Check if card exists at all (active or not)
+        cur.execute("SELECT card_id, cashback_rate, is_active FROM dim_cards WHERE card_id=%s",
+                    (card_last4,))
+        row = cur.fetchone()
+        if row:
+            cashback_rate  = float(row['cashback_rate'])
+            cashback_value = round(price_total * cashback_rate, 2) if price_total else None
+        else:
+            # Card not in DB — auto-create as unknown so submission doesn't crash
+            # Admin will be alerted via needs_review flag
+            cur.execute("""
+                INSERT INTO dim_cards
+                    (card_id, card_name, card_brand, company_id, credit_limit,
+                     cashback_rate, is_active)
+                VALUES (%s, 'Unknown Card', 'Unknown', 1, 0, 0.01, TRUE)
+                ON CONFLICT (card_id) DO NOTHING
+            """, (card_last4,))
+            cashback_rate  = 0.01
+            cashback_value = round(price_total * 0.01, 2) if price_total else None
+            card_unknown   = True  # flag for admin to update card details
 
     gross_paid   = round(price_total * 0.01, 2) if price_total else None
     net_paid     = round(gross_paid * 0.8, 2) if gross_paid else None
     tax_withheld = round(gross_paid * 0.2, 2) if gross_paid else None
     gross_biz    = round((gross_paid or 0)+(cashback_value or 0), 2) if gross_paid else None
     net_biz      = round((gross_biz or 0)-(net_paid or 0), 2) if gross_biz else None
-    needs_review = invoice_data.get('needs_review', False) or not card_last4 or locals().get('needs_review', False)
+    needs_review = invoice_data.get('needs_review', False) or not card_last4 or card_unknown
 
-    # Duplicate detection - use separate connection to avoid nested cursor issues
+    # Duplicate detection. Runs on the same cursor so that, in a batch submit, it also
+    # sees orders written earlier in the same batch. A savepoint keeps a failed check
+    # from aborting the whole transaction ("never block submission over dup check").
     is_return = order_type and 'return' in order_type.lower()
     is_dup = False
     if order_number and not is_return:
         try:
-            with db_cursor() as (_dcur, _):
-                _dcur.execute(
-                    "SELECT transaction_id FROM transactions WHERE order_number=%s AND is_active=TRUE LIMIT 1",
-                    (order_number,))
-                if _dcur.fetchone():
-                    is_dup = True
+            cur.execute("SAVEPOINT dup_check")
+            cur.execute(
+                "SELECT transaction_id FROM transactions WHERE order_number=%s AND is_active=TRUE LIMIT 1",
+                (order_number,))
+            if cur.fetchone():
+                is_dup = True
+            cur.execute("RELEASE SAVEPOINT dup_check")
         except Exception:
-            pass  # never block submission over dup check failure
+            cur.execute("ROLLBACK TO SAVEPOINT dup_check")
 
     # Contributor submissions always need admin review
     from flask_login import current_user as _cu
@@ -143,100 +158,164 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
     retailer = (form.get('retailer', '').strip() or invoice_data.get('retailer', ''))
 
     tid = str(uuid.uuid4())
-    with db_cursor() as (cur, conn):
-        cur.execute("""
-            INSERT INTO transactions (
-                transaction_id, order_number, retailer, purchase_date, purchase_year_month,
-                user_id, company_id, card_id, price_total, costco_taxes_paid,
-                cashback_rate, cashback_value, commission_type, commission_amount, order_type,
-                review_status, is_duplicate, submitted_by_email,
-                gross_paid_amount, net_paid_amount, gross_business_commission,
-                net_business_commission, sales_payroll_tax_withheld, notes,
-                membership_number, invoice_pdf, submitted_at,
-                fulfillment_status, fulfillment_status_updated_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,FALSE,%s,
-                      %s,%s,%s,%s,%s,%s,%s,%s,NOW(),
-                      'uploaded', NOW())
-        """, (tid, order_number, retailer,
-              purchase_date, purchase_year_month,
-              form_user_id, company_id, card_last4, price_total,
-              invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
-              gross_paid, order_type,
-              review_status,
-              current_email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
-              notes, invoice_data.get('membership_number'), pdf_bytes))
+    cur.execute("""
+        INSERT INTO transactions (
+            transaction_id, order_number, retailer, purchase_date, purchase_year_month,
+            user_id, company_id, card_id, price_total, costco_taxes_paid,
+            cashback_rate, cashback_value, commission_type, commission_amount, order_type,
+            review_status, is_duplicate, submitted_by_email,
+            gross_paid_amount, net_paid_amount, gross_business_commission,
+            net_business_commission, sales_payroll_tax_withheld, notes,
+            membership_number, invoice_pdf, submitted_at,
+            fulfillment_status, fulfillment_status_updated_at
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,FALSE,%s,
+                  %s,%s,%s,%s,%s,%s,%s,%s,NOW(),
+                  'uploaded', NOW())
+    """, (tid, order_number, retailer,
+          purchase_date, purchase_year_month,
+          form_user_id, company_id, card_last4, price_total,
+          invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
+          gross_paid, order_type,
+          review_status,
+          current_email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
+          notes, invoice_data.get('membership_number'), pdf_bytes))
 
-        # Build items from form fields (editable list fields) if present,
-        # otherwise fall back to parsed invoice_data items
-        form_descs = form.getlist('item_description[]')
-        if form_descs:
-            items = []
-            skus        = form.getlist('item_sku[]')
-            serials     = form.getlist('item_serial[]')
-            imeis       = form.getlist('item_imei[]')
-            taxes       = form.getlist('item_tax[]')
-            landeds     = form.getlist('item_landed[]')
-            qtys        = form.getlist('item_qty[]')
-            unit_prices = form.getlist('item_unit_price[]')
-            line_totals = form.getlist('item_line_total[]')
-            for i, desc in enumerate(form_descs):
-                desc = desc.strip()
-                if not desc:
-                    continue
-                try:
-                    unit_p = float(unit_prices[i]) if i < len(unit_prices) else 0.0
-                    line_t = float(line_totals[i]) if i < len(line_totals) else 0.0
-                    qty    = int(qtys[i]) if i < len(qtys) else 1
-                    sku    = skus[i].strip() if i < len(skus) else ''
-                    serial = serials[i].strip() if i < len(serials) else ''
-                    imei   = imeis[i].strip() if i < len(imeis) else ''
-                    tax_a  = float(taxes[i]) if i < len(taxes) and taxes[i] != '' else None
-                    landed = float(landeds[i]) if i < len(landeds) and landeds[i] != '' else None
-                    items.append({'item_description': desc,
-                                  'sku_model_color': sku or None,
-                                  'quantity': qty,
-                                  'unit_price': unit_p,
-                                  'line_total': line_t,
-                                  'serial_number': serial or None,
-                                  'imei': imei or None,
-                                  'tax_amount': tax_a,
-                                  'landed_cost': landed})
-                except (ValueError, IndexError):
-                    continue
-        else:
-            items = invoice_data.get('items', [])
+    # Build items from form fields (editable list fields) if present,
+    # otherwise fall back to parsed invoice_data items
+    form_descs = form.getlist('item_description[]')
+    if form_descs:
+        items = []
+        skus        = form.getlist('item_sku[]')
+        serials     = form.getlist('item_serial[]')
+        imeis       = form.getlist('item_imei[]')
+        qtys        = form.getlist('item_qty[]')
+        unit_prices = form.getlist('item_unit_price[]')
+        line_totals = form.getlist('item_line_total[]')
+        for i, desc in enumerate(form_descs):
+            desc = desc.strip()
+            if not desc:
+                continue
+            try:
+                unit_p = float(unit_prices[i]) if i < len(unit_prices) else 0.0
+                line_t = float(line_totals[i]) if i < len(line_totals) else 0.0
+                qty    = int(qtys[i]) if i < len(qtys) else 1
+                sku    = skus[i].strip() if i < len(skus) else ''
+                serial = serials[i].strip() if i < len(serials) else ''
+                imei   = imeis[i].strip() if i < len(imeis) else ''
+                items.append({'item_description': desc,
+                              'sku_model_color': sku or None,
+                              'quantity': qty,
+                              'unit_price': unit_p,
+                              'line_total': line_t,
+                              'serial_number': serial or None,
+                              'imei': imei or None})
+            except (ValueError, IndexError):
+                continue
+    else:
+        items = invoice_data.get('items', [])
 
-        # Apple tax is re-allocated server-side over the final line prices so
-        # edits on the confirm screen stay correct. order_tax (the receipt's
-        # total tax) comes from the form; if absent, it's the sum of the
-        # parsed per-line taxes. Non-Apple retailers are untouched.
-        if retailer == 'Apple' and items:
-            order_tax = form.get('order_tax', type=float)
-            if order_tax is None:
-                order_tax = round(sum(float(it.get('tax_amount') or 0) for it in items), 2)
-            if order_tax and order_tax > 0:
-                import apple_parser
-                weights = [round(float(it.get('unit_price') or 0) * int(it.get('quantity') or 1), 2)
-                           for it in items]
-                line_taxes = apple_parser.allocate_tax_amounts(weights, order_tax)
-                for it, w, t in zip(items, weights, line_taxes):
-                    it['line_total']  = w
-                    it['tax_amount']  = t
-                    it['landed_cost'] = round(w + t, 2)
-
-        if items:
-            cur.executemany("""
-                INSERT INTO transaction_items
-                (item_id, transaction_id, item_description, sku_model_color,
-                 quantity, unit_price, line_total, serial_number, imei,
-                 tax_amount, landed_cost)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, [(str(uuid.uuid4()), tid, it['item_description'],
-                   it.get('sku_model_color'), it['quantity'],
-                   it['unit_price'], it['line_total'],
-                   it.get('serial_number'), it.get('imei'),
-                   it.get('tax_amount'), it.get('landed_cost')) for it in items])
+    if items:
+        cur.executemany("""
+            INSERT INTO transaction_items
+            (item_id, transaction_id, item_description, sku_model_color,
+             quantity, unit_price, line_total, serial_number, imei)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, [(str(uuid.uuid4()), tid, it['item_description'],
+               it.get('sku_model_color'), it['quantity'],
+               it['unit_price'], it['line_total'],
+               it.get('serial_number'), it.get('imei')) for it in items])
     return tid
+
+
+# ── Batch staging helpers ─────────────────────────────────────────────────────
+# In a batch, "Confirm" on an order only STAGES the reviewed form on the draft item.
+# Nothing touches `transactions` until the whole batch is submitted.
+
+_STAGE_SKIP = {'csrf_token', 'action'}
+
+
+def form_to_stage(form):
+    """Serialize a submitted form (MultiDict) to a JSON-safe {field: [values]} dict."""
+    return {k: form.getlist(k) for k in form.keys() if k not in _STAGE_SKIP}
+
+
+def stage_to_form(data):
+    """Rebuild a MultiDict from staged form data so save_transaction can read it unchanged."""
+    from werkzeug.datastructures import MultiDict
+    return MultiDict([(k, v) for k, vals in (data or {}).items() for v in vals])
+
+
+def stage_scalars(data):
+    """Staged form data → {field: first value} for prefilling the confirm page."""
+    return {k: (v[0] if v else '') for k, v in (data or {}).items() if not k.endswith('[]')}
+
+
+def stage_items(data):
+    """Staged form data → list of line-item dicts for the confirm page (None if nothing staged)."""
+    if not data or 'item_description[]' not in data:
+        return None
+    def col(name):
+        return data.get(name, [])
+    def at(lst, i, default=''):
+        return lst[i] if i < len(lst) else default
+    descs = col('item_description[]')
+    out = []
+    for i, d in enumerate(descs):
+        if not d.strip():
+            continue
+        out.append({'item_description': d,
+                    'sku_model_color': at(col('item_sku[]'), i),
+                    'serial_number': at(col('item_serial[]'), i),
+                    'imei': at(col('item_imei[]'), i),
+                    'quantity': at(col('item_qty[]'), i, 1),
+                    'unit_price': at(col('item_unit_price[]'), i, 0),
+                    'line_total': at(col('item_line_total[]'), i, 0)})
+    return out
+
+
+def validate_staged_form(form):
+    """Catch what would make the final batch commit fail, at review time."""
+    errors = []
+    if not form.get('company_id', type=int):
+        errors.append('Purchase Company is required.')
+    if not form.get('order_number', '').strip():
+        errors.append('Order Number is required.')
+    if not form.get('purchase_date', '').strip():
+        errors.append('Purchase Date is required.')
+    if form.get('price_total', type=float) is None:
+        errors.append('Price Total is required.')
+    return errors
+
+
+def load_company_maps(cur):
+    """Reference data for the person/company/card consistency check.
+    Returns ({user_id(str): [company_id, ...]}, {card_id: company_id})."""
+    cur.execute("SELECT user_id, company_id FROM user_companies")
+    people = {}
+    for r in cur.fetchall():
+        people.setdefault(str(r['user_id']), []).append(r['company_id'])
+    cur.execute("SELECT card_id, company_id FROM dim_cards")
+    cards = {r['card_id']: r['company_id'] for r in cur.fetchall()}
+    return people, cards
+
+
+def company_mismatches(user_id, company_id, card_last4, people_companies, card_companies,
+                       person_names, company_names):
+    """Plain-language reasons the chosen company looks wrong (empty list = consistent).
+    Two independent signals: person vs. their assigned companies, and card vs. its company.
+    A person with no assigned companies, or a card we don't know, can't be checked."""
+    msgs = []
+    assigned = people_companies.get(str(user_id)) or []
+    if user_id and company_id and assigned and company_id not in assigned:
+        msgs.append(f"{person_names.get(user_id, 'This person')} isn\u2019t assigned to "
+                    f"{company_names.get(company_id, 'that company')}.")
+    card = (card_last4 or '').strip()
+    if card:
+        card = card.zfill(4)
+    card_co = card_companies.get(card)
+    if company_id and card_co and card_co != company_id:
+        msgs.append(f"Card {card} belongs to {company_names.get(card_co, 'another company')}.")
+    return msgs
 
 
 # ── Single Upload ─────────────────────────────────────────────────────────────
@@ -249,7 +328,10 @@ def upload():
     active_draft = None
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT d.draft_id, d.total_files, d.completed_count, d.created_at
+            SELECT d.draft_id, d.total_files, d.completed_count, d.created_at,
+                   (SELECT COUNT(*) FROM batch_draft_items i
+                    WHERE i.draft_id=d.draft_id
+                      AND i.parse_status IN ('reviewed','submitted')) AS reviewed_count
             FROM batch_drafts d
             WHERE d.user_id=%s AND d.status='active'
             ORDER BY d.created_at DESC LIMIT 1
@@ -406,7 +488,10 @@ def batch_upload():
     # Check for existing active draft
     with db_cursor() as (cur, _):
         cur.execute("""
-            SELECT d.draft_id, d.total_files, d.completed_count, d.failed_count, d.created_at
+            SELECT d.draft_id, d.total_files, d.completed_count, d.failed_count, d.created_at,
+                   (SELECT COUNT(*) FROM batch_draft_items i
+                    WHERE i.draft_id=d.draft_id
+                      AND i.parse_status IN ('reviewed','submitted')) AS reviewed_count
             FROM batch_drafts d WHERE d.user_id=%s AND d.status='active'
             ORDER BY d.created_at DESC LIMIT 1
         """, (current_user.id,))
@@ -492,8 +577,12 @@ def batch_review(draft_id):
     # Find next unreviewed parsed item
     next_item = next((i for i in items if i['parse_status'] == 'parsed'), None)
 
+    counts = {s: sum(1 for i in items if i['parse_status'] == s)
+              for s in ('parsed', 'reviewed', 'submitted', 'skipped', 'failed')}
+
     return render_template('batch_review.html', draft=draft, items=items,
-                           companies=companies, next_item=next_item)
+                           companies=companies, next_item=next_item, counts=counts,
+                           company_names={c['company_id']: c['company_name'] for c in companies})
 
 
 @upload_bp.route('/upload/batch/<draft_id>/item/<item_id>', methods=['GET', 'POST'])
@@ -519,87 +608,169 @@ def batch_item_confirm(draft_id, item_id):
         companies = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
+        people_companies, card_companies = load_company_maps(cur)
 
-        # Count remaining
+        # Count remaining (not yet reviewed)
         cur.execute("""
             SELECT COUNT(*) AS n FROM batch_draft_items
             WHERE draft_id=%s AND parse_status='parsed'
         """, (draft_id,))
         remaining = cur.fetchone()['n']
 
-    if request.method == 'POST':
-        action = request.form.get('action')
-
-        if action == 'skip':
-            with db_cursor() as (cur, conn):
-                cur.execute("UPDATE batch_draft_items SET parse_status='skipped' WHERE item_id=%s",
-                            (item_id,))
-            flash('Invoice skipped.', 'info')
-            return redirect(url_for('upload.batch_review', draft_id=draft_id))
-
-        if action == 'submit':
-            invoice_data = item['invoice_data']
-            if isinstance(invoice_data, str):
-                invoice_data = json.loads(invoice_data)
-
-            pdf_bytes = bytes(item['pdf_bytes']) if item['pdf_bytes'] else None
-            form_user_id = request.form.get('user_id', type=int) or current_user.id
-
-            try:
-                tid = save_transaction(request.form, invoice_data, pdf_bytes,
-                                       form_user_id, current_user.email)
-            except ValueError as e:
-                if str(e).startswith('DUPLICATE:'):
-                    order_num = str(e).split(':', 1)[1]
-                    # Mark as skipped in batch with dup note
-                    with db_cursor() as (cur, conn):
-                        cur.execute(
-                            "UPDATE batch_draft_items SET parse_status='skipped' WHERE item_id=%s",
-                            (item_id,))
-                    flash(f'⛔ Order #{order_num} is a duplicate and was skipped. '
-                          f'Change Order Type to Return if applicable.', 'error')
-                    return redirect(url_for('upload.batch_review', draft_id=draft_id))
-                raise
-
-            with db_cursor() as (cur, conn):
-                cur.execute("""
-                    UPDATE batch_draft_items
-                    SET parse_status='submitted', transaction_id=%s, submitted_at=NOW()
-                    WHERE item_id=%s
-                """, (tid, item_id))
-                cur.execute("""
-                    UPDATE batch_drafts
-                    SET completed_count=completed_count+1, updated_at=NOW()
-                    WHERE draft_id=%s
-                """, (draft_id,))
-
-            flash(f"Order #{request.form.get('order_number','')} submitted!", 'success')
-
-            # Check if batch complete
-            with db_cursor() as (cur, _):
-                cur.execute("""
-                    SELECT COUNT(*) AS n FROM batch_draft_items
-                    WHERE draft_id=%s AND parse_status='parsed'
-                """, (draft_id,))
-                left = cur.fetchone()['n']
-
-            if left == 0:
-                with db_cursor() as (cur, conn):
-                    cur.execute("UPDATE batch_drafts SET status='completed' WHERE draft_id=%s",
-                                (draft_id,))
-                flash('Batch complete!', 'success')
-                return redirect(url_for('upload.batch_summary', draft_id=draft_id))
-
-            return redirect(url_for('upload.batch_review', draft_id=draft_id))
+    # Once a batch is submitted/discarded, or an order is already saved, it can't be edited here
+    if draft['status'] != 'active' or item['parse_status'] in ('submitted', 'failed'):
+        flash('This item can no longer be edited.', 'info')
+        return redirect(url_for('upload.batch_review', draft_id=draft_id))
 
     invoice_data = item['invoice_data']
     if isinstance(invoice_data, str):
         invoice_data = json.loads(invoice_data)
 
+    saved = item.get('form_data')         # previously confirmed (staged) form, if any
+    if isinstance(saved, str):
+        saved = json.loads(saved)
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'skip':
+            with db_cursor() as (cur, conn):
+                cur.execute("""
+                    UPDATE batch_draft_items SET parse_status='skipped', form_data=NULL
+                    WHERE item_id=%s
+                """, (item_id,))
+            flash('Invoice skipped.', 'info')
+            return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+        # 'submit' kept as an alias so a page loaded before this change can't save early
+        if action in ('confirm', 'submit'):
+            errors = validate_staged_form(request.form)
+            mismatches = []
+            if not errors:
+                # Person/company/card consistency. A mismatch needs an explicit override tick.
+                mismatches = company_mismatches(
+                    request.form.get('user_id', type=int) or current_user.id,
+                    request.form.get('company_id', type=int),
+                    request.form.get('card_last4'),
+                    people_companies, card_companies,
+                    {u['user_id']: u['username'] for u in users},
+                    {c['company_id']: c['company_name'] for c in companies})
+            override = request.form.get('company_override') == '1'
+
+            if errors or (mismatches and not override):
+                for e in errors:
+                    flash(e, 'error')
+                if mismatches and not override:
+                    for m in mismatches:
+                        flash(m, 'error')
+                    co_name = next((c['company_name'] for c in companies
+                                    if c['company_id'] == request.form.get('company_id', type=int)), 'this company')
+                    flash(f'Tick \u201cYes, this is correct\u201d to save under {co_name}, '
+                          f'or change the company.', 'error')
+                saved = form_to_stage(request.form)   # re-show what they typed
+            else:
+                stage = form_to_stage(request.form)
+                # The flag only exists when a mismatch was actually overridden
+                stage.pop('company_override', None)
+                if mismatches:
+                    stage['company_override'] = ['1']
+                # STAGE ONLY — nothing is written to transactions until the batch is submitted
+                with db_cursor() as (cur, conn):
+                    cur.execute("""
+                        UPDATE batch_draft_items
+                        SET parse_status='reviewed', form_data=%s
+                        WHERE item_id=%s
+                    """, (json.dumps(stage), item_id))
+                    cur.execute("UPDATE batch_drafts SET updated_at=NOW() WHERE draft_id=%s",
+                                (draft_id,))
+                flash(f"Order #{request.form.get('order_number','')} confirmed — "
+                      f"it will be saved when you submit the batch.", 'success')
+                return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
     return render_template('batch_item_confirm.html',
                            draft=draft, item=item, invoice=invoice_data,
+                           saved=stage_scalars(saved), saved_items=stage_items(saved),
                            companies=companies, users=users,
+                           people_companies=people_companies, card_companies=card_companies,
+                           company_names={c['company_id']: c['company_name'] for c in companies},
+                           person_names={u['user_id']: u['username'] for u in users},
                            current_user_id=current_user.id, remaining=remaining)
+
+
+@upload_bp.route('/upload/batch/<draft_id>/submit', methods=['POST'])
+@login_required
+@require_role('contributor')
+def batch_submit(draft_id):
+    """Save EVERY confirmed order in the batch in one DB transaction — all or nothing."""
+    from flask import current_app
+    current_order = None
+    try:
+        with db_cursor() as (cur, conn):
+            # Lock the draft row so a double-click can't submit the batch twice
+            cur.execute("""
+                SELECT status FROM batch_drafts
+                WHERE draft_id=%s AND user_id=%s FOR UPDATE
+            """, (draft_id, current_user.id))
+            draft = cur.fetchone()
+            if not draft:
+                flash('Batch not found.', 'error')
+                return redirect(url_for('upload.upload'))
+            if draft['status'] != 'active':
+                flash('This batch was already submitted or discarded.', 'info')
+                return redirect(url_for('upload.upload'))
+
+            cur.execute("SELECT * FROM batch_draft_items WHERE draft_id=%s ORDER BY position",
+                        (draft_id,))
+            items = cur.fetchall()
+
+            unreviewed = [i for i in items if i['parse_status'] == 'parsed']
+            if unreviewed:
+                flash(f'{len(unreviewed)} order(s) still need to be reviewed or skipped '
+                      f'before the batch can be submitted.', 'error')
+                return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+            staged = [i for i in items if i['parse_status'] == 'reviewed']
+            if not staged:
+                flash('There are no confirmed orders to submit.', 'error')
+                return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+            for it in staged:
+                data = it['form_data']
+                if isinstance(data, str):
+                    data = json.loads(data)
+                form = stage_to_form(data)
+                current_order = form.get('order_number', '')
+
+                invoice_data = it['invoice_data']
+                if isinstance(invoice_data, str):
+                    invoice_data = json.loads(invoice_data)
+                pdf_bytes = bytes(it['pdf_bytes']) if it['pdf_bytes'] else None
+                form_user_id = form.get('user_id', type=int) or current_user.id
+
+                tid = save_transaction(form, invoice_data, pdf_bytes, form_user_id,
+                                       current_user.email, cur=cur)
+                cur.execute("""
+                    UPDATE batch_draft_items
+                    SET parse_status='submitted', transaction_id=%s, submitted_at=NOW()
+                    WHERE item_id=%s
+                """, (tid, it['item_id']))
+
+            cur.execute("""
+                UPDATE batch_drafts
+                SET status='completed', completed_count=%s, updated_at=NOW()
+                WHERE draft_id=%s
+            """, (len(staged), draft_id))
+    except Exception:
+        # db_cursor rolled the whole transaction back — no order from this batch was saved
+        current_app.logger.exception('Batch submit failed (draft %s, order %s)',
+                                     draft_id, current_order)
+        flash(f'Batch NOT submitted — nothing was saved. '
+              f'The problem was with order #{current_order or "?"}. '
+              f'Open it, check the details, and try again.', 'error')
+        return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+    flash(f'Batch submitted — {len(staged)} order(s) saved.', 'success')
+    return redirect(url_for('upload.batch_summary', draft_id=draft_id))
 
 
 @upload_bp.route('/upload/batch/<draft_id>/preview/<item_id>')
@@ -644,9 +815,9 @@ def batch_discard(draft_id):
     with db_cursor() as (cur, conn):
         cur.execute("""
             UPDATE batch_drafts SET status='discarded'
-            WHERE draft_id=%s AND user_id=%s
+            WHERE draft_id=%s AND user_id=%s AND status='active'
         """, (draft_id, current_user.id))
-    flash('Batch discarded.', 'info')
+    flash('Batch discarded — nothing from it was saved.', 'info')
     return redirect(url_for('upload.upload'))
 
 
