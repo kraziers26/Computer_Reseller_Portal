@@ -287,6 +287,37 @@ def validate_staged_form(form):
     return errors
 
 
+def load_company_maps(cur):
+    """Reference data for the person/company/card consistency check.
+    Returns ({user_id(str): [company_id, ...]}, {card_id: company_id})."""
+    cur.execute("SELECT user_id, company_id FROM user_companies")
+    people = {}
+    for r in cur.fetchall():
+        people.setdefault(str(r['user_id']), []).append(r['company_id'])
+    cur.execute("SELECT card_id, company_id FROM dim_cards")
+    cards = {r['card_id']: r['company_id'] for r in cur.fetchall()}
+    return people, cards
+
+
+def company_mismatches(user_id, company_id, card_last4, people_companies, card_companies,
+                       person_names, company_names):
+    """Plain-language reasons the chosen company looks wrong (empty list = consistent).
+    Two independent signals: person vs. their assigned companies, and card vs. its company.
+    A person with no assigned companies, or a card we don't know, can't be checked."""
+    msgs = []
+    assigned = people_companies.get(str(user_id)) or []
+    if user_id and company_id and assigned and company_id not in assigned:
+        msgs.append(f"{person_names.get(user_id, 'This person')} isn\u2019t assigned to "
+                    f"{company_names.get(company_id, 'that company')}.")
+    card = (card_last4 or '').strip()
+    if card:
+        card = card.zfill(4)
+    card_co = card_companies.get(card)
+    if company_id and card_co and card_co != company_id:
+        msgs.append(f"Card {card} belongs to {company_names.get(card_co, 'another company')}.")
+    return msgs
+
+
 # ── Single Upload ─────────────────────────────────────────────────────────────
 
 @upload_bp.route('/upload', methods=['GET', 'POST'])
@@ -550,7 +581,8 @@ def batch_review(draft_id):
               for s in ('parsed', 'reviewed', 'submitted', 'skipped', 'failed')}
 
     return render_template('batch_review.html', draft=draft, items=items,
-                           companies=companies, next_item=next_item, counts=counts)
+                           companies=companies, next_item=next_item, counts=counts,
+                           company_names={c['company_id']: c['company_name'] for c in companies})
 
 
 @upload_bp.route('/upload/batch/<draft_id>/item/<item_id>', methods=['GET', 'POST'])
@@ -576,6 +608,7 @@ def batch_item_confirm(draft_id, item_id):
         companies = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
+        people_companies, card_companies = load_company_maps(cur)
 
         # Count remaining (not yet reviewed)
         cur.execute("""
@@ -612,18 +645,42 @@ def batch_item_confirm(draft_id, item_id):
         # 'submit' kept as an alias so a page loaded before this change can't save early
         if action in ('confirm', 'submit'):
             errors = validate_staged_form(request.form)
-            if errors:
+            mismatches = []
+            if not errors:
+                # Person/company/card consistency. A mismatch needs an explicit override tick.
+                mismatches = company_mismatches(
+                    request.form.get('user_id', type=int) or current_user.id,
+                    request.form.get('company_id', type=int),
+                    request.form.get('card_last4'),
+                    people_companies, card_companies,
+                    {u['user_id']: u['username'] for u in users},
+                    {c['company_id']: c['company_name'] for c in companies})
+            override = request.form.get('company_override') == '1'
+
+            if errors or (mismatches and not override):
                 for e in errors:
                     flash(e, 'error')
+                if mismatches and not override:
+                    for m in mismatches:
+                        flash(m, 'error')
+                    co_name = next((c['company_name'] for c in companies
+                                    if c['company_id'] == request.form.get('company_id', type=int)), 'this company')
+                    flash(f'Tick \u201cYes, this is correct\u201d to save under {co_name}, '
+                          f'or change the company.', 'error')
                 saved = form_to_stage(request.form)   # re-show what they typed
             else:
+                stage = form_to_stage(request.form)
+                # The flag only exists when a mismatch was actually overridden
+                stage.pop('company_override', None)
+                if mismatches:
+                    stage['company_override'] = ['1']
                 # STAGE ONLY — nothing is written to transactions until the batch is submitted
                 with db_cursor() as (cur, conn):
                     cur.execute("""
                         UPDATE batch_draft_items
                         SET parse_status='reviewed', form_data=%s
                         WHERE item_id=%s
-                    """, (json.dumps(form_to_stage(request.form)), item_id))
+                    """, (json.dumps(stage), item_id))
                     cur.execute("UPDATE batch_drafts SET updated_at=NOW() WHERE draft_id=%s",
                                 (draft_id,))
                 flash(f"Order #{request.form.get('order_number','')} confirmed — "
@@ -634,6 +691,9 @@ def batch_item_confirm(draft_id, item_id):
                            draft=draft, item=item, invoice=invoice_data,
                            saved=stage_scalars(saved), saved_items=stage_items(saved),
                            companies=companies, users=users,
+                           people_companies=people_companies, card_companies=card_companies,
+                           company_names={c['company_id']: c['company_name'] for c in companies},
+                           person_names={u['user_id']: u['username'] for u in users},
                            current_user_id=current_user.id, remaining=remaining)
 
 
