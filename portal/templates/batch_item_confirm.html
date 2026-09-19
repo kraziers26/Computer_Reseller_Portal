@@ -67,24 +67,38 @@
       <div class="card-title">Person & company</div>
       <div class="form-row">
         <div class="form-group"><label>Person By *</label>
-          <select name="user_id" required>
+          <select name="user_id" id="co-person" required>
             {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id == (v.get('user_id')|int(current_user_id)) }}>{{ u.username }}</option>{% endfor %}
           </select>
         </div>
         <div class="form-group"><label>Purchase Company *</label>
-          <select name="company_id" required>
+          <select name="company_id" id="co-company" required>
             <option value="">Select company...</option>
             {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if v.get('company_id')|string == c.company_id|string }}>{{ c.company_name }}</option>{% endfor %}
           </select>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px">
+            <button type="button" id="co-showall" class="btn btn-ghost btn-sm" style="padding:2px 0;display:none">Show all companies</button>
+            <span id="co-err" style="font-size:12px;color:#f87171"></span>
+          </div>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
-          <input type="text" name="card_last4" value="{{ v.get('card_last4', invoice.card_last4 or '') }}" placeholder="e.g. 3015" maxlength="4">
+          <input type="text" name="card_last4" id="co-card" value="{{ v.get('card_last4', invoice.card_last4 or '') }}" placeholder="e.g. 3015" maxlength="4">
           {% if not invoice.card_last4 %}<div style="font-size:11px;color:var(--warning);margin-top:4px">Enter manually or leave blank to flag.</div>{% endif %}
         </div>
         <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
           <input type="text" name="notes" maxlength="140" value="{{ v.get('notes', '') }}" placeholder="Optional tag or note"></div>
+      </div>
+      <div id="co-warn" style="display:none;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--r-sm);padding:12px 14px">
+        <div style="color:#fbbf24;font-weight:500;font-size:13px;margin-bottom:6px">⚠ Check the company</div>
+        <ul id="co-msgs" style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.5"></ul>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4;cursor:pointer;color:var(--text)">
+          <input type="checkbox" name="company_override" value="1" id="co-override" style="margin-top:3px;width:auto"
+                 {{ 'checked' if v.get('company_override') == '1' }}>
+          <span id="co-override-label"></span>
+        </label>
+        <div id="co-override-err" style="font-size:12px;color:#f87171;margin-top:6px"></div>
       </div>
     </div>
 
@@ -194,6 +208,92 @@ function removeItem(idx) {
   const el = document.getElementById('item-' + idx);
   if (el) el.remove();
 }
+</script>
+
+<script>
+(function () {
+  var PEOPLE_CO = {{ people_companies|tojson }};
+  var CARD_CO   = {{ card_companies|tojson }};
+  var CO_NAMES  = {{ company_names|tojson }};
+  var PERSON_NAMES = {{ person_names|tojson }};
+  var showAll = false, lastSig = null;
+
+  var personSel = document.getElementById('co-person');
+  var companySel = document.getElementById('co-company');
+  var ALL_CO = Array.prototype.map.call(companySel.options, function (o) { return Number(o.value); }).filter(Boolean);
+  var cardInp = document.getElementById('co-card');
+  var warn = document.getElementById('co-warn');
+  var msgList = document.getElementById('co-msgs');
+  var ovBox = document.getElementById('co-override');
+  var ovLabel = document.getElementById('co-override-label');
+  var ovErr = document.getElementById('co-override-err');
+  var coErr = document.getElementById('co-err');
+  var showAllBtn = document.getElementById('co-showall');
+
+  function assigned() { return PEOPLE_CO[personSel.value] || []; }
+
+  function fillCompanies() {
+    var a = assigned(), cur = companySel.value;
+    var ids = (showAll || !a.length) ? ALL_CO : ALL_CO.filter(function (id) { return a.indexOf(id) > -1; });
+    var html = '<option value="">Select company...</option>';
+    ids.forEach(function (id) { html += '<option value="' + id + '">' + CO_NAMES[id] + '</option>'; });
+    companySel.innerHTML = html;
+    if (ids.map(String).indexOf(cur) > -1) { companySel.value = cur; }
+    else if (ids.length === 1 && a.length) { companySel.value = String(ids[0]); }
+    showAllBtn.style.display = (showAll || !a.length) ? 'none' : 'inline-block';
+  }
+
+  function mismatches() {
+    var p = personSel.value, c = Number(companySel.value), m = [];
+    var a = assigned();
+    if (p && c && a.length && a.indexOf(c) < 0) {
+      m.push((PERSON_NAMES[p] || 'This person') + ' isn\u2019t assigned to ' + CO_NAMES[c] + '.');
+    }
+    var k = cardInp.value.trim();
+    if (k) { while (k.length < 4) { k = '0' + k; } }
+    if (c && CARD_CO[k] && CARD_CO[k] !== c) {
+      m.push('Card ' + k + ' belongs to ' + CO_NAMES[CARD_CO[k]] + '.');
+    }
+    return m;
+  }
+
+  function render() {
+    var m = mismatches(), sig = m.join('|') + '#' + companySel.value;
+    if (lastSig !== null && sig !== lastSig) { ovBox.checked = false; }
+    lastSig = sig;
+    msgList.innerHTML = '';
+    m.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; msgList.appendChild(li); });
+    ovLabel.textContent = 'Yes, this is correct. Save under ' +
+      (companySel.value ? CO_NAMES[companySel.value] : 'this company') + '.';
+    warn.style.display = m.length ? 'block' : 'none';
+    if (!m.length) { ovBox.checked = false; }
+    ovErr.textContent = ''; coErr.textContent = '';
+  }
+
+  personSel.addEventListener('change', function () { fillCompanies(); render(); });
+  companySel.addEventListener('change', render);
+  cardInp.addEventListener('input', render);
+  ovBox.addEventListener('change', function () { ovErr.textContent = ''; });
+  showAllBtn.addEventListener('click', function () { showAll = true; fillCompanies(); render(); });
+
+  companySel.form.addEventListener('submit', function (e) {
+    var isConfirm = e.submitter && e.submitter.value === 'confirm';
+    if (!isConfirm) { return; }
+    var m = mismatches();
+    if (m.length && !ovBox.checked) {
+      e.preventDefault();
+      ovErr.textContent = 'Tick the box to save under ' + CO_NAMES[companySel.value] + ', or change the company.';
+      warn.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+  });
+
+  // Initial state: keep a previously chosen company even if it's outside the person's list (an override being edited)
+  var a0 = assigned(), c0 = Number(companySel.value);
+  if (c0 && a0.length && a0.indexOf(c0) < 0) { showAll = true; }
+  fillCompanies();
+  render();
+  if ({{ 'true' if v.get('company_override') == '1' else 'false' }} && mismatches().length) { ovBox.checked = true; }
+})();
 </script>
 
 <style>
