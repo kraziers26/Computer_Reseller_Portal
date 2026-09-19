@@ -114,6 +114,16 @@ def _load_received_orders(cur, include_txn_ids=None):
     return orders, order_items
 
 
+def _compute_unit_price(unit_cost, commission_type, commission_value):
+    """A line's price is always derived from cost + commission — never typed
+    in directly. 'percent' scales the cost; 'flat' adds a fixed amount per unit."""
+    unit_cost = float(unit_cost or 0)
+    commission_value = float(commission_value or 0)
+    if commission_type == 'flat':
+        return round(unit_cost + commission_value, 2)
+    return round(unit_cost * (1 + commission_value / 100), 2)
+
+
 def _strip_order_tag(desc, order_number):
     """Undo the '[ORD-X] ' prefix _save_invoice bakes into a member row's
     stored description, so the builder shows the clean item name."""
@@ -192,6 +202,8 @@ def _get_display_lines(cur, invoice_id):
         SELECT ii.*, t.order_number, t.retailer AS order_retailer,
                t.purchase_date AS order_date,
                lg.description AS group_description, lg.sku AS group_sku,
+               lg.commission_type AS group_commission_type,
+               lg.commission_value AS group_commission_value,
                lg.sort_order AS group_sort_order
         FROM invoice_items ii
         LEFT JOIN transactions t          ON ii.transaction_id = t.transaction_id
@@ -209,6 +221,8 @@ def _get_display_lines(cur, invoice_id):
             if gid not in seen_groups:
                 entry = {'kind': 'group', 'group_id': gid,
                          'description': it['group_description'], 'sku': it['group_sku'],
+                         'commission_type': it['group_commission_type'],
+                         'commission_value': it['group_commission_value'],
                          'members': []}
                 seen_groups[gid] = entry
                 display_lines.append(entry)
@@ -494,8 +508,11 @@ def edit_invoice(invoice_id):
         cur.execute("""
             SELECT ii.item_id, ii.transaction_id, ii.item_description, ii.sku,
                    ii.quantity, ii.unit_cost, ii.group_id, ii.sort_order,
+                   ii.commission_type, ii.commission_value, ii.commission_override,
                    t.order_number,
-                   lg.description AS group_description, lg.sort_order AS group_sort_order
+                   lg.description AS group_description, lg.sort_order AS group_sort_order,
+                   lg.commission_type AS group_commission_type,
+                   lg.commission_value AS group_commission_value
             FROM invoice_items ii
             LEFT JOIN transactions t         ON ii.transaction_id = t.transaction_id
             LEFT JOIN invoice_line_groups lg ON ii.group_id = lg.group_id
@@ -536,11 +553,26 @@ def edit_invoice(invoice_id):
             if row['group_id']:
                 gid = str(row['group_id'])
                 if gid not in seen_groups:
-                    seen_groups[gid] = {'description': row['group_description'], 'member_ids': []}
+                    seen_groups[gid] = {
+                        'description': row['group_description'],
+                        'commission_type': row['group_commission_type'] or 'percent',
+                        'commission_value': float(row['group_commission_value'] or 0),
+                        'member_ids': [], 'overrides': {},
+                    }
                     initial_lines.append(seen_groups[gid])
                 seen_groups[gid]['member_ids'].append(iid)
+                if row['commission_override']:
+                    seen_groups[gid]['overrides'][iid] = {
+                        'type': row['commission_type'] or 'percent',
+                        'value': float(row['commission_value'] or 0),
+                    }
             else:
-                initial_lines.append({'description': clean_desc, 'member_ids': [iid]})
+                initial_lines.append({
+                    'description': clean_desc,
+                    'commission_type': row['commission_type'] or 'percent',
+                    'commission_value': float(row['commission_value'] or 0),
+                    'member_ids': [iid], 'overrides': {},
+                })
 
     return render_template('invoicing/new.html',
                            companies=companies, customers=customers,
@@ -555,7 +587,6 @@ def _save_invoice(existing_id=None):
     company_id   = request.form.get('company_id', type=int)
     customer_id  = request.form.get('customer_id', '').strip()
     new_customer = request.form.get('new_customer_name', '').strip()
-    markup_pct   = request.form.get('batch_markup', type=float) or 1.0
     other_amount = request.form.get('other_amount', type=float) or 0.0
     other_label  = request.form.get('other_label', '').strip()
     invoice_date = request.form.get('invoice_date') or str(date.today())
@@ -570,7 +601,9 @@ def _save_invoice(existing_id=None):
 
     # Flatten + validate the builder's lines. Each line with 2+ members
     # becomes a consolidated group; a line with exactly 1 member behaves
-    # like a normal single-order line, same as before.
+    # like a normal single-order line, same as before. Every line carries
+    # its own commission (percent or flat); a member either follows it or
+    # carries its own override.
     parsed_lines = []
     all_txn_ids = set()
     for line in lines_payload:
@@ -580,8 +613,13 @@ def _save_invoice(existing_id=None):
             continue
         for m in members:
             all_txn_ids.add(str(m['transaction_id']))
+        line_commission_type = line.get('commission_type') or 'percent'
+        if line_commission_type not in ('percent', 'flat'):
+            line_commission_type = 'percent'
         parsed_lines.append({
             'description': (line.get('description') or '').strip() or 'Item',
+            'commission_type': line_commission_type,
+            'commission_value': float(line.get('commission_value') or 0),
             'members': members,
         })
 
@@ -645,9 +683,10 @@ def _save_invoice(existing_id=None):
                 inv_number = get_next_invoice_number(cur, code)
 
         # Build invoice_items straight from the builder's submitted lines.
-        # A line with 2+ members also gets an invoice_line_groups row; each
-        # member row still carries its own transaction/cost/price exactly
-        # like a normal single-order line always has.
+        # A line with 2+ members also gets an invoice_line_groups row carrying
+        # the line's own commission; each member either follows that (default)
+        # or carries its own override — a single-member line always owns its
+        # rate outright, since there's no group default to defer to.
         subtotal = 0.0
         line_items = []
         group_rows = []
@@ -662,13 +701,24 @@ def _save_invoice(existing_id=None):
                     'group_id': group_id,
                     'description': line['description'],
                     'sku': group_sku or None,
+                    'commission_type': line['commission_type'],
+                    'commission_value': line['commission_value'],
                     'sort_order': li_index,
                 })
             for m in members:
                 tid = str(m['transaction_id'])
                 qty = max(1, int(m.get('quantity') or 1))
                 unit_cost = float(m.get('unit_cost') or 0)
-                unit_price = round(unit_cost * (1 + markup_pct / 100), 2)
+                is_override = bool(m.get('commission_override')) if group_id else True
+                if is_override:
+                    m_type = m.get('commission_type') or 'percent'
+                    if m_type not in ('percent', 'flat'):
+                        m_type = 'percent'
+                    m_value = float(m.get('commission_value') or 0)
+                else:
+                    m_type = line['commission_type']
+                    m_value = line['commission_value']
+                unit_price = _compute_unit_price(unit_cost, m_type, m_value)
                 line_total = round(unit_price * qty, 2)
                 subtotal += line_total
                 order_number = m.get('order_number') or ''
@@ -681,7 +731,9 @@ def _save_invoice(existing_id=None):
                     'sku':            m.get('sku') or '',
                     'qty':            qty,
                     'unit_cost':      unit_cost,
-                    'markup_pct':     markup_pct,
+                    'commission_type': m_type,
+                    'commission_value': m_value,
+                    'commission_override': is_override,
                     'unit_price':     unit_price,
                     'line_total':     line_total,
                     'sort_order':     sort_idx,
@@ -695,39 +747,38 @@ def _save_invoice(existing_id=None):
         if existing_id:
             cur.execute("""
                 UPDATE invoices SET company_id=%s, customer_id=%s, invoice_date=%s,
-                    batch_markup_pct=%s, subtotal=%s, other_amount=%s,
-                    other_label=%s, total=%s
+                    subtotal=%s, other_amount=%s, other_label=%s, total=%s
                 WHERE invoice_id=%s
             """, (company_id, customer_id or None, invoice_date,
-                  markup_pct, subtotal, other_amount,
-                  other_label or None, total, invoice_id))
+                  subtotal, other_amount, other_label or None, total, invoice_id))
         else:
             cur.execute("""
                 INSERT INTO invoices (invoice_id, invoice_number, company_id, customer_id,
-                    created_by, invoice_date, batch_markup_pct,
-                    subtotal, other_amount, other_label, total, status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    created_by, invoice_date, subtotal, other_amount, other_label, total, status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (invoice_id, inv_number, company_id,
-                  customer_id or None, current_user.id,
-                  invoice_date, markup_pct,
+                  customer_id or None, current_user.id, invoice_date,
                   subtotal, other_amount, other_label or None, total, create_status))
 
         for g in group_rows:
             cur.execute("""
-                INSERT INTO invoice_line_groups (group_id, invoice_id, description, sku, sort_order)
-                VALUES (%s,%s,%s,%s,%s)
-            """, (g['group_id'], invoice_id, g['description'], g['sku'], g['sort_order']))
+                INSERT INTO invoice_line_groups
+                    (group_id, invoice_id, description, sku, commission_type, commission_value, sort_order)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (g['group_id'], invoice_id, g['description'], g['sku'],
+                  g['commission_type'], g['commission_value'], g['sort_order']))
 
         for li in line_items:
             cur.execute("""
                 INSERT INTO invoice_items
                     (item_id, invoice_id, transaction_id, item_description, sku,
-                     quantity, unit_cost, markup_pct, unit_price, line_total, sort_order, group_id)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     quantity, unit_cost, commission_type, commission_value, commission_override,
+                     unit_price, line_total, sort_order, group_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (li['item_id'], invoice_id, li['transaction_id'],
-                  li['description'], li['sku'], li['qty'],
-                  li['unit_cost'], li['markup_pct'], li['unit_price'],
-                  li['line_total'], li['sort_order'], li['group_id']))
+                  li['description'], li['sku'], li['qty'], li['unit_cost'],
+                  li['commission_type'], li['commission_value'], li['commission_override'],
+                  li['unit_price'], li['line_total'], li['sort_order'], li['group_id']))
 
         # Mark every transaction referenced across all lines as invoiced
         cur.execute("""
@@ -1171,32 +1222,30 @@ def update_group(invoice_id):
             cur.execute("UPDATE invoice_line_groups SET sku=%s WHERE group_id=%s",
                         (new_sku or None, group_id))
 
-        if 'unit_price' in data:
+        if 'commission_type' in data or 'commission_value' in data:
+            new_type = data.get('commission_type') or 'percent'
+            if new_type not in ('percent', 'flat'):
+                return jsonify({'error': 'Invalid commission type'}), 400
             try:
-                new_price = round(float(data.get('unit_price') or 0), 2)
+                new_value = float(data.get('commission_value') or 0)
             except (ValueError, TypeError):
-                return jsonify({'error': 'Invalid price'}), 400
+                return jsonify({'error': 'Invalid commission value'}), 400
 
+            cur.execute("UPDATE invoice_line_groups SET commission_type=%s, commission_value=%s WHERE group_id=%s",
+                        (new_type, new_value, group_id))
+
+            # Recompute every member still following this line's default —
+            # members with their own override keep whatever they were set to.
             cur.execute("""
-                SELECT item_id, quantity FROM invoice_items
-                WHERE group_id=%s AND invoice_id=%s AND NOT returned
-                ORDER BY sort_order
+                SELECT item_id, unit_cost, quantity FROM invoice_items
+                WHERE group_id=%s AND invoice_id=%s AND NOT commission_override
             """, (group_id, sid))
-            members = cur.fetchall()
-            total_qty = sum(m['quantity'] for m in members)
-            if total_qty > 0:
-                new_group_total = round(new_price * total_qty, 2)
-                allocated = 0.0
-                for i, m in enumerate(members):
-                    if i == len(members) - 1:
-                        member_total = round(new_group_total - allocated, 2)
-                    else:
-                        member_total = round(new_group_total * (m['quantity'] / total_qty), 2)
-                        allocated += member_total
-                    member_unit_price = round(member_total / m['quantity'], 2) if m['quantity'] else 0
-                    cur.execute(
-                        "UPDATE invoice_items SET unit_price=%s, line_total=%s WHERE item_id=%s",
-                        (member_unit_price, member_total, m['item_id']))
+            for m in cur.fetchall():
+                new_unit_price = _compute_unit_price(m['unit_cost'], new_type, new_value)
+                new_line_total = round(new_unit_price * m['quantity'], 2)
+                cur.execute(
+                    "UPDATE invoice_items SET unit_price=%s, line_total=%s WHERE item_id=%s",
+                    (new_unit_price, new_line_total, m['item_id']))
 
         cur.execute("SELECT COALESCE(SUM(line_total),0) AS s FROM invoice_items WHERE invoice_id=%s AND NOT returned",
                     (sid,))
@@ -1208,6 +1257,75 @@ def update_group(invoice_id):
                     (new_subtotal, new_total, sid))
 
     return jsonify({'ok': True, 'subtotal': f"{new_subtotal:,.2f}", 'total': f"{new_total:,.2f}"})
+
+
+# ── Update one order's commission within a line (override or revert) ─────────
+# Every invoice_items row prices itself from unit_cost + commission. A member
+# of a consolidated line can either follow the line's own rate
+# (commission_override = FALSE, recomputed whenever the line's rate changes)
+# or carry its own rate (commission_override = TRUE, fixed until changed here
+# or reverted). A single-order line has no group to defer to, so it always
+# carries its own rate.
+
+@invoicing_bp.route('/<uuid:invoice_id>/update-item-commission', methods=['POST'])
+@login_required
+@require_role('admin')
+def update_item_commission(invoice_id):
+    sid  = str(invoice_id)
+    data = request.get_json()
+    item_id = data.get('item_id')
+    if not item_id:
+        return jsonify({'error': 'Missing item_id'}), 400
+
+    with db_cursor() as (cur, conn):
+        cur.execute("""
+            SELECT unit_cost, quantity, group_id FROM invoice_items
+            WHERE item_id=%s AND invoice_id=%s
+        """, (item_id, sid))
+        item = cur.fetchone()
+        if not item:
+            return jsonify({'error': 'Item not found'}), 404
+
+        if data.get('use_default'):
+            if not item['group_id']:
+                return jsonify({'error': "This line has no default to revert to"}), 400
+            cur.execute("SELECT commission_type, commission_value FROM invoice_line_groups WHERE group_id=%s",
+                        (item['group_id'],))
+            g = cur.fetchone()
+            new_type, new_value = g['commission_type'], float(g['commission_value'] or 0)
+            override = False
+        else:
+            new_type = data.get('commission_type') or 'percent'
+            if new_type not in ('percent', 'flat'):
+                return jsonify({'error': 'Invalid commission type'}), 400
+            try:
+                new_value = float(data.get('commission_value') or 0)
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid commission value'}), 400
+            override = True
+
+        new_unit_price = _compute_unit_price(item['unit_cost'], new_type, new_value)
+        new_line_total = round(new_unit_price * item['quantity'], 2)
+        cur.execute("""
+            UPDATE invoice_items
+            SET commission_type=%s, commission_value=%s, commission_override=%s,
+                unit_price=%s, line_total=%s
+            WHERE item_id=%s
+        """, (new_type, new_value, override, new_unit_price, new_line_total, item_id))
+
+        cur.execute("SELECT COALESCE(SUM(line_total),0) AS s FROM invoice_items WHERE invoice_id=%s AND NOT returned",
+                    (sid,))
+        new_subtotal = round(float(cur.fetchone()['s']), 2)
+        cur.execute("SELECT other_amount FROM invoices WHERE invoice_id=%s", (sid,))
+        other = float(cur.fetchone()['other_amount'] or 0)
+        new_total = round(new_subtotal + other, 2)
+        cur.execute("UPDATE invoices SET subtotal=%s, total=%s WHERE invoice_id=%s",
+                    (new_subtotal, new_total, sid))
+
+    return jsonify({
+        'ok': True, 'unit_price': f"{new_unit_price:,.2f}", 'line_total': f"{new_line_total:,.2f}",
+        'subtotal': f"{new_subtotal:,.2f}", 'total': f"{new_total:,.2f}",
+    })
 
 
 # ── Export Excel ──────────────────────────────────────────────────────────────
