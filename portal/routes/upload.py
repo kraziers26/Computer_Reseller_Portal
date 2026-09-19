@@ -601,6 +601,17 @@ def batch_item_confirm(draft_id, item_id):
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
 
+        cur.execute("SELECT user_id, company_id FROM user_companies")
+        people_companies = {}
+        for row in cur.fetchall():
+            people_companies.setdefault(str(row['user_id']), []).append(row['company_id'])
+
+        cur.execute("SELECT card_id, company_id FROM dim_cards")
+        card_companies = {row['card_id']: row['company_id'] for row in cur.fetchall()}
+
+        company_names = {c['company_id']: c['company_name'] for c in companies}
+        person_names = {str(u['user_id']): u['username'] for u in users}
+
         # Count remaining
         cur.execute("""
             SELECT COUNT(*) AS n FROM batch_draft_items
@@ -618,10 +629,7 @@ def batch_item_confirm(draft_id, item_id):
             flash('Invoice skipped.', 'info')
             return redirect(url_for('upload.batch_review', draft_id=draft_id))
 
-        if action == 'submit':
-            # Stage 1 of 2: stash the reviewed/edited form as JSON and mark the
-            # item 'reviewed'. Nothing is written to transactions yet — that
-            # only happens for the whole batch at once via "Submit Batch".
+        if action == 'confirm':
             form_data = request.form.to_dict(flat=False)
             with db_cursor() as (cur, conn):
                 cur.execute("""
@@ -644,12 +652,22 @@ def batch_item_confirm(draft_id, item_id):
         if isinstance(stashed_form, str):
             stashed_form = json.loads(stashed_form)
         invoice = reviewed_item_to_invoice_dict(stashed_form, invoice_data)
+        # Flatten the stashed top-level fields (skip the item_xxx[] array fields)
+        # so the template's `v.get('field')` lookups get plain scalars back.
+        saved = {k: (v[0] if v else '') for k, v in stashed_form.items()
+                 if not k.endswith('[]')}
+        saved_items = invoice['items']
     else:
         invoice = invoice_data
+        saved = None
+        saved_items = None
 
     return render_template('batch_item_confirm.html',
                            draft=draft, item=item, invoice=invoice,
-                           companies=companies, users=users,
+                           companies=companies, users=users, people_companies=people_companies,
+                           card_companies=card_companies, company_names=company_names,
+                           person_names=person_names,
+                           saved=saved, saved_items=saved_items,
                            current_user_id=current_user.id, remaining=remaining)
 
 
