@@ -100,7 +100,8 @@ def _load_received_orders(cur, include_txn_ids=None):
         txn_ids = [str(o['transaction_id']) for o in orders]
         cur.execute("""
             SELECT transaction_id, item_id, item_description,
-                   sku_model_color, quantity, unit_price, line_total
+                   sku_model_color, quantity, unit_price, line_total,
+                   landed_cost
             FROM transaction_items
             WHERE transaction_id = ANY(%s::uuid[])
               AND unit_price >= %s
@@ -147,7 +148,9 @@ def _build_pool_payload(orders, order_items):
                     'description': item['item_description'] or '',
                     'sku': item['sku_model_color'] or '',
                     'quantity': int(item['quantity'] or 1),
-                    'unit_cost': float(item['unit_price'] or 0),
+                    'unit_cost': (float(item['landed_cost']) / int(item['quantity'])
+                                  if item.get('landed_cost') is not None and item['quantity']
+                                  else float(item['unit_price'] or 0)),
                 }
         else:
             # No qualifying line items on this order — fall back to a single
