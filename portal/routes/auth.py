@@ -445,8 +445,9 @@ def setup_batch_tables():
                     position        INTEGER NOT NULL,
                     filename        TEXT NOT NULL,
                     parse_status    TEXT NOT NULL DEFAULT 'pending'
-                                        CHECK (parse_status IN ('parsed','failed','submitted','skipped')),
+                                        CHECK (parse_status IN ('parsed','failed','submitted','skipped','reviewed')),
                     invoice_data    JSONB,
+                    form_data       JSONB,
                     pdf_bytes       BYTEA,
                     error_message   TEXT,
                     submitted_at    TIMESTAMP,
