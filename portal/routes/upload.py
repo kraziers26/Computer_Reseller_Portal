@@ -2,6 +2,7 @@ import os, sys, uuid, json
 from flask import (Blueprint, render_template, request, redirect,
                    url_for, flash, session, send_file, jsonify)
 from flask_login import login_required, current_user
+from werkzeug.datastructures import MultiDict
 from ..auth_utils import require_role
 from ..db import db_cursor
 
@@ -62,6 +63,77 @@ def invoice_to_dict(invoice):
             'membership_number': getattr(invoice, 'membership_number', None),
             'needs_review': invoice.needs_review,
             'parse_errors': invoice.parse_errors,
+            'items': items}
+
+
+def reviewed_item_to_invoice_dict(form_data, invoice_data):
+    """Rebuild a template-shaped invoice dict from a previously-stashed
+    form_data (dict-of-lists, from request.form.to_dict(flat=False)) so
+    re-opening an already-'reviewed' batch item for editing shows the
+    user's prior edits instead of reverting to the raw parser output."""
+    def one(key, default=''):
+        vals = form_data.get(key)
+        return vals[0] if vals else default
+
+    retailer = invoice_data.get('retailer', '') if invoice_data else ''
+
+    descs   = form_data.get('item_description[]', [])
+    skus    = form_data.get('item_sku[]', [])
+    serials = form_data.get('item_serial[]', [])
+    imeis   = form_data.get('item_imei[]', [])
+    qtys    = form_data.get('item_qty[]', [])
+    prices  = form_data.get('item_unit_price[]', [])
+    line_totals = form_data.get('item_line_total[]', [])
+
+    items = []
+    weights = []
+    for i, desc in enumerate(descs):
+        try:
+            qty = int(qtys[i]) if i < len(qtys) and qtys[i] != '' else 1
+        except ValueError:
+            qty = 1
+        try:
+            unit_price = float(prices[i]) if i < len(prices) and prices[i] != '' else 0.0
+        except ValueError:
+            unit_price = 0.0
+        weight = round(unit_price * qty, 2)
+        try:
+            line_total = (float(line_totals[i])
+                          if i < len(line_totals) and line_totals[i] != '' else weight)
+        except ValueError:
+            line_total = weight
+        weights.append(weight)
+        items.append({'item_description': desc,
+                       'sku_model_color': skus[i] if i < len(skus) else '',
+                       'serial_number': serials[i] if i < len(serials) else '',
+                       'imei': imeis[i] if i < len(imeis) else '',
+                       'quantity': qty,
+                       'unit_price': unit_price,
+                       'line_total': line_total,
+                       'tax_amount': 0.0,
+                       'landed_cost': line_total})
+
+    if retailer == 'Apple' and items:
+        try:
+            order_tax = float(one('order_tax', '0') or 0)
+        except ValueError:
+            order_tax = 0.0
+        if order_tax > 0:
+            import apple_parser
+            taxes = apple_parser.allocate_tax_amounts(weights, order_tax)
+            for it, w, t in zip(items, weights, taxes):
+                it['tax_amount']  = t
+                it['landed_cost'] = round(w + t, 2)
+
+    return {'retailer': retailer,
+            'order_number': one('order_number'),
+            'purchase_date': one('purchase_date'),
+            'fulfillment_method': one('order_type', 'Delivery'),
+            'price_total': one('price_total'),
+            'costco_taxes_paid': one('costco_taxes'),
+            'membership_number': one('membership_number', (invoice_data or {}).get('membership_number', '')),
+            'card_last4': one('card_last4'),
+            'parse_errors': (invoice_data or {}).get('parse_errors', []),
             'items': items}
 
 
@@ -154,7 +226,7 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
                 net_business_commission, sales_payroll_tax_withheld, notes,
                 membership_number, invoice_pdf, submitted_at,
                 fulfillment_status, fulfillment_status_updated_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,FALSE,%s,
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'standard',%s,%s,%s,%s,%s,
                       %s,%s,%s,%s,%s,%s,%s,%s,NOW(),
                       'uploaded', NOW())
         """, (tid, order_number, retailer,
@@ -162,7 +234,7 @@ def save_transaction(form, invoice_data, pdf_bytes, form_user_id, current_email)
               form_user_id, company_id, card_last4, price_total,
               invoice_data.get('costco_taxes_paid'), cashback_rate, cashback_value,
               gross_paid, order_type,
-              review_status,
+              review_status, is_dup,
               current_email, gross_paid, net_paid, gross_biz, net_biz, tax_withheld,
               notes, invoice_data.get('membership_number'), pdf_bytes))
 
@@ -493,14 +565,16 @@ def batch_review(draft_id):
     next_item = next((i for i in items if i['parse_status'] == 'parsed'), None)
 
     counts = {
-        'reviewed': sum(1 for i in items if i['parse_status'] == 'submitted'),
+        'reviewed': sum(1 for i in items if i['parse_status'] == 'reviewed'),
         'parsed':   sum(1 for i in items if i['parse_status'] == 'parsed'),
         'skipped':  sum(1 for i in items if i['parse_status'] == 'skipped'),
         'failed':   sum(1 for i in items if i['parse_status'] == 'failed'),
     }
+    company_names = {c['company_id']: c['company_name'] for c in companies}
 
     return render_template('batch_review.html', draft=draft, items=items,
-                           companies=companies, next_item=next_item, counts=counts)
+                           companies=companies, next_item=next_item, counts=counts,
+                           company_names=company_names)
 
 
 @upload_bp.route('/upload/batch/<draft_id>/item/<item_id>', methods=['GET', 'POST'])
@@ -545,68 +619,129 @@ def batch_item_confirm(draft_id, item_id):
             return redirect(url_for('upload.batch_review', draft_id=draft_id))
 
         if action == 'submit':
-            invoice_data = item['invoice_data']
-            if isinstance(invoice_data, str):
-                invoice_data = json.loads(invoice_data)
-
-            pdf_bytes = bytes(item['pdf_bytes']) if item['pdf_bytes'] else None
-            form_user_id = request.form.get('user_id', type=int) or current_user.id
-
-            try:
-                tid = save_transaction(request.form, invoice_data, pdf_bytes,
-                                       form_user_id, current_user.email)
-            except ValueError as e:
-                if str(e).startswith('DUPLICATE:'):
-                    order_num = str(e).split(':', 1)[1]
-                    # Mark as skipped in batch with dup note
-                    with db_cursor() as (cur, conn):
-                        cur.execute(
-                            "UPDATE batch_draft_items SET parse_status='skipped' WHERE item_id=%s",
-                            (item_id,))
-                    flash(f'⛔ Order #{order_num} is a duplicate and was skipped. '
-                          f'Change Order Type to Return if applicable.', 'error')
-                    return redirect(url_for('upload.batch_review', draft_id=draft_id))
-                raise
-
+            # Stage 1 of 2: stash the reviewed/edited form as JSON and mark the
+            # item 'reviewed'. Nothing is written to transactions yet — that
+            # only happens for the whole batch at once via "Submit Batch".
+            form_data = request.form.to_dict(flat=False)
             with db_cursor() as (cur, conn):
                 cur.execute("""
                     UPDATE batch_draft_items
-                    SET parse_status='submitted', transaction_id=%s, submitted_at=NOW()
+                    SET parse_status='reviewed', form_data=%s
                     WHERE item_id=%s
-                """, (tid, item_id))
-                cur.execute("""
-                    UPDATE batch_drafts
-                    SET completed_count=completed_count+1, updated_at=NOW()
-                    WHERE draft_id=%s
-                """, (draft_id,))
+                """, (json.dumps(form_data), item_id))
 
-            flash(f"Order #{request.form.get('order_number','')} submitted!", 'success')
-
-            # Check if batch complete
-            with db_cursor() as (cur, _):
-                cur.execute("""
-                    SELECT COUNT(*) AS n FROM batch_draft_items
-                    WHERE draft_id=%s AND parse_status='parsed'
-                """, (draft_id,))
-                left = cur.fetchone()['n']
-
-            if left == 0:
-                with db_cursor() as (cur, conn):
-                    cur.execute("UPDATE batch_drafts SET status='completed' WHERE draft_id=%s",
-                                (draft_id,))
-                flash('Batch complete!', 'success')
-                return redirect(url_for('upload.batch_summary', draft_id=draft_id))
-
+            order_number = request.form.get('order_number', '').strip()
+            flash(f"Order #{order_number or '(no number)'} reviewed. "
+                  f"Submit the batch once everything looks right.", 'success')
             return redirect(url_for('upload.batch_review', draft_id=draft_id))
 
     invoice_data = item['invoice_data']
     if isinstance(invoice_data, str):
         invoice_data = json.loads(invoice_data)
 
+    if item['parse_status'] == 'reviewed' and item['form_data']:
+        stashed_form = item['form_data']
+        if isinstance(stashed_form, str):
+            stashed_form = json.loads(stashed_form)
+        invoice = reviewed_item_to_invoice_dict(stashed_form, invoice_data)
+    else:
+        invoice = invoice_data
+
     return render_template('batch_item_confirm.html',
-                           draft=draft, item=item, invoice=invoice_data,
+                           draft=draft, item=item, invoice=invoice,
                            companies=companies, users=users,
                            current_user_id=current_user.id, remaining=remaining)
+
+
+@upload_bp.route('/upload/batch/<draft_id>/submit', methods=['POST'])
+@login_required
+@require_role('contributor')
+def batch_submit(draft_id):
+    """Stage 2 of 2: actually create the transactions for every 'reviewed'
+    item in this batch, in one action. Duplicates aren't blocked — they're
+    inserted with review_status='Duplicate' for admin follow-up, same as
+    single-item submission always did. If an item fails for some other
+    reason, it's left as 'reviewed' (not lost) so it can be fixed via Edit
+    and re-submitted; the batch only completes once nothing is left in
+    'parsed' or 'reviewed'.
+    """
+    with db_cursor() as (cur, _):
+        cur.execute("SELECT * FROM batch_drafts WHERE draft_id=%s AND user_id=%s",
+                    (draft_id, current_user.id))
+        draft = cur.fetchone()
+        if not draft:
+            flash('Batch not found.', 'error')
+            return redirect(url_for('upload.upload'))
+        if draft['status'] != 'active':
+            flash('This batch is already finalized.', 'info')
+            return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+        cur.execute("""
+            SELECT * FROM batch_draft_items
+            WHERE draft_id=%s AND parse_status='reviewed' ORDER BY position
+        """, (draft_id,))
+        reviewed_items = cur.fetchall()
+
+    if not reviewed_items:
+        flash('Nothing to submit yet — review at least one order first.', 'info')
+        return redirect(url_for('upload.batch_review', draft_id=draft_id))
+
+    submitted_count = 0
+    trouble = []
+
+    for item in reviewed_items:
+        stashed_form = item['form_data']
+        if isinstance(stashed_form, str):
+            stashed_form = json.loads(stashed_form)
+        invoice_data = item['invoice_data']
+        if isinstance(invoice_data, str):
+            invoice_data = json.loads(invoice_data)
+        pdf_bytes = bytes(item['pdf_bytes']) if item['pdf_bytes'] else None
+
+        form = MultiDict(stashed_form or {})
+        form_user_id = form.get('user_id', type=int) or current_user.id
+
+        try:
+            tid = save_transaction(form, invoice_data, pdf_bytes,
+                                   form_user_id, current_user.email)
+        except Exception as e:
+            trouble.append((item['filename'], str(e).splitlines()[0]))
+            continue
+
+        with db_cursor() as (cur, conn):
+            cur.execute("""
+                UPDATE batch_draft_items
+                SET parse_status='submitted', transaction_id=%s, submitted_at=NOW()
+                WHERE item_id=%s
+            """, (tid, item['item_id']))
+            cur.execute("""
+                UPDATE batch_drafts
+                SET completed_count=completed_count+1, updated_at=NOW()
+                WHERE draft_id=%s
+            """, (draft_id,))
+        submitted_count += 1
+
+    with db_cursor() as (cur, _):
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM batch_draft_items
+            WHERE draft_id=%s AND parse_status IN ('parsed','reviewed')
+        """, (draft_id,))
+        left = cur.fetchone()['n']
+
+    if submitted_count:
+        flash(f'{submitted_count} order(s) submitted.', 'success')
+    if trouble:
+        detail = '; '.join(f"{fn}: {err}" for fn, err in trouble)
+        flash(f"{len(trouble)} item(s) could not be submitted and still need "
+              f"attention (edit and re-submit): {detail}", 'error')
+
+    if left == 0:
+        with db_cursor() as (cur, conn):
+            cur.execute("UPDATE batch_drafts SET status='completed' WHERE draft_id=%s",
+                        (draft_id,))
+        return redirect(url_for('upload.batch_summary', draft_id=draft_id))
+
+    return redirect(url_for('upload.batch_review', draft_id=draft_id))
 
 
 @upload_bp.route('/upload/batch/<draft_id>/preview/<item_id>')
