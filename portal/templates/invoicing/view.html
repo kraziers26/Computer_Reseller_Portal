@@ -127,15 +127,15 @@
                  >{{ item.sku or '' }}</div>
           </div>
         </td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">
-          $<span class="line-editable" data-field="unit_price" data-item-id="{{ item.item_id }}"
-                contenteditable="true" spellcheck="false"
-                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
-                onmouseenter="this.style.background='var(--surface2)'"
-                onmouseleave="if(document.activeElement!==this)this.style.background=''"
-                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
-                onblur="saveLine(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
-                >{{ "{:,.2f}".format(item.unit_price or 0) }}</span>
+        <td style="padding:10px 10px;text-align:right">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap">
+            <span style="font-family:var(--mono);font-size:13px" id="price-{{ item.item_id }}">${{ "{:,.2f}".format(item.unit_price or 0) }}</span>
+            <button type="button" class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px;border-radius:10px"
+                    onclick="toggleCommissionEditor('{{ item.item_id }}', '{{ item.commission_type }}', {{ '{:g}'.format(item.commission_value|float) }}, false)">
+              {% if item.commission_type == 'flat' %}${{ "{:,.2f}".format(item.commission_value or 0) }}/unit{% else %}{{ '{:g}'.format(item.commission_value|float) }}%{% endif %}
+            </button>
+          </div>
+          <div id="commission-editor-{{ item.item_id }}" style="display:flex;justify-content:flex-end"></div>
         </td>
         <td style="padding:10px 10px;text-align:right">
           <span class="line-editable" data-field="quantity" data-item-id="{{ item.item_id }}"
@@ -192,15 +192,15 @@
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px;margin-left:19px">{{ line.members|length }} order{{ 's' if line.members|length != 1 }}</div>
         </td>
-        <td style="padding:10px 10px;text-align:right;font-family:var(--mono)">
-          $<span class="line-editable" data-field="unit_price" data-group-id="{{ line.group_id }}"
-                contenteditable="true" spellcheck="false"
-                style="outline:none;cursor:text;border-radius:3px;padding:1px 3px;margin:-1px -3px;transition:background .15s;display:inline-block;min-width:40px;text-align:right"
-                onmouseenter="this.style.background='var(--surface2)'"
-                onmouseleave="if(document.activeElement!==this)this.style.background=''"
-                onfocus="this.style.background='var(--surface2)';this.style.outline='2px solid #4f6ef760'"
-                onblur="saveGroupPrice(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
-                >{{ "{:,.2f}".format(line.unit_price or 0) }}</span>
+        <td style="padding:10px 10px;text-align:right">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap">
+            <span style="font-family:var(--mono);font-size:13px">${{ "{:,.2f}".format(line.unit_price or 0) }}</span>
+            <button type="button" class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px;border-radius:10px"
+                    onclick="toggleCommissionEditor('group-{{ line.group_id }}', '{{ line.commission_type }}', {{ '{:g}'.format(line.commission_value|float) }}, false)">
+              {% if line.commission_type == 'flat' %}${{ "{:,.2f}".format(line.commission_value or 0) }}/unit{% else %}{{ '{:g}'.format(line.commission_value|float) }}%{% endif %}
+            </button>
+          </div>
+          <div id="commission-editor-group-{{ line.group_id }}" style="display:flex;justify-content:flex-end"></div>
         </td>
         <td style="padding:10px 10px;text-align:right">{{ line.qty }}</td>
         <td style="padding:10px 10px;text-align:right;font-family:var(--mono)" id="lt-group-{{ line.group_id }}">${{ "{:,.2f}".format(line.line_total or 0) }}</td>
@@ -219,7 +219,17 @@
             {% for m in line.members %}
             <tr id="item-row-{{ m.item_id }}" style="{% if m.returned %}opacity:.5{% endif %}">
               <td style="padding:5px 8px;color:var(--muted)">{{ m.order_number or '—' }}{% if m.order_retailer %} · {{ m.order_retailer }}{% endif %}{% if m.order_date %} · {{ m.order_date }}{% endif %}</td>
-              <td style="padding:5px 8px;text-align:right;font-family:var(--mono)">{{ m.quantity }} × ${{ "{:,.2f}".format(m.unit_price or 0) }}</td>
+              <td style="padding:5px 8px;text-align:right;font-family:var(--mono)">
+                <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;flex-wrap:wrap">
+                  <span>{{ m.quantity }} &times; ${{ "{:,.2f}".format(m.unit_price or 0) }}</span>
+                  <button type="button" class="btn btn-ghost btn-sm"
+                          style="font-size:9px;padding:1px 6px;border-radius:8px;{% if m.commission_override %}color:var(--accent2);border-color:var(--accent2){% endif %}"
+                          onclick="toggleCommissionEditor('{{ m.item_id }}', '{{ m.commission_type }}', {{ '{:g}'.format(m.commission_value|float) }}, {{ 'true' if m.commission_override else 'false' }})">
+                    {% if m.commission_type == 'flat' %}${{ "{:,.2f}".format(m.commission_value or 0) }}/unit{% else %}{{ '{:g}'.format(m.commission_value|float) }}%{% endif %}{{ ' (custom)' if m.commission_override else ' (line rate)' }}
+                  </button>
+                </div>
+                <div id="commission-editor-{{ m.item_id }}" style="display:flex;justify-content:flex-end"></div>
+              </td>
               <td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(m.line_total or 0) }}</td>
               <td style="padding:5px 8px;text-align:center;width:28px">
                 <button onclick="removeItem('{{ m.item_id }}','{{ "{:,.2f}".format(m.line_total or 0) }}',true)"
@@ -390,12 +400,57 @@ async function saveGroupSku(el){
   if(res.error){ showFlash('Error: ' + res.error, true); return; }
   showFlash('Model / SKU updated.');
 }
-async function saveGroupPrice(el){
-  const unit_price = parseFloat((el.innerText||'0').replace(/,/g,'')) || 0;
-  const res = await post(GROUP_URL, {group_id: el.dataset.groupId, unit_price});
-  if(res.error){ alert(res.error); return; }
-  // Price changes redistribute across every order behind this line —
-  // reload to show each order's updated share rather than patching in place.
+function commissionEditorFormHtml(key, type, value, showUseDefault){
+  return '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;padding:8px;background:var(--surface2);border-radius:6px;flex-wrap:wrap;justify-content:flex-end">' +
+    '<select id="edit-type-' + key + '" style="width:100px;font-size:12px">' +
+    '<option value="percent"' + (type==='percent'?' selected':'') + '>Percent</option>' +
+    '<option value="flat"' + (type==='flat'?' selected':'') + '>Flat $</option>' +
+    '</select>' +
+    '<input id="edit-value-' + key + '" type="number" step="0.1" value="' + value + '" style="width:64px;font-size:12px">' +
+    '<button type="button" onclick="saveCommissionEdit(\'' + key + '\')" class="btn btn-ghost btn-sm" style="font-size:12px;padding:3px 8px">Save</button>' +
+    (showUseDefault ? '<button type="button" onclick="useCommissionDefault(\'' + key + '\')" class="btn btn-ghost btn-sm" style="font-size:12px;padding:3px 8px">Use line rate</button>' : '') +
+    '</div>';
+}
+let openCommissionEditor = null;
+function toggleCommissionEditor(key, type, value, showUseDefault){
+  const container = document.getElementById('commission-editor-' + key);
+  if (openCommissionEditor === key) { container.innerHTML = ''; openCommissionEditor = null; return; }
+  if (openCommissionEditor) {
+    const prev = document.getElementById('commission-editor-' + openCommissionEditor);
+    if (prev) prev.innerHTML = '';
+  }
+  container.innerHTML = commissionEditorFormHtml(key, type, value, showUseDefault);
+  container.dataset.showUseDefault = showUseDefault ? '1' : '0';
+  openCommissionEditor = key;
+}
+async function saveCommissionEdit(key){
+  const type = document.getElementById('edit-type-' + key).value;
+  const value = parseFloat(document.getElementById('edit-value-' + key).value) || 0;
+  if (key.indexOf('group-') === 0) {
+    const groupId = key.slice(6);
+    const res = await post(GROUP_URL, {group_id: groupId, commission_type: type, commission_value: value});
+    if (res.error){ showFlash('Error: ' + res.error, true); return; }
+    // Recomputes every non-overridden order behind this line — reload to
+    // show each order's updated share rather than patching each in place.
+    location.reload();
+    return;
+  }
+  const container = document.getElementById('commission-editor-' + key);
+  const isGroupMember = container && container.dataset.showUseDefault === '1';
+  const res = await post(ITEM_COMMISSION_URL, {item_id: key, commission_type: type, commission_value: value});
+  if (res.error){ showFlash('Error: ' + res.error, true); return; }
+  if (isGroupMember) { location.reload(); return; }
+  document.getElementById('price-' + key).textContent = '$' + res.unit_price;
+  document.getElementById('lt-' + key).textContent = '$' + res.line_total;
+  document.getElementById('inv-subtotal').textContent = '$' + res.subtotal;
+  document.getElementById('inv-total').textContent = '$' + res.total;
+  container.innerHTML = '';
+  openCommissionEditor = null;
+  showFlash('Commission updated.');
+}
+async function useCommissionDefault(key){
+  const res = await post(ITEM_COMMISSION_URL, {item_id: key, use_default: true});
+  if (res.error){ showFlash('Error: ' + res.error, true); return; }
   location.reload();
 }
 function saveDesc(el){
@@ -467,6 +522,7 @@ const CSRF     = "{{ csrf_token() }}";
 const HDR_URL  = `/invoicing/${INV_ID}/update-header`;
 const LINE_URL = `/invoicing/${INV_ID}/update-line`;
 const GROUP_URL = `/invoicing/${INV_ID}/update-group`;
+const ITEM_COMMISSION_URL = `/invoicing/${INV_ID}/update-item-commission`;
 
 async function post(url, body) {
   const r = await fetch(url, {
@@ -524,12 +580,11 @@ async function saveHeaderSelect(el) {
 async function saveLine(el) {
   const field  = el.dataset.field;
   const itemId = el.dataset.itemId;
-  // Find sibling field in same row
   const row    = el.closest('tr');
-  const priceEl = row.querySelector('[data-field="unit_price"]');
+  const priceEl = document.getElementById('price-' + itemId);
   const qtyEl   = row.querySelector('[data-field="quantity"]');
 
-  const unit_price = parseFloat((priceEl.innerText || '0').replace(/,/g,'')) || 0;
+  const unit_price = parseFloat((priceEl.textContent || '0').replace(/[$,]/g,'')) || 0;
   const quantity   = parseInt(qtyEl.innerText)  || 1;
 
   const res = await post(LINE_URL, {item_id: itemId, unit_price, quantity});
