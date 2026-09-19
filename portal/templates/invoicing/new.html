@@ -135,12 +135,23 @@
                  style="width:100%" onchange="renderPreview()">
         </label>
 
-        <label style="display:block;margin-bottom:10px">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Markup %</div>
-          <input type="number" name="batch_markup" id="batchMarkup"
-                 value="{{ existing_invoice.batch_markup_pct if edit_mode else '1.0' }}"
-                 step="0.1" min="0" style="width:100%" oninput="render()">
+        <label style="display:block;margin-bottom:6px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Default commission for new lines</div>
         </label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+          <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+            <button type="button" id="defaultModePercent" onclick="setDefaultCommissionMode('percent')"
+                    class="btn btn-ghost btn-sm" style="border:none;border-radius:0;padding:6px 12px">Percent</button>
+            <button type="button" id="defaultModeFlat" onclick="setDefaultCommissionMode('flat')"
+                    class="btn btn-ghost btn-sm" style="border:none;border-radius:0;padding:6px 12px">Flat $</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <span id="defaultCommissionPrefix" style="font-size:13px;color:var(--muted)"></span>
+            <input type="number" id="defaultCommissionValue" value="1" step="0.1" style="width:70px" oninput="onDefaultCommissionChange()">
+            <span id="defaultCommissionSuffix" style="font-size:13px;color:var(--muted)">%</span>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Applies to new lines only — lines already on the invoice keep whatever they were set to.</div>
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Label</div>
@@ -207,23 +218,90 @@ Object.keys(POOL_DATA.items).forEach(function(id){ itemLoc[id] = 'pool'; });
 let modules = [];
 let moduleCounter = 0;
 let openPanelId = null;
+let editingCommission = null;
+let defaultCommission = {type: 'percent', value: 1.0};
 
 INITIAL_LINES.forEach(function(line){
-  const mod = {id: 'm' + (++moduleCounter), name: line.description, itemIds: []};
+  const mod = {
+    id: 'm' + (++moduleCounter), name: line.description, itemIds: [],
+    commission: {type: line.commission_type || 'percent', value: line.commission_value || 0},
+    overrides: {},
+  };
   (line.member_ids || []).forEach(function(iid){
-    if (POOL_DATA.items[iid]) { mod.itemIds.push(iid); itemLoc[iid] = mod.id; }
+    if (POOL_DATA.items[iid]) {
+      mod.itemIds.push(iid); itemLoc[iid] = mod.id;
+      if (line.overrides && line.overrides[iid]) {
+        mod.overrides[iid] = {type: line.overrides[iid].type, value: line.overrides[iid].value};
+      }
+    }
   });
   if (mod.itemIds.length) modules.push(mod);
 });
 
 function fmt(n){ return '$' + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
-function markupPct(){ return parseFloat(document.getElementById('batchMarkup').value) || 0; }
-function priceFor(unitCost){ return Math.round(unitCost * (1 + markupPct()/100) * 100) / 100; }
+function commissionLabel(c){ return c.type === 'flat' ? fmt(c.value) + '/unit' : c.value + '%'; }
+function computePrice(unitCost, c){
+  return c.type === 'flat' ? Math.round((unitCost + c.value) * 100) / 100 : Math.round(unitCost * (1 + c.value/100) * 100) / 100;
+}
+function effectiveCommission(m, itemId){ return m.overrides[itemId] || m.commission; }
+function memberPrice(m, itemId){ return computePrice(POOL_DATA.items[itemId].unit_cost, effectiveCommission(m, itemId)); }
+
+function setDefaultCommissionMode(mode){
+  defaultCommission.type = mode;
+  const pBtn = document.getElementById('defaultModePercent'), fBtn = document.getElementById('defaultModeFlat');
+  pBtn.style.background = mode==='percent' ? 'rgba(79,110,247,.12)' : 'transparent';
+  pBtn.style.color = mode==='percent' ? 'var(--accent2)' : 'var(--text)';
+  fBtn.style.background = mode==='flat' ? 'rgba(79,110,247,.12)' : 'transparent';
+  fBtn.style.color = mode==='flat' ? 'var(--accent2)' : 'var(--text)';
+  document.getElementById('defaultCommissionPrefix').textContent = mode==='flat' ? '$' : '';
+  document.getElementById('defaultCommissionSuffix').textContent = mode==='percent' ? '%' : '/unit';
+}
+function onDefaultCommissionChange(){
+  defaultCommission.value = parseFloat(document.getElementById('defaultCommissionValue').value) || 0;
+}
+
+function commissionEditorHtml(key, current, showUseDefault){
+  return '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;padding:8px;background:var(--surface2);border-radius:6px;flex-wrap:wrap">' +
+    '<select id="editType-' + key + '" style="width:100px;font-size:12px">' +
+    '<option value="percent"' + (current.type==='percent'?' selected':'') + '>Percent</option>' +
+    '<option value="flat"' + (current.type==='flat'?' selected':'') + '>Flat $</option>' +
+    '</select>' +
+    '<input id="editValue-' + key + '" type="number" step="0.1" value="' + current.value + '" style="width:64px;font-size:12px">' +
+    '<button type="button" onclick="saveCommissionEdit(\'' + key + '\')" class="btn btn-ghost btn-sm" style="font-size:12px;padding:3px 8px">Save</button>' +
+    (showUseDefault ? '<button type="button" onclick="useLineDefault(\'' + key + '\')" class="btn btn-ghost btn-sm" style="font-size:12px;padding:3px 8px">Use line rate</button>' : '') +
+    '</div>';
+}
+function toggleCommissionEditor(key){ editingCommission = editingCommission === key ? null : key; render(); }
+function saveCommissionEdit(key){
+  const type = document.getElementById('editType-'+key).value;
+  const value = parseFloat(document.getElementById('editValue-'+key).value) || 0;
+  if (key.indexOf('line:') === 0) {
+    const m = modules.find(function(x){ return x.id===key.slice(5); });
+    m.commission = {type: type, value: value};
+  } else {
+    const parts = key.split(':');
+    const m = modules.find(function(x){ return x.id===parts[1]; });
+    m.overrides[parts[2]] = {type: type, value: value};
+  }
+  editingCommission = null;
+  render();
+}
+function useLineDefault(key){
+  const parts = key.split(':');
+  const m = modules.find(function(x){ return x.id===parts[1]; });
+  delete m.overrides[parts[2]];
+  editingCommission = null;
+  render();
+}
 
 function assign(itemId){
   const item = POOL_DATA.items[itemId];
   let target = modules.find(function(m){ return m.name.toLowerCase() === item.description.toLowerCase(); });
-  if (!target) { target = {id:'m' + (++moduleCounter), name: item.description, itemIds: []}; modules.push(target); }
+  if (!target) {
+    target = {id:'m' + (++moduleCounter), name: item.description, itemIds: [],
+              commission: {type: defaultCommission.type, value: defaultCommission.value}, overrides: {}};
+    modules.push(target);
+  }
   target.itemIds.push(itemId);
   itemLoc[itemId] = target.id;
 }
@@ -238,6 +316,7 @@ function moveToModule(itemId, targetModuleId){
   if (cur !== 'pool') {
     const src = modules.find(function(m){ return m.id===cur; });
     src.itemIds = src.itemIds.filter(function(id){ return id!==itemId; });
+    delete src.overrides[itemId];
     if (src.itemIds.length===0) { modules = modules.filter(function(m){ return m.id!==cur; }); if(openPanelId===cur) openPanelId=null; }
   }
   const tgt = modules.find(function(m){ return m.id===targetModuleId; });
@@ -248,11 +327,16 @@ function moveToModule(itemId, targetModuleId){
 function removeFromModule(moduleId, itemId){
   const m = modules.find(function(x){ return x.id===moduleId; });
   m.itemIds = m.itemIds.filter(function(id){ return id!==itemId; });
+  delete m.overrides[itemId];
   itemLoc[itemId] = 'pool';
   if (m.itemIds.length===0) { modules = modules.filter(function(x){ return x.id!==moduleId; }); if(openPanelId===moduleId) openPanelId=null; }
   render();
 }
-function newLine(){ modules.push({id:'m' + (++moduleCounter), name:'New line', itemIds:[]}); render(); }
+function newLine(){
+  modules.push({id:'m' + (++moduleCounter), name:'New line', itemIds:[],
+                commission: {type: defaultCommission.type, value: defaultCommission.value}, overrides: {}});
+  render();
+}
 
 function populateFilters(){
   const retailers = new Set(), persons = new Set(), companies = {}, batches = new Set();
@@ -345,15 +429,32 @@ function renderModules(){
   let subtotal = 0;
   document.getElementById('modulesList').innerHTML = modules.map(function(m){
     const qty = m.itemIds.reduce(function(s,id){ return s + POOL_DATA.items[id].quantity; }, 0);
-    const price = m.itemIds.length ? priceFor(POOL_DATA.items[m.itemIds[0]].unit_cost) : 0;
-    const lineTotal = m.itemIds.reduce(function(s,id){ return s + priceFor(POOL_DATA.items[id].unit_cost) * POOL_DATA.items[id].quantity; }, 0);
+    const lineTotal = m.itemIds.reduce(function(s,id){ return s + memberPrice(m,id) * POOL_DATA.items[id].quantity; }, 0);
+    const avgPrice = qty ? lineTotal/qty : 0;
     subtotal += lineTotal;
+
+    const lineKey = 'line:' + m.id;
+    const linePillHtml = '<button type="button" onclick="toggleCommissionEditor(\'' + lineKey + '\')" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;border-radius:12px">' + commissionLabel(m.commission) + '</button>';
+    const lineEditorHtml = editingCommission === lineKey ? commissionEditorHtml(lineKey, m.commission, false) : '';
+    const showMemberPill = m.itemIds.length > 1;
+
     const rows = m.itemIds.map(function(id){
       const it = POOL_DATA.items[id];
       const o = POOL_DATA.orders[it.transaction_id] || {};
-      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px;color:var(--muted)">' +
+      const isOverride = !!m.overrides[id];
+      const memberKey = 'member:' + m.id + ':' + id;
+      const memberCommission = effectiveCommission(m, id);
+      const pillStyle = isOverride ? 'color:var(--accent2);border-color:var(--accent2)' : 'color:var(--muted)';
+      const memberPillHtml = showMemberPill
+        ? '<button type="button" onclick="toggleCommissionEditor(\'' + memberKey + '\')" class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px;border-radius:10px;' + pillStyle + '">' + commissionLabel(memberCommission) + (isOverride ? ' (custom)' : ' (line rate)') + '</button>'
+        : '';
+      const memberEditorHtml = (showMemberPill && editingCommission === memberKey) ? commissionEditorHtml(memberKey, memberCommission, isOverride) : '';
+      return '<div style="padding:4px 0;font-size:12px;color:var(--muted)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">' +
         '<span>' + (o.order_number||'') + ' · ' + (o.retailer||'') + ' · ' + it.quantity + ' unit' + (it.quantity>1?'s':'') + '</span>' +
-        '<button type="button" data-action="remove" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:#f87171" title="Remove from this line">✕</button></div>';
+        '<div style="display:flex;align-items:center;gap:6px">' + memberPillHtml +
+        '<button type="button" data-action="remove" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:#f87171" title="Remove from this line">✕</button>' +
+        '</div></div>' + memberEditorHtml + '</div>';
     }).join('');
     const movable = Object.keys(itemLoc).filter(function(id){ return itemLoc[id]!==m.id; });
     const panelOpen = openPanelId===m.id;
@@ -369,7 +470,9 @@ function renderModules(){
       '<div style="padding:10px 14px;border-bottom:0.5px solid var(--border)">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
       '<span contenteditable="true" spellcheck="false" data-module="' + m.id + '" data-action="rename" style="font-size:14px;font-weight:500;outline:none">' + m.name + '</span>' +
-      '<span style="font-size:13px;font-weight:600;white-space:nowrap;font-family:var(--mono)">' + qty + ' × ' + fmt(price) + ' = ' + fmt(lineTotal) + '</span></div>' +
+      '<div style="display:flex;align-items:center;gap:8px">' + linePillHtml +
+      '<span style="font-size:13px;font-weight:600;white-space:nowrap;font-family:var(--mono)">' + qty + ' × ' + fmt(avgPrice) + ' = ' + fmt(lineTotal) + '</span></div></div>' +
+      lineEditorHtml +
       '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + m.itemIds.length + (m.itemIds.length===1?' order':' orders') + '</div></div>' +
       '<div style="padding:6px 14px">' + rows + '</div>' +
       '<div style="padding:6px 14px 10px;border-top:0.5px solid var(--border)">' +
@@ -402,7 +505,7 @@ function renderPreview(){
   let subtotal = 0;
   document.getElementById('previewRows').innerHTML = modules.filter(function(m){ return m.itemIds.length>0; }).map(function(m){
     const qty = m.itemIds.reduce(function(s,id){ return s + POOL_DATA.items[id].quantity; }, 0);
-    const lineTotal = m.itemIds.reduce(function(s,id){ return s + priceFor(POOL_DATA.items[id].unit_cost) * POOL_DATA.items[id].quantity; }, 0);
+    const lineTotal = m.itemIds.reduce(function(s,id){ return s + memberPrice(m,id) * POOL_DATA.items[id].quantity; }, 0);
     const price = qty ? lineTotal/qty : 0;
     subtotal += lineTotal;
     return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--border);font-size:13px">' +
@@ -465,12 +568,18 @@ document.getElementById('invoiceForm').addEventListener('submit', function(e){
   const payload = modules.filter(function(m){ return m.itemIds.length>0; }).map(function(m){
     return {
       description: m.name,
+      commission_type: m.commission.type,
+      commission_value: m.commission.value,
       members: m.itemIds.map(function(id){
         const it = POOL_DATA.items[id];
         const o = POOL_DATA.orders[it.transaction_id] || {};
+        const override = m.overrides[id];
         return {
           item_id: id, transaction_id: it.transaction_id, order_number: o.order_number || '',
           description: it.description, sku: it.sku, quantity: it.quantity, unit_cost: it.unit_cost,
+          commission_override: !!override,
+          commission_type: override ? override.type : m.commission.type,
+          commission_value: override ? override.value : m.commission.value,
         };
       }),
     };
@@ -479,6 +588,7 @@ document.getElementById('invoiceForm').addEventListener('submit', function(e){
   document.getElementById('linesJsonField').value = JSON.stringify(payload);
 });
 
+setDefaultCommissionMode('percent');
 populateFilters();
 render();
 </script>
