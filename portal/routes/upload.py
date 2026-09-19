@@ -492,8 +492,15 @@ def batch_review(draft_id):
     # Find next unreviewed parsed item
     next_item = next((i for i in items if i['parse_status'] == 'parsed'), None)
 
+    counts = {
+        'reviewed': sum(1 for i in items if i['parse_status'] == 'submitted'),
+        'parsed':   sum(1 for i in items if i['parse_status'] == 'parsed'),
+        'skipped':  sum(1 for i in items if i['parse_status'] == 'skipped'),
+        'failed':   sum(1 for i in items if i['parse_status'] == 'failed'),
+    }
+
     return render_template('batch_review.html', draft=draft, items=items,
-                           companies=companies, next_item=next_item)
+                           companies=companies, next_item=next_item, counts=counts)
 
 
 @upload_bp.route('/upload/batch/<draft_id>/item/<item_id>', methods=['GET', 'POST'])
