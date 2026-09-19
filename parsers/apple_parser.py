@@ -29,6 +29,8 @@ class LineItem:
     line_total: float
     serial_number: Optional[str] = None
     imei: Optional[str] = None
+    tax_amount: float = 0.0
+    landed_cost: Optional[float] = None
 
 
 @dataclass
@@ -357,6 +359,53 @@ def parse_retail_receipt(text: str, invoice: AppleInvoice):
 
 # --------------------------------------------------------------------------
 
+def allocate_tax_amounts(weights, total_tax):
+    """
+    Split total_tax across the given pre-tax line weights, proportionally, to
+    the cent, dropping any rounding remainder on the largest-weight line so the
+    result sums back to total_tax exactly. Returns a list of per-line tax
+    dollars aligned with `weights`.
+
+    Shared by the parser (parse time) and the upload route (re-allocation when
+    a line is edited on the confirm screen), so both use identical math.
+    """
+    n = len(weights)
+    if n == 0:
+        return []
+    if not total_tax or total_tax <= 0:
+        return [0.0] * n
+
+    subtotal = round(sum(weights), 2)
+    tax_cents = int(round(total_tax * 100))
+
+    if subtotal <= 0:
+        base, rem = divmod(tax_cents, n)
+        cents = [base + (1 if i < rem else 0) for i in range(n)]
+    else:
+        cents = [int(round(tax_cents * (w / subtotal))) for w in weights]
+        diff = tax_cents - sum(cents)
+        if diff != 0:
+            largest = max(range(n), key=lambda i: weights[i])
+            cents[largest] += diff
+
+    return [round(c / 100, 2) for c in cents]
+
+
+def allocate_tax(invoice: AppleInvoice):
+    """
+    Allocate the receipt's sales tax across the invoice's lines and set
+    tax_amount + landed_cost (tax-inclusive cost basis) on each. unit_price and
+    line_total stay pre-tax and untouched.
+    """
+    for it in invoice.items:
+        it.line_total = round(it.unit_price * it.quantity, 2)
+    weights = [it.line_total for it in invoice.items]
+    taxes = allocate_tax_amounts(weights, invoice.sales_tax or 0.0)
+    for it, t in zip(invoice.items, taxes):
+        it.tax_amount = t
+        it.landed_cost = round(it.line_total + t, 2)
+
+
 def validate(invoice: AppleInvoice):
     if invoice.items and invoice.price_total is not None:
         sum_items = round(sum(i.line_total for i in invoice.items), 2)
@@ -384,6 +433,7 @@ def parse(pdf_path: str) -> Optional[AppleInvoice]:
         parse_order_header(text, invoice)
         parse_totals(text, invoice)
         parse_line_items(text, invoice)
+    allocate_tax(invoice)
     validate(invoice)
     return invoice
 
@@ -407,7 +457,8 @@ def to_db_rows(invoice: AppleInvoice, user_id: int, company_id: int,
     }
     items = [{"item_description": it.item_description, "sku_model_color": it.sku_model_color,
               "quantity": it.quantity, "unit_price": it.unit_price, "line_total": it.line_total,
-              "serial_number": it.serial_number, "imei": it.imei}
+              "serial_number": it.serial_number, "imei": it.imei,
+              "tax_amount": it.tax_amount, "landed_cost": it.landed_cost}
              for it in invoice.items]
     return {"transaction": transaction, "items": items}
 
@@ -439,5 +490,6 @@ if __name__ == "__main__":
         print(f"     SKU: {item.sku_model_color}  |  Qty: {item.quantity}  |  "
               f"Unit: ${item.unit_price:,.2f}  |  Total: ${item.line_total:,.2f}")
         print(f"     Serial: {item.serial_number or '—'}  |  IMEI: {item.imei or '—'}")
+        print(f"     Tax: ${item.tax_amount:,.2f}  |  Landed (incl tax): ${item.landed_cost:,.2f}")
     print(f"\nDB rows:")
     print(json.dumps(to_db_rows(invoice, 999, 999, "test.pdf"), indent=2, default=str))
