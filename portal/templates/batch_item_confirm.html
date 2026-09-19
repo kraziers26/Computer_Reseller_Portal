@@ -134,6 +134,19 @@
               <input type="text" name="item_imei[]" value="{{ item.imei or '' }}" placeholder="IMEI" style="font-size:12px;font-family:monospace"></div>
           </div>
           {% endif %}
+          {% if invoice.retailer == 'Apple' %}
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+              <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" step="1" oninput="recalcTax()" style="font-size:12px"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price (ex tax)</label>
+              <input type="number" name="item_unit_price[]" value="{{ item.unit_price }}" step="0.01" min="0" oninput="recalcTax()" style="font-size:12px"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Tax</label>
+              <input type="text" class="apple-tax-disp" value="{{ '%.2f'|format(item.tax_amount or 0) }}" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total (incl. tax)</label>
+              <input type="text" class="apple-landed-disp" value="{{ '%.2f'|format(item.landed_cost or item.line_total) }}" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div>
+            <input type="hidden" name="item_line_total[]" value="{{ '%.2f'|format(item.line_total) }}">
+          </div>
+          {% else %}
           <div class="form-row" style="margin-bottom:0">
             <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
               <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" style="font-size:12px"></div>
@@ -142,6 +155,7 @@
             <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
               <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px"></div>
           </div>
+          {% endif %}
         </div>
         {% else %}
         <div style="font-size:11px;color:var(--muted);padding:3px 0;font-style:italic">
@@ -149,6 +163,7 @@
         </div>
         {% endif %}
         {% endfor %}
+        {% if invoice.retailer == 'Apple' %}<input type="hidden" name="order_tax" value="{{ '%.2f'|format(items|sum(attribute='tax_amount')) }}">{% endif %}
         {% if not items %}<div id="no-items-msg" style="color:var(--muted);font-size:13px;padding:8px 0">No line items parsed.</div>{% endif %}
       </div>
     </div>
@@ -176,6 +191,46 @@ let itemCount = {{ display_items|length }};
 const SKU_LABEL = {{ ('Part Number' if invoice.retailer == 'Apple' else 'SKU') | tojson }};
 const IS_APPLE = {{ (invoice.retailer == 'Apple') | tojson }};
 
+function allocTax(weights, totalTax) {
+  const n = weights.length;
+  if (!n) return [];
+  if (!totalTax || totalTax <= 0) return weights.map(function(){ return 0; });
+  const subtotal = Math.round(weights.reduce(function(a,b){ return a+b; }, 0) * 100) / 100;
+  const taxCents = Math.round(totalTax * 100);
+  let cents;
+  if (subtotal <= 0) {
+    const base = Math.floor(taxCents / n), rem = taxCents - base * n;
+    cents = weights.map(function(_, i){ return base + (i < rem ? 1 : 0); });
+  } else {
+    cents = weights.map(function(w){ return Math.round(taxCents * (w / subtotal)); });
+    let diff = taxCents - cents.reduce(function(a,b){ return a+b; }, 0);
+    if (diff !== 0) { let li = 0; for (let i = 1; i < n; i++) { if (weights[i] > weights[li]) li = i; } cents[li] += diff; }
+  }
+  return cents.map(function(c){ return c / 100; });
+}
+
+function recalcTax() {
+  const units = Array.prototype.slice.call(document.querySelectorAll('[name="item_unit_price[]"]'));
+  const qtys  = Array.prototype.slice.call(document.querySelectorAll('[name="item_qty[]"]'));
+  const lts   = Array.prototype.slice.call(document.querySelectorAll('[name="item_line_total[]"]'));
+  const taxD  = Array.prototype.slice.call(document.querySelectorAll('.apple-tax-disp'));
+  const landD = Array.prototype.slice.call(document.querySelectorAll('.apple-landed-disp'));
+  const otEl  = document.querySelector('[name="order_tax"]');
+  const orderTax = otEl ? (parseFloat(otEl.value) || 0) : 0;
+  const weights = units.map(function(u, i){
+    const q = (qtys[i] ? parseInt(qtys[i].value) : 1) || 1;
+    return Math.round(((parseFloat(u.value) || 0) * q) * 100) / 100;
+  });
+  const taxes = allocTax(weights, orderTax);
+  units.forEach(function(u, i){
+    const w = weights[i], t = taxes[i] || 0, landed = Math.round((w + t) * 100) / 100;
+    if (lts[i])   lts[i].value = w.toFixed(2);
+    if (taxD[i])  taxD[i].value = t.toFixed(2);
+    if (landD[i]) landD[i].value = landed.toFixed(2);
+  });
+}
+if (IS_APPLE) document.addEventListener('DOMContentLoaded', recalcTax);
+
 function addItem() {
   document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
   const idx = itemCount++;
@@ -183,6 +238,9 @@ function addItem() {
   div.className = 'item-row'; div.id = 'item-' + idx;
   div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
   const serialFields = IS_APPLE ? '<div class="form-row" style="margin-bottom:8px"><div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">Serial Number</label><input type="text" name="item_serial[]" placeholder="Serial" style="font-size:12px;font-family:monospace"></div><div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">IMEI</label><input type="text" name="item_imei[]" placeholder="IMEI" style="font-size:12px;font-family:monospace"></div></div>' : '';
+  const priceRow = IS_APPLE
+    ? '<div class="form-row" style="margin-bottom:0"><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label><input type="number" name="item_qty[]" value="1" min="1" step="1" oninput="recalcTax()" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price (ex tax)</label><input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" oninput="recalcTax()" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Tax</label><input type="text" class="apple-tax-disp" value="0.00" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total (incl. tax)</label><input type="text" class="apple-landed-disp" value="0.00" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div><input type="hidden" name="item_line_total[]" value="0.00"></div>'
+    : '<div class="form-row" style="margin-bottom:0"><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label><input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label><input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label><input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div></div>';
   div.innerHTML = `
     <button type="button" onclick="removeItem(${idx})"
             style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
@@ -193,20 +251,15 @@ function addItem() {
         <input type="text" name="item_sku[]" placeholder="${SKU_LABEL}" style="font-size:12px;font-family:monospace"></div>
     </div>
     ${serialFields}
-    <div class="form-row" style="margin-bottom:0">
-      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
-        <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
-      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
-        <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
-      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
-        <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
-    </div>`;
+    ${priceRow}`;
   document.getElementById('items-container').appendChild(div);
+  if (IS_APPLE) recalcTax();
 }
 
 function removeItem(idx) {
   const el = document.getElementById('item-' + idx);
   if (el) el.remove();
+  if (IS_APPLE) recalcTax();
 }
 </script>
 
