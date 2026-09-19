@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Review Item — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
-{% set v = saved or {} %}
-{% set display_items = saved_items if saved_items is not none else invoice.get('items', []) %}
 <div class="page-header page-header-row">
   <div>
     <h1>Review Invoice</h1>
@@ -32,32 +30,32 @@
         <div class="form-group"><label>Retailer</label>
           <input type="text" value="{{ invoice.retailer }}" readonly style="opacity:.6"></div>
         <div class="form-group"><label>Order Number *</label>
-          <input type="text" name="order_number" value="{{ v.get('order_number', invoice.order_number or '') }}" required></div>
+          <input type="text" name="order_number" value="{{ invoice.order_number or '' }}" required></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Purchase Date *</label>
-          <input type="date" name="purchase_date" value="{{ v.get('purchase_date', invoice.purchase_date or '') }}" required
-                 style="{{ 'border-color:#f87171' if not v.get('purchase_date', invoice.purchase_date) else '' }}">
-          {% if not v.get('purchase_date', invoice.purchase_date) %}<div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Not found — enter manually</div>{% endif %}
+          <input type="date" name="purchase_date" value="{{ invoice.purchase_date or '' }}" required
+                 style="{{ 'border-color:#f87171' if not invoice.purchase_date else '' }}">
+          {% if not invoice.purchase_date %}<div style="font-size:11px;color:#f87171;margin-top:3px">⚠ Not found — enter manually</div>{% endif %}
         </div>
         <div class="form-group"><label>Order Type *</label>
           <select name="order_type">
             {% for ot in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
-            <option value="{{ ot }}" {{ 'selected' if v.get('order_type', invoice.fulfillment_method)==ot }}>{{ ot }}</option>
+            <option value="{{ ot }}" {{ 'selected' if invoice.fulfillment_method==ot }}>{{ ot }}</option>
             {% endfor %}
           </select>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Price Total *</label>
-          <input type="number" name="price_total" step="0.01" value="{{ v.get('price_total', invoice.price_total or '') }}" required></div>
+          <input type="number" name="price_total" step="0.01" value="{{ invoice.price_total or '' }}" required></div>
         <div class="form-group"><label>Costco Taxes</label>
-          <input type="number" name="costco_taxes" step="0.01" value="{{ v.get('costco_taxes', invoice.costco_taxes_paid or '') }}" placeholder="Costco only"></div>
+          <input type="number" name="costco_taxes" step="0.01" value="{{ invoice.costco_taxes_paid or '' }}" placeholder="Costco only"></div>
       </div>
       {% if invoice.membership_number is defined and invoice.membership_number %}
       <div class="form-row">
         <div class="form-group"><label>Membership Number</label>
-          <input type="text" name="membership_number" value="{{ v.get('membership_number', invoice.membership_number) }}" style="font-family:monospace;letter-spacing:.5px"></div>
+          <input type="text" name="membership_number" value="{{ invoice.membership_number }}" style="font-family:monospace;letter-spacing:.5px"></div>
         <div class="form-group"></div>
       </div>
       {% endif %}
@@ -67,38 +65,24 @@
       <div class="card-title">Person & company</div>
       <div class="form-row">
         <div class="form-group"><label>Person By *</label>
-          <select name="user_id" id="co-person" required>
-            {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id == (v.get('user_id')|int(current_user_id)) }}>{{ u.username }}</option>{% endfor %}
+          <select name="user_id" required>
+            {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if u.user_id==current_user_id }}>{{ u.username }}</option>{% endfor %}
           </select>
         </div>
         <div class="form-group"><label>Purchase Company *</label>
-          <select name="company_id" id="co-company" required>
+          <select name="company_id" required>
             <option value="">Select company...</option>
-            {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if v.get('company_id')|string == c.company_id|string }}>{{ c.company_name }}</option>{% endfor %}
+            {% for c in companies %}<option value="{{ c.company_id }}">{{ c.company_name }}</option>{% endfor %}
           </select>
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px">
-            <button type="button" id="co-showall" class="btn btn-ghost btn-sm" style="padding:2px 0;display:none">Show all companies</button>
-            <span id="co-err" style="font-size:12px;color:#f87171"></span>
-          </div>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Card Last 4 {{ '' if invoice.card_last4 else '⚠ Not found' }}</label>
-          <input type="text" name="card_last4" id="co-card" value="{{ v.get('card_last4', invoice.card_last4 or '') }}" placeholder="e.g. 3015" maxlength="4">
+          <input type="text" name="card_last4" value="{{ invoice.card_last4 or '' }}" placeholder="e.g. 3015" maxlength="4">
           {% if not invoice.card_last4 %}<div style="font-size:11px;color:var(--warning);margin-top:4px">Enter manually or leave blank to flag.</div>{% endif %}
         </div>
         <div class="form-group"><label>Notes <span style="font-size:11px;color:var(--muted)">(140 chars)</span></label>
-          <input type="text" name="notes" maxlength="140" value="{{ v.get('notes', '') }}" placeholder="Optional tag or note"></div>
-      </div>
-      <div id="co-warn" style="display:none;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--r-sm);padding:12px 14px">
-        <div style="color:#fbbf24;font-weight:500;font-size:13px;margin-bottom:6px">⚠ Check the company</div>
-        <ul id="co-msgs" style="margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.5"></ul>
-        <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4;cursor:pointer;color:var(--text)">
-          <input type="checkbox" name="company_override" value="1" id="co-override" style="margin-top:3px;width:auto"
-                 {{ 'checked' if v.get('company_override') == '1' }}>
-          <span id="co-override-label"></span>
-        </label>
-        <div id="co-override-err" style="font-size:12px;color:#f87171;margin-top:6px"></div>
+          <input type="text" name="notes" maxlength="140" placeholder="Optional tag or note"></div>
       </div>
     </div>
 
@@ -108,10 +92,10 @@
         <div class="card-title" style="margin:0">Line items</div>
         <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
       </div>
-      {% set items = display_items %}
+      {% set items = invoice.get('items', []) if invoice is mapping else [] %}
       <div id="items-container">
         {% for item in items %}
-        {% if saved_items is not none or item.unit_price|float >= 1.0 %}
+        {% if item.unit_price|float >= 1.0 %}
         {% set idx = loop.index0 %}
         <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
           <button type="button" onclick="removeItem({{ idx }})"
@@ -134,6 +118,19 @@
               <input type="text" name="item_imei[]" value="{{ item.imei or '' }}" placeholder="IMEI" style="font-size:12px;font-family:monospace"></div>
           </div>
           {% endif %}
+          {% if invoice.retailer == 'Apple' %}
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
+              <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" step="1" oninput="recalcTax()" style="font-size:12px"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price (ex tax)</label>
+              <input type="number" name="item_unit_price[]" value="{{ item.unit_price }}" step="0.01" min="0" oninput="recalcTax()" style="font-size:12px"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Tax</label>
+              <input type="text" class="apple-tax-disp" value="{{ '%.2f'|format(item.tax_amount or 0) }}" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div>
+            <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total (incl. tax)</label>
+              <input type="text" class="apple-landed-disp" value="{{ '%.2f'|format(item.landed_cost or item.line_total) }}" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div>
+            <input type="hidden" name="item_line_total[]" value="{{ '%.2f'|format(item.line_total) }}">
+          </div>
+          {% else %}
           <div class="form-row" style="margin-bottom:0">
             <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
               <input type="number" name="item_qty[]" value="{{ item.quantity }}" min="1" style="font-size:12px"></div>
@@ -142,6 +139,7 @@
             <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
               <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px"></div>
           </div>
+          {% endif %}
         </div>
         {% else %}
         <div style="font-size:11px;color:var(--muted);padding:3px 0;font-style:italic">
@@ -149,15 +147,15 @@
         </div>
         {% endif %}
         {% endfor %}
+        {% if invoice.retailer == 'Apple' %}<input type="hidden" name="order_tax" value="{{ '%.2f'|format(items|sum(attribute='tax_amount')) }}">{% endif %}
         {% if not items %}<div id="no-items-msg" style="color:var(--muted);font-size:13px;padding:8px 0">No line items parsed.</div>{% endif %}
       </div>
     </div>
 
     <div class="flex gap-12 mt-16">
-      <button type="submit" name="action" value="confirm" class="btn btn-primary">{{ 'Save changes' if saved else 'Confirm' }} →</button>
+      <button type="submit" name="action" value="submit" class="btn btn-primary">Submit & Next →</button>
       <button type="submit" name="action" value="skip" class="btn btn-ghost">Skip for Now</button>
     </div>
-    <div style="font-size:12px;color:var(--muted);margin-top:8px">Confirming holds this order in the batch — it is only saved when you submit the whole batch.</div>
   </form>
 
   <!-- PDF Preview -->
@@ -172,9 +170,49 @@
 </div>
 
 <script>
-let itemCount = {{ display_items|length }};
+let itemCount = {{ (invoice.get('items', [])|length) if invoice is mapping else 0 }};
 const SKU_LABEL = {{ ('Part Number' if invoice.retailer == 'Apple' else 'SKU') | tojson }};
 const IS_APPLE = {{ (invoice.retailer == 'Apple') | tojson }};
+
+function allocTax(weights, totalTax) {
+  const n = weights.length;
+  if (!n) return [];
+  if (!totalTax || totalTax <= 0) return weights.map(function(){ return 0; });
+  const subtotal = Math.round(weights.reduce(function(a,b){ return a+b; }, 0) * 100) / 100;
+  const taxCents = Math.round(totalTax * 100);
+  let cents;
+  if (subtotal <= 0) {
+    const base = Math.floor(taxCents / n), rem = taxCents - base * n;
+    cents = weights.map(function(_, i){ return base + (i < rem ? 1 : 0); });
+  } else {
+    cents = weights.map(function(w){ return Math.round(taxCents * (w / subtotal)); });
+    let diff = taxCents - cents.reduce(function(a,b){ return a+b; }, 0);
+    if (diff !== 0) { let li = 0; for (let i = 1; i < n; i++) { if (weights[i] > weights[li]) li = i; } cents[li] += diff; }
+  }
+  return cents.map(function(c){ return c / 100; });
+}
+
+function recalcTax() {
+  const units = Array.prototype.slice.call(document.querySelectorAll('[name="item_unit_price[]"]'));
+  const qtys  = Array.prototype.slice.call(document.querySelectorAll('[name="item_qty[]"]'));
+  const lts   = Array.prototype.slice.call(document.querySelectorAll('[name="item_line_total[]"]'));
+  const taxD  = Array.prototype.slice.call(document.querySelectorAll('.apple-tax-disp'));
+  const landD = Array.prototype.slice.call(document.querySelectorAll('.apple-landed-disp'));
+  const otEl  = document.querySelector('[name="order_tax"]');
+  const orderTax = otEl ? (parseFloat(otEl.value) || 0) : 0;
+  const weights = units.map(function(u, i){
+    const q = (qtys[i] ? parseInt(qtys[i].value) : 1) || 1;
+    return Math.round(((parseFloat(u.value) || 0) * q) * 100) / 100;
+  });
+  const taxes = allocTax(weights, orderTax);
+  units.forEach(function(u, i){
+    const w = weights[i], t = taxes[i] || 0, landed = Math.round((w + t) * 100) / 100;
+    if (lts[i])   lts[i].value = w.toFixed(2);
+    if (taxD[i])  taxD[i].value = t.toFixed(2);
+    if (landD[i]) landD[i].value = landed.toFixed(2);
+  });
+}
+if (IS_APPLE) document.addEventListener('DOMContentLoaded', recalcTax);
 
 function addItem() {
   document.getElementById('no-items-msg') && (document.getElementById('no-items-msg').style.display='none');
@@ -183,6 +221,9 @@ function addItem() {
   div.className = 'item-row'; div.id = 'item-' + idx;
   div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative';
   const serialFields = IS_APPLE ? '<div class="form-row" style="margin-bottom:8px"><div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">Serial Number</label><input type="text" name="item_serial[]" placeholder="Serial" style="font-size:12px;font-family:monospace"></div><div class="form-group" style="margin-bottom:0;flex:1"><label style="font-size:11px">IMEI</label><input type="text" name="item_imei[]" placeholder="IMEI" style="font-size:12px;font-family:monospace"></div></div>' : '';
+  const priceRow = IS_APPLE
+    ? '<div class="form-row" style="margin-bottom:0"><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label><input type="number" name="item_qty[]" value="1" min="1" step="1" oninput="recalcTax()" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price (ex tax)</label><input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" oninput="recalcTax()" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Tax</label><input type="text" class="apple-tax-disp" value="0.00" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total (incl. tax)</label><input type="text" class="apple-landed-disp" value="0.00" readonly tabindex="-1" style="font-size:12px;font-family:monospace;background:var(--surface-1)"></div><input type="hidden" name="item_line_total[]" value="0.00"></div>'
+    : '<div class="form-row" style="margin-bottom:0"><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label><input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label><input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div><div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label><input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div></div>';
   div.innerHTML = `
     <button type="button" onclick="removeItem(${idx})"
             style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
@@ -193,107 +234,16 @@ function addItem() {
         <input type="text" name="item_sku[]" placeholder="${SKU_LABEL}" style="font-size:12px;font-family:monospace"></div>
     </div>
     ${serialFields}
-    <div class="form-row" style="margin-bottom:0">
-      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Qty</label>
-        <input type="number" name="item_qty[]" value="1" min="1" style="font-size:12px"></div>
-      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Unit Price</label>
-        <input type="number" name="item_unit_price[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
-      <div class="form-group" style="margin-bottom:0"><label style="font-size:11px">Line Total</label>
-        <input type="number" name="item_line_total[]" step="0.01" min="0" placeholder="0.00" style="font-size:12px"></div>
-    </div>`;
+    ${priceRow}`;
   document.getElementById('items-container').appendChild(div);
+  if (IS_APPLE) recalcTax();
 }
 
 function removeItem(idx) {
   const el = document.getElementById('item-' + idx);
   if (el) el.remove();
+  if (IS_APPLE) recalcTax();
 }
-</script>
-
-<script>
-(function () {
-  var PEOPLE_CO = {{ people_companies|tojson }};
-  var CARD_CO   = {{ card_companies|tojson }};
-  var CO_NAMES  = {{ company_names|tojson }};
-  var PERSON_NAMES = {{ person_names|tojson }};
-  var showAll = false, lastSig = null;
-
-  var personSel = document.getElementById('co-person');
-  var companySel = document.getElementById('co-company');
-  var ALL_CO = Array.prototype.map.call(companySel.options, function (o) { return Number(o.value); }).filter(Boolean);
-  var cardInp = document.getElementById('co-card');
-  var warn = document.getElementById('co-warn');
-  var msgList = document.getElementById('co-msgs');
-  var ovBox = document.getElementById('co-override');
-  var ovLabel = document.getElementById('co-override-label');
-  var ovErr = document.getElementById('co-override-err');
-  var coErr = document.getElementById('co-err');
-  var showAllBtn = document.getElementById('co-showall');
-
-  function assigned() { return PEOPLE_CO[personSel.value] || []; }
-
-  function fillCompanies() {
-    var a = assigned(), cur = companySel.value;
-    var ids = (showAll || !a.length) ? ALL_CO : ALL_CO.filter(function (id) { return a.indexOf(id) > -1; });
-    var html = '<option value="">Select company...</option>';
-    ids.forEach(function (id) { html += '<option value="' + id + '">' + CO_NAMES[id] + '</option>'; });
-    companySel.innerHTML = html;
-    if (ids.map(String).indexOf(cur) > -1) { companySel.value = cur; }
-    else if (ids.length === 1 && a.length) { companySel.value = String(ids[0]); }
-    showAllBtn.style.display = (showAll || !a.length) ? 'none' : 'inline-block';
-  }
-
-  function mismatches() {
-    var p = personSel.value, c = Number(companySel.value), m = [];
-    var a = assigned();
-    if (p && c && a.length && a.indexOf(c) < 0) {
-      m.push((PERSON_NAMES[p] || 'This person') + ' isn\u2019t assigned to ' + CO_NAMES[c] + '.');
-    }
-    var k = cardInp.value.trim();
-    if (k) { while (k.length < 4) { k = '0' + k; } }
-    if (c && CARD_CO[k] && CARD_CO[k] !== c) {
-      m.push('Card ' + k + ' belongs to ' + CO_NAMES[CARD_CO[k]] + '.');
-    }
-    return m;
-  }
-
-  function render() {
-    var m = mismatches(), sig = m.join('|') + '#' + companySel.value;
-    if (lastSig !== null && sig !== lastSig) { ovBox.checked = false; }
-    lastSig = sig;
-    msgList.innerHTML = '';
-    m.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; msgList.appendChild(li); });
-    ovLabel.textContent = 'Yes, this is correct. Save under ' +
-      (companySel.value ? CO_NAMES[companySel.value] : 'this company') + '.';
-    warn.style.display = m.length ? 'block' : 'none';
-    if (!m.length) { ovBox.checked = false; }
-    ovErr.textContent = ''; coErr.textContent = '';
-  }
-
-  personSel.addEventListener('change', function () { fillCompanies(); render(); });
-  companySel.addEventListener('change', render);
-  cardInp.addEventListener('input', render);
-  ovBox.addEventListener('change', function () { ovErr.textContent = ''; });
-  showAllBtn.addEventListener('click', function () { showAll = true; fillCompanies(); render(); });
-
-  companySel.form.addEventListener('submit', function (e) {
-    var isConfirm = e.submitter && e.submitter.value === 'confirm';
-    if (!isConfirm) { return; }
-    var m = mismatches();
-    if (m.length && !ovBox.checked) {
-      e.preventDefault();
-      ovErr.textContent = 'Tick the box to save under ' + CO_NAMES[companySel.value] + ', or change the company.';
-      warn.scrollIntoView({behavior: 'smooth', block: 'center'});
-    }
-  });
-
-  // Initial state: keep a previously chosen company even if it's outside the person's list (an override being edited)
-  var a0 = assigned(), c0 = Number(companySel.value);
-  if (c0 && a0.length && a0.indexOf(c0) < 0) { showAll = true; }
-  fillCompanies();
-  render();
-  if ({{ 'true' if v.get('company_override') == '1' else 'false' }} && mismatches().length) { ovBox.checked = true; }
-})();
 </script>
 
 <style>
