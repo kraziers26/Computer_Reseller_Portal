@@ -28,21 +28,42 @@ MIN_ITEM_PRICE = 1.0  # Items under $1 are omitted from invoices
 
 
 def get_next_invoice_number(cur, code):
-    # Check reusable pool first
-    cur.execute("""
-        SELECT inv_number FROM invoice_number_pool
-        WHERE company_code=%s ORDER BY recycled_at LIMIT 1
-    """, (code,))
-    row = cur.fetchone()
-    if row:
+    # Check the reusable pool first, but verify each candidate is actually
+    # free before committing to it. A pool entry can go stale if a prior
+    # attempt picked it, failed to insert (e.g. a duplicate elsewhere), and
+    # rolled back — since the pool delete and the invoice insert share one
+    # transaction, a rollback undoes the delete too, leaving the same
+    # number to be picked again next time. Discarding stale entries here
+    # breaks that loop instead of repeating the same failure forever.
+    while True:
+        cur.execute("""
+            SELECT inv_number FROM invoice_number_pool
+            WHERE company_code=%s ORDER BY recycled_at LIMIT 1
+        """, (code,))
+        row = cur.fetchone()
+        if not row:
+            break
         num = row['inv_number']
         cur.execute("DELETE FROM invoice_number_pool WHERE inv_number=%s AND company_code=%s",
                     (num, code))
-        return num
+        cur.execute("SELECT 1 FROM invoices WHERE invoice_number=%s", (num,))
+        if not cur.fetchone():
+            return num
+        # else: already in use elsewhere — discarded, loop to the next pool entry
+
     seq = COMPANY_DATA[code]['seq']
     cur.execute(f"SELECT nextval('{seq}') AS n")
     n = cur.fetchone()['n']
-    return f"{int(n):05d}-{code}"
+    candidate = f"{int(n):05d}-{code}"
+    # Guard against the sequence itself trailing real data (e.g. a manually
+    # typed custom number that happens to match a future sequence value).
+    while True:
+        cur.execute("SELECT 1 FROM invoices WHERE invoice_number=%s", (candidate,))
+        if not cur.fetchone():
+            return candidate
+        cur.execute(f"SELECT nextval('{seq}') AS n")
+        n = cur.fetchone()['n']
+        candidate = f"{int(n):05d}-{code}"
 
 
 def _load_received_orders(cur, include_txn_ids=None):
