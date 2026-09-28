@@ -135,6 +135,7 @@
               {% if item.commission_type == 'flat' %}${{ "{:,.2f}".format(item.commission_value or 0) }}/unit{% else %}{{ '{:g}'.format(item.commission_value|float) }}%{% endif %}
             </button>
           </div>
+          <div id="markup-{{ item.item_id }}" style="font-size:10px;color:var(--muted);margin-top:2px">cost ${{ "{:,.2f}".format(item.cost_total) }} + markup ${{ "{:,.2f}".format(item.markup_total) }}</div>
           <div id="commission-editor-{{ item.item_id }}" style="display:flex;justify-content:flex-end"></div>
         </td>
         <td style="padding:10px 10px;text-align:right">
@@ -200,6 +201,7 @@
               {% if line.commission_type == 'flat' %}${{ "{:,.2f}".format(line.commission_value or 0) }}/unit{% else %}{{ '{:g}'.format(line.commission_value|float) }}%{% endif %}
             </button>
           </div>
+          <div id="markup-group-{{ line.group_id }}" style="font-size:10px;color:var(--muted);margin-top:2px">cost ${{ "{:,.2f}".format(line.cost_total) }} + markup ${{ "{:,.2f}".format(line.markup_total) }}</div>
           <div id="commission-editor-group-{{ line.group_id }}" style="display:flex;justify-content:flex-end"></div>
         </td>
         <td style="padding:10px 10px;text-align:right">{{ line.qty }}</td>
@@ -228,6 +230,7 @@
                     {% if m.commission_type == 'flat' %}${{ "{:,.2f}".format(m.commission_value or 0) }}/unit{% else %}{{ '{:g}'.format(m.commission_value|float) }}%{% endif %}{{ ' (custom)' if m.commission_override else ' (line rate)' }}
                   </button>
                 </div>
+                <div id="markup-{{ m.item_id }}" style="font-size:9px;color:var(--muted);margin-top:1px">cost ${{ "{:,.2f}".format(m.unit_cost or 0) }} → ${{ "{:,.2f}".format(m.unit_price or 0) }}/unit &nbsp;·&nbsp; markup ${{ "{:,.2f}".format(m.markup_per_unit) }}/unit{% if m.quantity > 1 %} &times; {{ m.quantity }} = ${{ "{:,.2f}".format(m.markup_total) }}{% endif %}</div>
                 <div id="commission-editor-{{ m.item_id }}" style="display:flex;justify-content:flex-end"></div>
               </td>
               <td style="padding:5px 8px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(m.line_total or 0) }}</td>
@@ -442,6 +445,7 @@ async function saveCommissionEdit(key){
   if (isGroupMember) { location.reload(); return; }
   document.getElementById('price-' + key).textContent = '$' + res.unit_price;
   document.getElementById('lt-' + key).textContent = '$' + res.line_total;
+  document.getElementById('markup-' + key).textContent = 'cost $' + res.cost_total + ' + markup $' + res.markup_total;
   document.getElementById('inv-subtotal').textContent = '$' + res.subtotal;
   document.getElementById('inv-total').textContent = '$' + res.total;
   container.innerHTML = '';

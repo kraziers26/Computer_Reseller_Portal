@@ -234,6 +234,15 @@ def _get_display_lines(cur, invoice_id):
     """, (invoice_id,))
     items = cur.fetchall()
 
+    # Cost/markup breakdown, for internal tracking only (never exported — see
+    # export-excel and export-pdf below, which build their own item dicts and
+    # never read these keys). Annotated once here on every row so single items,
+    # group headers, and each order inside a group all show consistent numbers.
+    for it in items:
+        it['cost_total'] = round(float(it['unit_cost'] or 0) * int(it['quantity'] or 0), 2)
+        it['markup_total'] = round(float(it['line_total'] or 0) - it['cost_total'], 2)
+        it['markup_per_unit'] = round(float(it['unit_price'] or 0) - float(it['unit_cost'] or 0), 2)
+
     display_lines = []
     seen_groups = {}
     for it in items:
@@ -258,6 +267,8 @@ def _get_display_lines(cur, invoice_id):
             entry['line_total'] = round(sum(float(m['line_total'] or 0) for m in active), 2)
             entry['unit_price'] = round(entry['line_total'] / entry['qty'], 2) if entry['qty'] else 0
             entry['all_returned'] = len(active) == 0
+            entry['cost_total'] = round(sum(m['cost_total'] for m in active), 2)
+            entry['markup_total'] = round(entry['line_total'] - entry['cost_total'], 2)
 
     return display_lines
 
@@ -1327,6 +1338,7 @@ def update_item_commission(invoice_id):
 
         new_unit_price = _compute_unit_price(item['unit_cost'], new_type, new_value)
         new_line_total = round(new_unit_price * item['quantity'], 2)
+        cost_total = round(float(item['unit_cost'] or 0) * item['quantity'], 2)
         cur.execute("""
             UPDATE invoice_items
             SET commission_type=%s, commission_value=%s, commission_override=%s,
@@ -1346,6 +1358,7 @@ def update_item_commission(invoice_id):
     return jsonify({
         'ok': True, 'unit_price': f"{new_unit_price:,.2f}", 'line_total': f"{new_line_total:,.2f}",
         'subtotal': f"{new_subtotal:,.2f}", 'total': f"{new_total:,.2f}",
+        'cost_total': f"{cost_total:,.2f}", 'markup_total': f"{new_line_total - cost_total:,.2f}",
     })
 
 
