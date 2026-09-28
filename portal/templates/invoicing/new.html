@@ -151,7 +151,8 @@
             <span id="defaultCommissionSuffix" style="font-size:13px;color:var(--muted)">%</span>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Applies to new lines only — lines already on the invoice keep whatever they were set to.</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Applies to new lines only — lines already on the invoice keep whatever they were set to.</div>
+        <button type="button" onclick="applyDefaultToAllLines()" class="btn btn-ghost btn-sm" style="font-size:11px;padding:4px 10px;margin-bottom:10px">Set all lines to this rate</button>
 
         <label style="display:block;margin-bottom:10px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Other Label</div>
@@ -243,6 +244,7 @@ function commissionLabel(c){ return c.type === 'flat' ? fmt(c.value) + '/unit' :
 function computePrice(unitCost, c){
   return c.type === 'flat' ? Math.round((unitCost + c.value) * 100) / 100 : Math.round(unitCost * (1 + c.value/100) * 100) / 100;
 }
+function markupPerUnit(unitCost, c){ return Math.round((computePrice(unitCost, c) - unitCost) * 100) / 100; }
 function effectiveCommission(m, itemId){ return m.overrides[itemId] || m.commission; }
 function memberPrice(m, itemId){ return computePrice(POOL_DATA.items[itemId].unit_cost, effectiveCommission(m, itemId)); }
 
@@ -258,6 +260,13 @@ function setDefaultCommissionMode(mode){
 }
 function onDefaultCommissionChange(){
   defaultCommission.value = parseFloat(document.getElementById('defaultCommissionValue').value) || 0;
+}
+function applyDefaultToAllLines(){
+  if (!modules.length) return;
+  if (!confirm('Set every line on this invoice to ' + commissionLabel(defaultCommission) +
+               '? Per-item overrides (pills marked "custom") are left as-is.')) return;
+  modules.forEach(function(m){ m.commission = {type: defaultCommission.type, value: defaultCommission.value}; });
+  render();
 }
 
 function commissionEditorHtml(key, current, showUseDefault){
@@ -430,6 +439,8 @@ function renderModules(){
   document.getElementById('modulesList').innerHTML = modules.map(function(m){
     const qty = m.itemIds.reduce(function(s,id){ return s + POOL_DATA.items[id].quantity; }, 0);
     const lineTotal = m.itemIds.reduce(function(s,id){ return s + memberPrice(m,id) * POOL_DATA.items[id].quantity; }, 0);
+    const costTotal = m.itemIds.reduce(function(s,id){ return s + POOL_DATA.items[id].unit_cost * POOL_DATA.items[id].quantity; }, 0);
+    const markupTotal = Math.round((lineTotal - costTotal) * 100) / 100;
     const avgPrice = qty ? lineTotal/qty : 0;
     subtotal += lineTotal;
 
@@ -449,12 +460,17 @@ function renderModules(){
         ? '<button type="button" onclick="toggleCommissionEditor(\'' + memberKey + '\')" class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px;border-radius:10px;' + pillStyle + '">' + commissionLabel(memberCommission) + (isOverride ? ' (custom)' : ' (line rate)') + '</button>'
         : '';
       const memberEditorHtml = (showMemberPill && editingCommission === memberKey) ? commissionEditorHtml(memberKey, memberCommission, isOverride) : '';
+      const unitMarkup = markupPerUnit(it.unit_cost, memberCommission);
+      const lineMarkup = Math.round(unitMarkup * it.quantity * 100) / 100;
+      const trackingHtml = '<div style="font-size:10px;color:var(--muted);margin-top:1px">' +
+        'Cost ' + fmt(it.unit_cost) + ' → ' + fmt(memberPrice(m,id)) + '/unit &nbsp;·&nbsp; markup ' +
+        fmt(unitMarkup) + '/unit' + (it.quantity > 1 ? ' &times; ' + it.quantity + ' = ' + fmt(lineMarkup) : '') + '</div>';
       return '<div style="padding:4px 0;font-size:12px;color:var(--muted)">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">' +
         '<span>' + (o.order_number||'') + ' · ' + (o.retailer||'') + ' · ' + it.quantity + ' unit' + (it.quantity>1?'s':'') + '</span>' +
         '<div style="display:flex;align-items:center;gap:6px">' + memberPillHtml +
         '<button type="button" data-action="remove" data-module="' + m.id + '" data-id="' + id + '" class="btn btn-ghost btn-sm" style="padding:0 6px;font-size:12px;color:#f87171" title="Remove from this line">✕</button>' +
-        '</div></div>' + memberEditorHtml + '</div>';
+        '</div></div>' + trackingHtml + memberEditorHtml + '</div>';
     }).join('');
     const movable = Object.keys(itemLoc).filter(function(id){ return itemLoc[id]!==m.id; });
     const panelOpen = openPanelId===m.id;
@@ -473,7 +489,8 @@ function renderModules(){
       '<div style="display:flex;align-items:center;gap:8px">' + linePillHtml +
       '<span style="font-size:13px;font-weight:600;white-space:nowrap;font-family:var(--mono)">' + qty + ' × ' + fmt(avgPrice) + ' = ' + fmt(lineTotal) + '</span></div></div>' +
       lineEditorHtml +
-      '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + m.itemIds.length + (m.itemIds.length===1?' order':' orders') + '</div></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + m.itemIds.length + (m.itemIds.length===1?' order':' orders') +
+      ' &nbsp;·&nbsp; cost ' + fmt(costTotal) + ' + markup ' + fmt(markupTotal) + ' = ' + fmt(lineTotal) + '</div></div>' +
       '<div style="padding:6px 14px">' + rows + '</div>' +
       '<div style="padding:6px 14px 10px;border-top:0.5px solid var(--border)">' +
       '<button type="button" data-action="togglepanel" data-module="' + m.id + '" class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 8px">+ Add to this line</button>' +
