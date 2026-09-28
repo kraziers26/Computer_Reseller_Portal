@@ -3,7 +3,7 @@ Security utilities for the ComputerReseller Invoices Portal.
 """
 import os
 from datetime import timedelta
-from flask import request, session
+from flask import request, session, Response
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
@@ -27,7 +27,35 @@ CSP = {
 }
 
 
+def init_staging_gate(app):
+    """
+    HTTP Basic Auth in front of the entire app — staging only.
+
+    Activates only when STAGING_BASIC_AUTH_USER and STAGING_BASIC_AUTH_PASS
+    are both set. Leave them unset in production; their absence there is
+    what keeps production gate-free.
+    """
+    auth_user = os.environ.get('STAGING_BASIC_AUTH_USER')
+    auth_pass = os.environ.get('STAGING_BASIC_AUTH_PASS')
+
+    if not (auth_user and auth_pass):
+        return  # not staging — no gate applied
+
+    @app.before_request
+    def _require_staging_auth():
+        if request.endpoint == 'static':
+            return  # let CSS/JS/images through without prompting
+        auth = request.authorization
+        if not auth or auth.username != auth_user or auth.password != auth_pass:
+            return Response(
+                'Authentication required', 401,
+                {'WWW-Authenticate': 'Basic realm="Staging"'}
+            )
+
+
 def init_security(app):
+    init_staging_gate(app)
+
     limiter.init_app(app)
     csrf.init_app(app)
 
