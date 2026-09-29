@@ -552,6 +552,26 @@ def _split_by_price(amount, weights):
     return apple_parser.allocate_tax_amounts(weights, amount)
 
 
+def _apple_order_count(cur, where, params):
+    """Number of Apple orders matching the current All Submissions filters."""
+    cur.execute(f"""
+        SELECT COUNT(*) AS n FROM transactions t
+        LEFT JOIN dim_users sub ON t.submitted_by_email = sub.email
+        {where} AND t.retailer = 'Apple'
+    """, params)
+    return cur.fetchone()['n']
+
+
+def _apple_block_reason(filters, apple_count):
+    """Why the Apple items export can't run with these filters, or None if it can."""
+    if filters.get('retailer') and filters['retailer'] != 'Apple':
+        return (f"Retailer is set to {filters['retailer']}. "
+                "Switch Retailer to Apple or All retailers to export Apple items.")
+    if not apple_count:
+        return "No Apple orders match the current filters. Loosen the filters to include Apple orders."
+    return None
+
+
 @admin_bp.route('/submissions/export-apple')
 @login_required
 @require_role('admin')
@@ -563,7 +583,15 @@ def export_apple_items():
     from openpyxl.utils import get_column_letter
     from flask import send_file
 
-    where, params, _ = _submission_filters(request.args)
+    where, params, filters = _submission_filters(request.args)
+
+    with db_cursor() as (cur, _):
+        apple_count = _apple_order_count(cur, where, params)
+    reason = _apple_block_reason(filters, apple_count)
+    if reason:
+        flash(f"Apple items export not available: {reason}", 'warning')
+        return redirect(url_for('admin.all_submissions', **{k: v for k, v in request.args.items() if v}))
+
     where += " AND t.retailer = 'Apple'"
 
     with db_cursor() as (cur, _):
@@ -834,6 +862,11 @@ def all_submissions():
         cur.execute("SELECT DISTINCT print_batch_id FROM transactions WHERE print_batch_id IS NOT NULL AND is_active=TRUE ORDER BY print_batch_id")
         batches = [r['print_batch_id'] for r in cur.fetchall()]
 
+        # How many Apple orders the Apple items export would include right now
+        apple_count = _apple_order_count(cur, where, params)
+
+    apple_block_reason = _apple_block_reason(filters, apple_count)
+
     # Every active filter, minus the page number — used by pagination links so
     # Next/Prev keep the whole filter set instead of only retailer/status.
     page_args = {k: v for k, v in request.args.items() if k != 'page' and v}
@@ -841,6 +874,7 @@ def all_submissions():
     return render_template('all_submissions.html',
                            submissions=submissions, total=total,
                            invoice_links=invoice_links,
+                           apple_count=apple_count, apple_block_reason=apple_block_reason,
                            page=page, per_page=per_page, page_args=page_args,
                            retailers=retailers, companies=companies, users=users, cards=cards, months=months,
                            batches=batches,
