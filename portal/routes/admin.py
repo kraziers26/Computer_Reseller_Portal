@@ -260,87 +260,248 @@ def duplicate_cleanup():
 
     return render_template('duplicate_cleanup.html', groups=groups, total_dupes=total_dupes)
 
+# ── All Submissions: shared filters + live invoice lookup ─────────────────────
+#
+# An order counts as invoiced only when it sits on a finalized invoice
+# (Sent / Unpaid / Paid). Orders on a Draft are treated as NOT invoiced and
+# are not searchable by invoice # or client — that pushes whoever owns the
+# draft to finish it — but the Invoice column still shows "On a draft" so
+# admins can see the order is already claimed.
+#
+# Invoice info is always read live from invoice_items/invoices on every page
+# load, filter change, or export. Nothing is copied onto the transaction, so
+# deleting an invoice, removing or returning a line, or moving a draft to
+# Sent is reflected the next time the page is loaded.
+
+LIVE_INVOICE_STATUSES = ('sent', 'unpaid', 'paid')
+
+_LIVE_INVOICE_EXISTS = """
+    EXISTS (
+        SELECT 1 FROM invoice_items ii
+        JOIN invoices i ON i.invoice_id = ii.invoice_id
+        WHERE ii.transaction_id = t.transaction_id
+          AND i.status IN ('sent','unpaid','paid')
+    )"""
+
+
+def _submission_filters(args):
+    """Build the WHERE clause shared by All Submissions and its Excel export,
+    so the export always matches exactly what's on screen."""
+    f = {
+        'retailer':     args.get('retailer', ''),
+        'company':      args.get('company', type=int),
+        'status':       args.get('status', ''),
+        'month':        args.get('month', ''),
+        'duplicates':   args.get('duplicates', ''),
+        'submitter':    args.get('submitter', type=int),
+        'card':         args.get('card', ''),
+        'person_by':    args.get('person_by', type=int),
+        'order_number': args.get('order_number', '').strip(),
+        'role':         args.get('role', ''),
+        'fulfillment':  args.get('fulfillment', ''),
+        'stuck_days':   args.get('stuck_days', type=int),
+        'batch':        args.get('batch', ''),
+        'invoice':      args.get('invoice', '').strip(),
+        'invoiced':     args.get('invoiced', ''),
+    }
+    if f['invoiced'] not in ('yes', 'no'):
+        f['invoiced'] = ''
+
+    conditions = ["t.is_active = TRUE"]
+    params = []
+    if f['retailer']:
+        conditions.append("t.retailer = %s"); params.append(f['retailer'])
+    if f['company']:
+        conditions.append("t.company_id = %s"); params.append(f['company'])
+    if f['status']:
+        conditions.append("t.review_status = %s"); params.append(f['status'])
+    if f['role'] == 'contributor':
+        conditions.append("sub.portal_role = 'contributor'")
+    elif f['role'] == 'admin':
+        conditions.append("sub.portal_role = 'admin'")
+    if f['month']:
+        conditions.append("t.purchase_year_month = %s"); params.append(f['month'])
+    if f['duplicates']:
+        conditions.append("t.is_duplicate = TRUE")
+    if f['submitter']:
+        conditions.append("sub.user_id = %s"); params.append(f['submitter'])
+    if f['card']:
+        conditions.append("t.card_id = %s"); params.append(f['card'])
+    if f['person_by']:
+        conditions.append("t.user_id = %s"); params.append(f['person_by'])
+    if f['order_number']:
+        conditions.append("t.order_number ILIKE %s"); params.append(f"%{f['order_number']}%")
+    if f['fulfillment']:
+        conditions.append("t.fulfillment_status = %s"); params.append(f['fulfillment'])
+    if f['stuck_days']:
+        conditions.append(
+            "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
+            " / 86400 >= %s")
+        params.append(f['stuck_days'])
+    if f['batch']:
+        conditions.append("t.print_batch_id = %s"); params.append(f['batch'])
+
+    # Invoice # / client search — finalized invoices only (drafts excluded).
+    if f['invoice']:
+        like = f"%{f['invoice']}%"
+        conditions.append("""
+            EXISTS (
+                SELECT 1 FROM invoice_items ii
+                JOIN invoices i ON i.invoice_id = ii.invoice_id
+                LEFT JOIN dim_customers cu ON cu.customer_id = i.customer_id
+                WHERE ii.transaction_id = t.transaction_id
+                  AND i.status IN ('sent','unpaid','paid')
+                  AND (i.invoice_number ILIKE %s OR cu.customer_name ILIKE %s)
+            )""")
+        params += [like, like]
+
+    if f['invoiced'] == 'yes':
+        conditions.append(_LIVE_INVOICE_EXISTS)
+    elif f['invoiced'] == 'no':
+        conditions.append("NOT" + _LIVE_INVOICE_EXISTS)
+
+    where = 'WHERE ' + ' AND '.join(conditions)
+    return where, params, f
+
+
+def _load_invoice_links(cur, tids):
+    """Live invoice info for the given transaction ids.
+
+    Returns {transaction_id: {'invoices': [...], 'on_draft': bool}} where each
+    invoice dict has number, status, client, and a return flag:
+      'all'     — every line for this order on that invoice is returned
+      'partial' — some lines returned, some still billed
+      None      — nothing returned
+    """
+    links = {tid: {'invoices': [], 'on_draft': False} for tid in tids}
+    if not tids:
+        return links
+    cur.execute("""
+        SELECT ii.transaction_id, i.invoice_id, i.invoice_number, i.status,
+               cu.customer_name,
+               BOOL_AND(COALESCE(ii.returned, FALSE)) AS all_returned,
+               BOOL_OR(COALESCE(ii.returned, FALSE))  AS any_returned,
+               MIN(i.created_at) AS created_at
+        FROM invoice_items ii
+        JOIN invoices i ON i.invoice_id = ii.invoice_id
+        LEFT JOIN dim_customers cu ON cu.customer_id = i.customer_id
+        WHERE ii.transaction_id = ANY(%s::uuid[])
+        GROUP BY ii.transaction_id, i.invoice_id, i.invoice_number, i.status, cu.customer_name
+        ORDER BY created_at
+    """, ([str(t) for t in tids],))
+    for r in cur.fetchall():
+        entry = links.setdefault(r['transaction_id'], {'invoices': [], 'on_draft': False})
+        if r['status'] in LIVE_INVOICE_STATUSES:
+            entry['invoices'].append({
+                'invoice_id': r['invoice_id'],
+                'number':     r['invoice_number'],
+                'status':     r['status'],
+                'client':     r['customer_name'],
+                'returned':   'all' if r['all_returned'] else ('partial' if r['any_returned'] else None),
+            })
+        elif r['status'] == 'draft':
+            entry['on_draft'] = True
+    return links
+
+
 @admin_bp.route('/submissions/export')
 @login_required
 @require_role('admin')
 def export_submissions():
+    """Excel export of exactly what All Submissions is showing — same filters
+    (including invoice search and the Invoiced toggle), every on-screen column
+    in the same order, then a few extra audit columns. Not paginated."""
     import io
+    from datetime import datetime
     from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
     from flask import send_file
-    f_retailer   = request.args.get('retailer', '')
-    f_company    = request.args.get('company', type=int)
-    f_status     = request.args.get('status', '')
-    f_month      = request.args.get('month', '')
-    f_duplicates = request.args.get('duplicates', '')
-    f_submitter  = request.args.get('submitter', type=int)
-    f_card       = request.args.get('card', '')
-    f_person     = request.args.get('person_by', type=int)
-    f_order      = request.args.get('order_number', '')
-    f_role       = request.args.get('role', '')
-    f_fulfillment = request.args.get('fulfillment', '')
-    f_stuck_days  = request.args.get('stuck_days', type=int)
-
-    conditions = ["t.is_active = TRUE"]
-    params = []
-    if f_retailer: conditions.append("t.retailer = %s"); params.append(f_retailer)
-    if f_company:  conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_status:   conditions.append("t.review_status = %s"); params.append(f_status)
-    if f_month:    conditions.append("t.purchase_year_month = %s"); params.append(f_month)
-    if f_duplicates: conditions.append("t.is_duplicate = TRUE")
-    if f_submitter: conditions.append("sub.user_id = %s"); params.append(f_submitter)
-    if f_card:     conditions.append("t.card_id = %s"); params.append(f_card)
-    if f_person:   conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_order:    conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
-    if f_role == 'contributor': conditions.append("sub.portal_role = 'contributor'")
-    elif f_role == 'admin':     conditions.append("sub.portal_role = 'admin'")
-    if f_fulfillment: conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
-    if f_stuck_days:
-        conditions.append("EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,t.submitted_at)))/86400 >= %s")
-        params.append(f_stuck_days)
-    where = 'WHERE ' + ' AND '.join(conditions)
+    where, params, _ = _submission_filters(request.args)
 
     with db_cursor() as (cur, _):
         cur.execute(f"""
-            SELECT t.order_number, t.retailer, t.purchase_date, t.price_total,
+            SELECT t.transaction_id, t.order_number, t.retailer, t.purchase_date, t.price_total,
                    t.review_status, t.fulfillment_status, t.submitted_at,
-                   t.fulfillment_status_updated_at,
                    ROUND(EXTRACT(EPOCH FROM (NOW()-COALESCE(t.fulfillment_status_updated_at,
                          t.submitted_at)))/86400) AS days_in_status,
                    sub.username AS submitter, per.username AS person_by,
-                   c.company_name, t.card_id, t.order_type, t.is_duplicate
+                   c.company_name, t.card_id, d.cashback_rate, t.order_type, t.is_duplicate,
+                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2) AS gross_paid,
+                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)   AS net_paid,
+                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2) AS tax_withheld,
+                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)    AS cashback
             FROM transactions t
             LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
             LEFT JOIN dim_users per    ON t.user_id = per.user_id
             LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            LEFT JOIN dim_cards d      ON t.card_id = d.card_id
             {where}
             ORDER BY t.submitted_at DESC
         """, params)
         rows = cur.fetchall()
+        links = _load_invoice_links(cur, [r['transaction_id'] for r in rows])
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Submissions"
-    headers = ['Order #','Retailer','Purchase Date','Total','Review Status',
-               'Fulfillment Stage','Days in Stage','Submitted At','Submitter',
-               'Person By','Company','Card','Order Type','Duplicate']
+    headers = ['Order #', 'Retailer', 'Purchase Date', 'Person By', 'Submitter',
+               'Card', 'Card Rate %', 'Company', 'Total', 'Gross', 'Net', 'Tax', 'CB',
+               'Review Status', 'Stage', 'Days in Stage',
+               'Invoice #', 'Invoice Status', 'Client', 'Invoice Note',
+               'Submitted At', 'Order Type', 'Duplicate']
+    money_cols = {'Total', 'Gross', 'Net', 'Tax', 'CB'}
     ws.append(headers)
+
     for r in rows:
+        link = links.get(r['transaction_id'], {'invoices': [], 'on_draft': False})
+        invs = link['invoices']
+        notes = []
+        for inv in invs:
+            if inv['returned'] == 'all':
+                notes.append(f"{inv['number']}: Returned")
+            elif inv['returned'] == 'partial':
+                notes.append(f"{inv['number']}: Partial return")
+        if not invs and link['on_draft']:
+            notes.append('On a draft')
         ws.append([
             r['order_number'], r['retailer'],
             r['purchase_date'].strftime('%Y-%m-%d') if r['purchase_date'] else '',
-            float(r['price_total'] or 0), r['review_status'],
-            r['fulfillment_status'], int(r['days_in_status'] or 0),
+            r['person_by'] or '', r['submitter'] or '',
+            r['card_id'] or '',
+            round(float(r['cashback_rate']) * 100, 2) if r['cashback_rate'] is not None else None,
+            r['company_name'] or '',
+            float(r['price_total'] or 0), float(r['gross_paid'] or 0), float(r['net_paid'] or 0),
+            float(r['tax_withheld'] or 0), float(r['cashback'] or 0),
+            r['review_status'], (r['fulfillment_status'] or 'uploaded').title(),
+            int(r['days_in_status'] or 0),
+            ', '.join(i['number'] for i in invs),
+            ', '.join(i['status'].title() for i in invs),
+            ', '.join(i['client'] or '—' for i in invs),
+            '; '.join(notes),
             r['submitted_at'].strftime('%Y-%m-%d %H:%M') if r['submitted_at'] else '',
-            r['submitter'], r['person_by'], r['company_name'],
-            r['card_id'], r['order_type'], 'Yes' if r['is_duplicate'] else 'No'
+            r['order_type'] or '', 'Yes' if r['is_duplicate'] else 'No',
         ])
-    from openpyxl.styles import Font
-    for cell in ws[1]: cell.font = Font(bold=True)
+
+    # Formatting: bold header, frozen header row, filters, money format, widths
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill('solid', fgColor='E8EAF2')
+    ws.freeze_panes = 'B2'
+    ws.auto_filter.ref = ws.dimensions
+    for idx, h in enumerate(headers, start=1):
+        col = get_column_letter(idx)
+        if h in money_cols:
+            for cell in ws[col][1:]:
+                cell.number_format = '$#,##0.00'
+        longest = max([len(str(h))] + [len(str(c.value)) for c in ws[col][1:] if c.value is not None])
+        ws.column_dimensions[col].width = min(max(longest + 2, 10), 45)
 
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
+    fname = f"submissions_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True, download_name='submissions_export.xlsx')
+                     as_attachment=True, download_name=fname)
 
 
 @admin_bp.route('/submissions/bulk-action', methods=['POST'])
@@ -388,66 +549,20 @@ def bulk_action():
 @login_required
 @require_role('admin')
 def all_submissions():
-    page     = request.args.get('page', 1, type=int)
+    page     = max(request.args.get('page', 1, type=int), 1)
     per_page = 25
     offset   = (page - 1) * per_page
 
-    f_retailer   = request.args.get('retailer', '')
-    f_company    = request.args.get('company', type=int)
-    f_status     = request.args.get('status', '')
-    f_month      = request.args.get('month', '')
-    f_duplicates = request.args.get('duplicates', '')
-    f_submitter  = request.args.get('submitter', type=int)
-    f_card       = request.args.get('card', '')
-    f_person     = request.args.get('person_by', type=int)
-    f_order      = request.args.get('order_number', '')
-    f_role        = request.args.get('role', '')
-    f_fulfillment  = request.args.get('fulfillment', '')
-    f_stuck_days   = request.args.get('stuck_days', type=int)
-    f_batch        = request.args.get('batch', '')
-
-    conditions = ["t.is_active = TRUE"]
-    params = []
-    if f_retailer:
-        conditions.append("t.retailer = %s"); params.append(f_retailer)
-    if f_company:
-        conditions.append("t.company_id = %s"); params.append(f_company)
-    if f_status:
-        conditions.append("t.review_status = %s"); params.append(f_status)
-    if f_role == 'contributor':
-        conditions.append("sub.portal_role = 'contributor'")
-    elif f_role == 'admin':
-        conditions.append("sub.portal_role = 'admin'")
-    if f_month:
-        conditions.append("t.purchase_year_month = %s"); params.append(f_month)
-    if f_duplicates:
-        conditions.append("t.is_duplicate = TRUE")
-    if f_submitter:
-        conditions.append("sub.user_id = %s"); params.append(f_submitter)
-    if f_card:
-        conditions.append("t.card_id = %s"); params.append(f_card)
-    if f_person:
-        conditions.append("t.user_id = %s"); params.append(f_person)
-    if f_order:
-        conditions.append("t.order_number ILIKE %s"); params.append(f'%{f_order}%')
-    if f_fulfillment:
-        conditions.append("t.fulfillment_status = %s"); params.append(f_fulfillment)
-    if f_stuck_days:
-        conditions.append(
-            "EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at, t.submitted_at)))"
-            " / 86400 >= %s")
-        params.append(f_stuck_days)
-
-    if f_batch:
-        conditions.append("t.print_batch_id = %s"); params.append(f_batch)
-
-    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+    where, params, filters = _submission_filters(request.args)
 
     with db_cursor() as (cur, _):
         cur.execute(f"""
             SELECT t.transaction_id, t.order_number, t.retailer,
                    t.purchase_date, t.price_total, t.order_type,
                    t.review_status, t.submitted_at, t.is_duplicate,
+                   t.fulfillment_status,
+                   EXTRACT(EPOCH FROM (NOW() - COALESCE(t.fulfillment_status_updated_at,
+                           t.submitted_at))) / 86400 AS days_in_status,
                    t.card_id, d.cashback_rate,
                    ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2) AS gross_paid,
                    ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)   AS net_paid,
@@ -466,6 +581,9 @@ def all_submissions():
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
         submissions = cur.fetchall()
+
+        # Live invoice lookup for just the rows on this page
+        invoice_links = _load_invoice_links(cur, [r['transaction_id'] for r in submissions])
 
         cur.execute(f"""
             SELECT COUNT(*) AS n FROM transactions t
@@ -491,16 +609,17 @@ def all_submissions():
         cur.execute("SELECT DISTINCT print_batch_id FROM transactions WHERE print_batch_id IS NOT NULL AND is_active=TRUE ORDER BY print_batch_id")
         batches = [r['print_batch_id'] for r in cur.fetchall()]
 
+    # Every active filter, minus the page number — used by pagination links so
+    # Next/Prev keep the whole filter set instead of only retailer/status.
+    page_args = {k: v for k, v in request.args.items() if k != 'page' and v}
+
     return render_template('all_submissions.html',
                            submissions=submissions, total=total,
-                           page=page, per_page=per_page,
+                           invoice_links=invoice_links,
+                           page=page, per_page=per_page, page_args=page_args,
                            retailers=retailers, companies=companies, users=users, cards=cards, months=months,
                            batches=batches,
-                           filters={'retailer':f_retailer,'company':f_company,'status':f_status,
-                                    'month':f_month,'duplicates':f_duplicates,'submitter':f_submitter,
-                                    'card':f_card,'person_by':f_person,'order_number':f_order,
-                                    'role':f_role,'fulfillment':f_fulfillment,
-                                    'stuck_days':f_stuck_days,'batch':f_batch})
+                           filters=filters)
 
 
 @admin_bp.route('/submissions/<uuid:tid>', methods=['GET', 'POST'])
