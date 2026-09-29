@@ -1,57 +1,99 @@
 {% extends "base.html" %}
-{% block title %}All Submissions — ComputerReseller Invoices Portal<script>
-function toggleAll(cb) {
-  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
-  updateBar();
-}
-function updateBar() {
-  const checked = document.querySelectorAll('.row-check:checked');
-  const bar = document.getElementById('bulkBar');
-  const cnt = document.getElementById('bulkCount');
-  bar.style.display = checked.length > 0 ? 'flex' : 'none';
-  cnt.textContent = checked.length + ' selected';
-}
-document.addEventListener('change', function(e) {
-  if (e.target.classList.contains('row-check')) updateBar();
-});
-function doBulk(action) {
-  const checked = document.querySelectorAll('.row-check:checked');
-  if (!checked.length) return;
-  if (action === 'delete' && !confirm('Permanently delete ' + checked.length + ' transaction(s)? This cannot be undone.')) return;
-  document.getElementById('bulkAction').value = action;
-  document.getElementById('bulkForm').submit();
-}
-function clearAll() {
-  document.querySelectorAll('.row-check, #selectAll').forEach(c => c.checked = false);
-  updateBar();
-}
-</script>
-{% endblock %}
+{% block title %}All Submissions — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
+<style>
+/* This page only: use the full screen width instead of the 1200px site cap.
+   min-width:0 lets the table scroll inside its own box on small screens. */
+.main{max-width:none;min-width:0}
+
+.as-lbl{font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+.as-hint{font-size:11px;color:var(--hint);margin-top:4px;line-height:1.3}
+.as-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;align-items:start}
+.as-span2{grid-column:span 2}
+@media(max-width:480px){.as-span2{grid-column:span 1}}
+
+/* Invoiced: All / Invoiced / Not invoiced */
+.as-seg{display:flex;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;background:var(--surface2)}
+.as-seg label{flex:1;margin:0;text-align:center;padding:8px 6px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+.as-seg label + label{border-left:1px solid var(--border)}
+.as-seg input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.as-seg input:checked + span{color:#fff}
+.as-seg label:has(input:checked){background:var(--accent);color:#fff}
+.as-seg label:has(input:focus-visible){outline:2px solid var(--accent2);outline-offset:-2px}
+
+/* Table: columns size to their content, fill the width, scroll sideways when narrow */
+.as-table{font-size:12.5px;font-variant-numeric:tabular-nums}
+.as-table th,.as-table td{white-space:nowrap;padding:9px 10px}
+.as-table th{font-size:10px}
+.as-table .r{text-align:right}
+.as-table .num{font-family:var(--mono);font-size:12px;text-align:right}
+.as-table .chk{width:36px;min-width:36px;max-width:36px;padding-right:4px}
+/* Keep checkbox + Order # pinned on the left when scrolling sideways */
+.as-table th:nth-child(-n+2),.as-table td:nth-child(-n+2){position:sticky;z-index:1;background:var(--surface)}
+.as-table th:nth-child(-n+2){background:var(--surface2);z-index:2}
+.as-table th:nth-child(1),.as-table td:nth-child(1){left:0}
+.as-table th:nth-child(2),.as-table td:nth-child(2){left:36px;box-shadow:inset -1px 0 0 var(--border)}
+.as-table tr:hover td:nth-child(-n+2){background:#1e2130}
+.as-table input[type=checkbox]{width:auto;cursor:pointer}
+.as-pill{display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:10px;font-weight:500;white-space:nowrap}
+.as-inv{display:flex;align-items:center;gap:6px;min-height:22px}
+.as-inv + .as-inv{margin-top:4px}
+.as-inv a{font-family:var(--mono);font-size:12px;color:var(--accent2)}
+
+/* Bulk actions bar — pinned to the bottom while rows are selected */
+#bulkBar{position:fixed;bottom:0;left:220px;right:0;z-index:500;background:var(--surface);border-top:1px solid var(--border2);
+  padding:12px 32px;display:none;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  box-shadow:0 -4px 16px rgba(0,0,0,.25)}
+@media(max-width:768px){ #bulkBar{left:0;padding:12px 16px} }
+.main{padding-bottom:80px}
+</style>
+
 <div class="page-header page-header-row">
-  <div><h1>All Submissions</h1><p>{{ total }} records</p></div>
-  <a href="{{ url_for('admin.export_submissions', **request.args) }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
+  <div>
+    <h1>All Submissions</h1>
+    <p>{{ total }} records <span style="color:var(--hint)">· as of <span id="asOf"></span></span></p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button type="button" class="btn btn-ghost btn-sm" onclick="window.location.reload()" title="Reload with the latest invoice and stage data">↻ Refresh</button>
+    <a href="{{ url_for('admin.export_submissions', **page_args) }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
+  </div>
 </div>
 
 <div class="card" style="margin-bottom:16px">
-  <form method="GET">
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-items:end">
-      <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
-        <input type="text" name="order_number" value="{{ filters.order_number }}"
-               placeholder="Search order #..." style="width:100%" oninput="this.form.submit()">
+  <form method="GET" id="filterForm">
+    {% if filters.batch %}<input type="hidden" name="batch" value="{{ filters.batch }}">{% endif %}
+    <div class="as-grid">
+      <div class="as-span2">
+        <div class="as-lbl">Invoice # / Client</div>
+        <input type="text" name="invoice" id="invoiceSearch" value="{{ filters.invoice }}"
+               placeholder="e.g. 00042-SE or client name" autocomplete="off" data-live-search>
+        <div class="as-hint">Searches Sent, Unpaid and Paid invoices. Drafts aren't searchable until they're finished.</div>
+      </div>
+      <div class="as-span2">
+        <div class="as-lbl">Invoiced</div>
+        <div class="as-seg" role="radiogroup" aria-label="Invoiced">
+          <label><input type="radio" name="invoiced" value="" {{ 'checked' if not filters.invoiced }} onchange="this.form.submit()"><span>All</span></label>
+          <label><input type="radio" name="invoiced" value="yes" {{ 'checked' if filters.invoiced=='yes' }} onchange="this.form.submit()"><span>Invoiced</span></label>
+          <label><input type="radio" name="invoiced" value="no" {{ 'checked' if filters.invoiced=='no' }} onchange="this.form.submit()"><span>Not invoiced</span></label>
+        </div>
+        <div class="as-hint">Invoiced = on a Sent, Unpaid or Paid invoice. Orders on a draft count as Not invoiced.</div>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Submitter Role</div>
-        <select name="role" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Order #</div>
+        <input type="text" name="order_number" id="orderSearch" value="{{ filters.order_number }}"
+               placeholder="Search order #..." autocomplete="off" data-live-search>
+      </div>
+      <div>
+        <div class="as-lbl">Submitter Role</div>
+        <select name="role" onchange="this.form.submit()">
           <option value="">All roles</option>
           <option value="admin" {{ 'selected' if filters.role=='admin' }}>Admin</option>
           <option value="contributor" {{ 'selected' if filters.role=='contributor' }}>Contributor</option>
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stage</div>
-        <select name="fulfillment" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Stage</div>
+        <select name="fulfillment" onchange="this.form.submit()">
           <option value="">All stages</option>
           <option value="uploaded"  {{ 'selected' if filters.fulfillment=='uploaded'  }}>Uploaded</option>
           <option value="batched"   {{ 'selected' if filters.fulfillment=='batched'   }}>Batched</option>
@@ -60,8 +102,8 @@ function clearAll() {
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Stuck &gt; Days</div>
-        <select name="stuck_days" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Stuck &gt; Days</div>
+        <select name="stuck_days" onchange="this.form.submit()">
           <option value="">Any duration</option>
           <option value="3"  {{ 'selected' if filters.stuck_days==3  }}>3+ days</option>
           <option value="7"  {{ 'selected' if filters.stuck_days==7  }}>7+ days</option>
@@ -70,102 +112,93 @@ function clearAll() {
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
-        <select name="retailer" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Retailer</div>
+        <select name="retailer" onchange="this.form.submit()">
           <option value="">All retailers</option>
           {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
-        <select name="company" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Company</div>
+        <select name="company" onchange="this.form.submit()">
           <option value="">All companies</option>
           {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Month</div>
-        <input type="month" name="month" value="{{ filters.month }}" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Month</div>
+        <input type="month" name="month" value="{{ filters.month }}" onchange="this.form.submit()">
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Submitter</div>
-        <select name="submitter" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Submitter</div>
+        <select name="submitter" onchange="this.form.submit()">
           <option value="">All submitters</option>
           {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.submitter==u.user_id }}>{{ u.username }}</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Card</div>
-        <select name="card" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Card</div>
+        <select name="card" onchange="this.form.submit()">
           <option value="">All cards</option>
-          {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if filters.card==c.card_id }}>Card {{ c.card_id }} ({{ "%.1f"|format(c.cashback_rate*100) }}%)</option>{% endfor %}
+          {% for c in cards %}<option value="{{ c.card_id }}" {{ 'selected' if filters.card==c.card_id }}>Card {{ c.card_id }} ({{ "%.1f"|format((c.cashback_rate or 0)*100) }}%)</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Status</div>
-        <select name="status" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Status</div>
+        <select name="status" onchange="this.form.submit()">
           <option value="">All statuses</option>
           {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
           <option value="{{ s }}" {{ 'selected' if filters.status==s }}>{{ s }}</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Person By</div>
-        <select name="person_by" style="width:100%" onchange="this.form.submit()">
+        <div class="as-lbl">Person By</div>
+        <select name="person_by" onchange="this.form.submit()">
           <option value="">All persons</option>
           {% for u in users %}<option value="{{ u.user_id }}" {{ 'selected' if filters.person_by==u.user_id }}>{{ u.username }}</option>{% endfor %}
         </select>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;padding-top:20px">
+      <div style="display:flex;align-items:center;gap:8px;padding-top:22px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:0;white-space:nowrap">
           <input type="checkbox" name="duplicates" value="1" {{ 'checked' if filters.duplicates }} onchange="this.form.submit()" style="width:auto"> Dups only
         </label>
-        {% if filters.retailer or filters.company or filters.status or filters.month or filters.duplicates or filters.submitter or filters.card or filters.person_by or filters.order_number or filters.batch or filters.role or filters.stuck_days or filters.fulfillment %}
+        {% if page_args %}
         <a href="{{ url_for('admin.all_submissions') }}" class="btn btn-ghost btn-sm">Clear</a>
         {% endif %}
       </div>
     </div>
+    {% if filters.batch %}
+    <div style="margin-top:10px;font-size:12px;color:var(--muted)">Filtered to batch <span class="mono" style="color:var(--text)">{{ filters.batch }}</span></div>
+    {% endif %}
   </form>
 </div>
 
-<div class="card" style="padding:0">
-  <div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed">
-      <colgroup>
-        <col style="width:36px">
-        <col style="width:150px">
-        <col style="width:80px">
-        <col style="width:90px">
-        <col style="width:90px">
-        <col style="width:90px">
-        <col style="width:100px">
-        <col style="width:80px">
-        <col style="width:90px">
-        <col style="width:90px">
-        <col style="width:55px">
-        <col style="width:55px">
-        <col style="width:100px">
-        <col style="width:110px">
-        <col style="width:50px">
-      </colgroup>
+<form method="POST" action="{{ url_for('admin.bulk_action') }}" id="bulkForm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" id="bulkAction" value="">
+  <input type="hidden" name="back" value="{{ request.url }}">
+
+  <div class="table-wrap" style="background:var(--surface)">
+    <table class="as-table">
       <thead>
-        <tr style="background:var(--surface2)">
-          {% set th = "padding:8px 10px;text-align:left;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" %}
-          <th style="{{ th }}"></th>
-          <th style="{{ th }}">Order #</th>
-          <th style="{{ th }}">Retailer</th>
-          <th style="{{ th }}">Date</th>
-          <th style="{{ th }}">Person By</th>
-          <th style="{{ th }}">Submitter</th>
-          <th style="{{ th }}">Card</th>
-          <th style="{{ th }}">Company</th>
-          <th style="{{ th }};text-align:right">Total</th>
-          <th style="{{ th }};text-align:right">Gross / Net</th>
-          <th style="{{ th }};text-align:right">Tax</th>
-          <th style="{{ th }};text-align:right">CB</th>
-          <th style="{{ th }}">Review</th>
-          <th style="{{ th }}">Stage</th>
-          <th style="{{ th }}"></th>
+        <tr>
+          <th class="chk"><input type="checkbox" id="selectAll" onchange="toggleAll(this)" aria-label="Select all on this page"></th>
+          <th>Order #</th>
+          <th>Retailer</th>
+          <th>Date</th>
+          <th>Person By</th>
+          <th>Submitter</th>
+          <th>Card</th>
+          <th>Company</th>
+          <th class="r">Total</th>
+          <th class="r">Gross</th>
+          <th class="r">Net</th>
+          <th class="r">Tax</th>
+          <th class="r">CB</th>
+          <th>Review</th>
+          <th>Stage</th>
+          <th>Invoice</th>
+          <th>Client</th>
         </tr>
       </thead>
       <tbody>
@@ -174,84 +207,158 @@ function clearAll() {
       {% set fs = r.fulfillment_status or 'uploaded' %}
       {% set days = r.days_in_status|float|round|int if r.days_in_status else 0 %}
       {% set stuck = days >= 14 %}
-      <tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:8px 14px">
-          <input type="checkbox" name="tids" value="{{ r.transaction_id }}" style="width:auto" class="row-check">
+      {% set link = invoice_links.get(r.transaction_id) or {'invoices': [], 'on_draft': False} %}
+      <tr>
+        <td class="chk">
+          <input type="checkbox" name="tids" value="{{ r.transaction_id }}" class="row-check" aria-label="Select {{ r.order_number }}">
         </td>
-        <td style="padding:7px 10px;font-family:var(--mono);font-size:12px;white-space:nowrap">
+        <td class="mono">
           <a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}"
-             style="color:var(--accent2)">{{ r.order_number }}</a>
+             style="color:var(--accent2)" title="Open review">{{ r.order_number }}</a>
           {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
         </td>
-        <td style="padding:7px 10px;white-space:nowrap">{{ r.retailer }}</td>
-        <td style="padding:7px 10px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-        <td style="padding:7px 10px;white-space:nowrap">{{ r.person_name or '—' }}</td>
-        <td style="padding:7px 10px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.submitter_name or '—' }}</td>
-        <td style="padding:7px 10px;font-family:var(--mono);font-size:11px;white-space:nowrap">
+        <td>{{ r.retailer }}</td>
+        <td style="color:var(--muted)">{{ r.purchase_date }}</td>
+        <td>{{ r.person_name or '—' }}</td>
+        <td style="color:var(--muted)">{{ r.submitter_name or '—' }}</td>
+        <td class="mono" style="font-size:11px">
           {% if r.card_id %}{{ r.card_id }} <span style="color:var(--muted)">{{ "%.1f"|format((r.cashback_rate or 0)*100) }}%</span>{% else %}—{% endif %}
         </td>
-        <td style="padding:7px 10px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap;color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
-        <td style="padding:7px 10px;white-space:nowrap">
-          {% if rs == 'Auto-approved' or rs == 'Reviewed' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">✓ Approved</span>
-          {% elif rs == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Pending</span>
-          {% elif rs == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Flagged</span>
-          {% elif rs == 'Needs Review' %}<span style="background:rgba(251,146,60,.15);color:#fb923c;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Needs Review</span>
-          {% elif rs == 'Duplicate' %}<span style="background:rgba(239,68,68,.12);color:#f87171;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Duplicate</span>
-          {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:10px;padding:2px 7px;border-radius:10px">{{ rs }}</span>{% endif %}
+        <td>{{ r.company_name or '—' }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td class="num" style="color:#4ade80">${{ "{:,.2f}".format(r.gross_paid or 0) }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.net_paid or 0) }}</td>
+        <td class="num" style="color:#fbbf24">${{ "{:,.2f}".format(r.tax_withheld or 0) }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.cashback or 0) }}</td>
+        <td>
+          {% if rs == 'Auto-approved' or rs == 'Reviewed' %}<span class="as-pill" style="background:rgba(34,197,94,.15);color:#4ade80">✓ Approved</span>
+          {% elif rs == 'Pending' %}<span class="as-pill" style="background:rgba(245,158,11,.15);color:#fbbf24">Pending</span>
+          {% elif rs == 'Flagged' %}<span class="as-pill" style="background:rgba(239,68,68,.15);color:#f87171">Flagged</span>
+          {% elif rs == 'Needs Review' %}<span class="as-pill" style="background:rgba(251,146,60,.15);color:#fb923c">Needs Review</span>
+          {% elif rs == 'Duplicate' %}<span class="as-pill" style="background:rgba(239,68,68,.12);color:#f87171">Duplicate</span>
+          {% else %}<span class="as-pill" style="background:var(--surface2);color:var(--muted)">{{ rs }}</span>{% endif %}
         </td>
-        <td style="padding:7px 10px;white-space:nowrap">
-          {% if fs == 'uploaded' %}<span style="background:rgba(79,110,247,.12);color:#4f6ef7;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Uploaded{% if days > 0 %} · {{ days }}d{% endif %}</span>
-          {% elif fs == 'batched' %}<span style="background:rgba(139,92,246,.12);color:{{ '#f87171' if stuck else '#8b5cf6' }};font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Batched · {{ days }}d{% if stuck %} ⚠{% endif %}</span>
-          {% elif fs == 'received' %}<span style="background:rgba(16,185,129,.12);color:#10b981;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Received{% if days > 0 %} · {{ days }}d{% endif %}</span>
-          {% elif fs == 'invoiced' %}<span style="background:rgba(107,114,128,.15);color:#9ca3af;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500">Invoiced</span>
+        <td>
+          {% if fs == 'uploaded' %}<span class="as-pill" style="background:rgba(79,110,247,.12);color:#6b8fff">Uploaded{% if days > 0 %} · {{ days }}d{% endif %}</span>
+          {% elif fs == 'batched' %}<span class="as-pill" style="background:rgba(139,92,246,.12);color:{{ '#f87171' if stuck else '#a78bfa' }}">Batched · {{ days }}d{% if stuck %} ⚠{% endif %}</span>
+          {% elif fs == 'received' %}<span class="as-pill" style="background:rgba(16,185,129,.12);color:#10b981">Received{% if days > 0 %} · {{ days }}d{% endif %}</span>
+          {% elif fs == 'invoiced' %}<span class="as-pill" style="background:rgba(107,114,128,.15);color:#9ca3af">Invoiced</span>
+          {% else %}<span class="as-pill" style="background:var(--surface2);color:var(--muted)">{{ fs|capitalize }}</span>
           {% endif %}
         </td>
-        <td style="padding:9px 12px"><a href="{{ url_for('admin.review_submission', tid=r.transaction_id, back=request.url) }}" class="btn btn-ghost btn-sm">Review</a></td>
+        <td>
+          {% for inv in link.invoices %}
+          <div class="as-inv">
+            <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" title="{{ inv.client or 'No client' }}">{{ inv.number }}</a>
+            {% if inv.status == 'paid' %}<span class="as-pill" style="background:rgba(34,197,94,.15);color:#4ade80">Paid</span>
+            {% elif inv.status == 'unpaid' %}<span class="as-pill" style="background:rgba(245,158,11,.15);color:#fbbf24">Unpaid</span>
+            {% else %}<span class="as-pill" style="background:rgba(79,110,247,.18);color:#6b8fff">Sent</span>{% endif %}
+            {% if inv.returned == 'all' %}<span class="as-pill" style="background:rgba(239,68,68,.15);color:#f87171">Returned</span>
+            {% elif inv.returned == 'partial' %}<span class="as-pill" style="background:rgba(251,146,60,.15);color:#fb923c">Partial return</span>{% endif %}
+          </div>
+          {% else %}
+            {% if link.on_draft %}<span style="color:var(--muted);font-size:12px" title="This order is on an unfinished draft invoice">On a draft</span>
+            {% else %}<span style="color:var(--hint)">—</span>{% endif %}
+          {% endfor %}
+        </td>
+        <td>
+          {# One line per invoice so each client lines up with its invoice # #}
+          {% for inv in link.invoices %}
+          <div class="as-inv">{% if inv.client %}{{ inv.client }}{% else %}<span style="color:var(--hint)">—</span>{% endif %}</div>
+          {% else %}<span style="color:var(--hint)">—</span>
+          {% endfor %}
+        </td>
       </tr>
       {% endfor %}
       {% if not submissions %}
-      <tr><td colspan="16" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
+      <tr><td colspan="17" style="text-align:center;color:var(--muted);padding:32px">No submissions match filters.</td></tr>
       {% endif %}
       </tbody>
     </table>
   </div>
-  {% if total > per_page %}
-  <div class="pagination">
-    {% if page > 1 %}<a href="?page={{ page-1 }}&retailer={{ filters.retailer }}&status={{ filters.status }}">← Prev</a>{% endif %}
-    <span class="current">{{ page }} / {{ ((total-1)//per_page)+1 }}</span>
-    {% if page * per_page < total %}<a href="?page={{ page+1 }}&retailer={{ filters.retailer }}&status={{ filters.status }}">Next →</a>{% endif %}
+
+  <div id="bulkBar">
+    <div style="display:flex;align-items:center;gap:12px">
+      <strong id="bulkCount" style="font-size:13px">0 selected</strong>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="clearAll()">Clear selection</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn btn-success btn-sm" onclick="doBulk('approve')">✓ Approve</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="doBulk('flag')">Flag</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="doBulk('mark_duplicate')">Mark duplicate</button>
+      <button type="button" class="btn btn-danger btn-sm" onclick="doBulk('delete')">Delete</button>
+    </div>
   </div>
-  {% endif %}
+</form>
+
+{% if total > per_page %}
+{% set last_page = ((total-1)//per_page)+1 %}
+<div class="pagination">
+  {% if page > 1 %}<a href="{{ url_for('admin.all_submissions', page=page-1, **page_args) }}">← Prev</a>{% endif %}
+  <span class="current">{{ page }} / {{ last_page }}</span>
+  {% if page < last_page %}<a href="{{ url_for('admin.all_submissions', page=page+1, **page_args) }}">Next →</a>{% endif %}
 </div>
+{% endif %}
+
 <script>
+(function(){
+  // "as of" time so it's clear when the data was last pulled (↻ Refresh updates it)
+  var asOf = document.getElementById('asOf');
+  if (asOf) asOf.textContent = new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+
+  // Text searches: submit after a short pause (or Enter), then put the cursor
+  // back in the box so you can keep typing after the page reloads.
+  var form = document.getElementById('filterForm');
+  var timer = null;
+  document.querySelectorAll('[data-live-search]').forEach(function(inp){
+    inp.addEventListener('input', function(){
+      clearTimeout(timer);
+      timer = setTimeout(function(){
+        try { sessionStorage.setItem('asFocus', inp.id); } catch(e) {}
+        form.submit();
+      }, 600);
+    });
+    inp.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') {
+        e.preventDefault(); clearTimeout(timer);
+        try { sessionStorage.setItem('asFocus', inp.id); } catch(e2) {}
+        form.submit();
+      }
+    });
+  });
+  var refocus = null;
+  try { refocus = sessionStorage.getItem('asFocus'); sessionStorage.removeItem('asFocus'); } catch(e) {}
+  if (refocus) {
+    var el = document.getElementById(refocus);
+    if (el) { el.focus(); var n = el.value.length; el.setSelectionRange(n, n); }
+  }
+})();
+
 function toggleAll(cb) {
-  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
+  document.querySelectorAll('.row-check').forEach(function(c){ c.checked = cb.checked; });
   updateBar();
 }
 function updateBar() {
-  const checked = document.querySelectorAll('.row-check:checked');
-  const bar = document.getElementById('bulkBar');
-  const cnt = document.getElementById('bulkCount');
-  bar.style.display = checked.length > 0 ? 'flex' : 'none';
-  cnt.textContent = checked.length + ' selected';
+  var checked = document.querySelectorAll('.row-check:checked');
+  var all = document.querySelectorAll('.row-check');
+  document.getElementById('bulkBar').style.display = checked.length > 0 ? 'flex' : 'none';
+  document.getElementById('bulkCount').textContent = checked.length + ' selected';
+  var sa = document.getElementById('selectAll');
+  sa.checked = all.length > 0 && checked.length === all.length;
+  sa.indeterminate = checked.length > 0 && checked.length < all.length;
 }
 document.addEventListener('change', function(e) {
   if (e.target.classList.contains('row-check')) updateBar();
 });
 function doBulk(action) {
-  const checked = document.querySelectorAll('.row-check:checked');
+  var checked = document.querySelectorAll('.row-check:checked');
   if (!checked.length) return;
   if (action === 'delete' && !confirm('Permanently delete ' + checked.length + ' transaction(s)? This cannot be undone.')) return;
   document.getElementById('bulkAction').value = action;
   document.getElementById('bulkForm').submit();
 }
 function clearAll() {
-  document.querySelectorAll('.row-check, #selectAll').forEach(c => c.checked = false);
+  document.querySelectorAll('.row-check, #selectAll').forEach(function(c){ c.checked = false; });
   updateBar();
 }
 </script>
