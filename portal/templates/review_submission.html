@@ -208,12 +208,14 @@
         <div class="card-title" style="margin:0">Line items</div>
         <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
       </div>
+      <input type="hidden" name="items_submitted" value="1">
       <div id="items-container">
         {% for item in items %}
         {% set idx = loop.index0 %}
         <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
           <button type="button" onclick="removeItem({{ idx }})"
                   style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+          <input type="hidden" name="item_id[]" value="{{ item.item_id }}">
           <div class="form-row" style="margin-bottom:8px">
             <div class="form-group" style="margin-bottom:0;flex:3">
               <label style="font-size:11px">Description</label>
@@ -238,6 +240,14 @@
               <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px">
             </div>
           </div>
+          {% if item.serial_number or item.imei or item.tax_amount is defined and item.tax_amount is not none %}
+          <div style="margin-top:8px;font-size:11px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap">
+            {% if item.serial_number %}<span>Serial <span class="mono" style="color:var(--text)">{{ item.serial_number }}</span></span>{% endif %}
+            {% if item.imei %}<span>IMEI <span class="mono" style="color:var(--text)">{{ item.imei }}</span></span>{% endif %}
+            {% if item.tax_amount is defined and item.tax_amount is not none %}<span>Tax <span style="color:var(--text)">${{ "{:,.2f}".format(item.tax_amount) }}</span></span>{% endif %}
+            {% if item.landed_cost is defined and item.landed_cost is not none %}<span>With tax <span style="color:var(--text)">${{ "{:,.2f}".format(item.landed_cost) }}</span></span>{% endif %}
+          </div>
+          {% endif %}
         </div>
         {% endfor %}
         {% if not items %}
@@ -295,6 +305,7 @@ function addItem() {
   div.innerHTML = `
     <button type="button" onclick="removeItem(${idx})"
             style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+    <input type="hidden" name="item_id[]" value="">
     <div class="form-row" style="margin-bottom:8px">
       <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
         <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px"></div>
