@@ -367,18 +367,21 @@ def _submission_filters(args):
 def _load_invoice_links(cur, tids):
     """Live invoice info for the given transaction ids.
 
-    Returns {transaction_id: {'invoices': [...], 'on_draft': bool}} where each
-    invoice dict has number, status, client, and a return flag:
+    Returns {transaction_id: {'invoices': [...], 'on_draft': bool, 'drafts': [...]}}
+    'invoices' are finalized (Sent/Unpaid/Paid); 'drafts' are unfinished drafts
+    (shown by number only on the order review page — All Submissions just says
+    "On a draft"). Each invoice dict has number, status, client, date, and a
+    return flag:
       'all'     — every line for this order on that invoice is returned
       'partial' — some lines returned, some still billed
       None      — nothing returned
     """
-    links = {tid: {'invoices': [], 'on_draft': False} for tid in tids}
+    links = {tid: {'invoices': [], 'on_draft': False, 'drafts': []} for tid in tids}
     if not tids:
         return links
     cur.execute("""
         SELECT ii.transaction_id, i.invoice_id, i.invoice_number, i.status,
-               cu.customer_name,
+               i.invoice_date, cu.customer_name,
                BOOL_AND(COALESCE(ii.returned, FALSE)) AS all_returned,
                BOOL_OR(COALESCE(ii.returned, FALSE))  AS any_returned,
                MIN(i.created_at) AS created_at
@@ -386,21 +389,24 @@ def _load_invoice_links(cur, tids):
         JOIN invoices i ON i.invoice_id = ii.invoice_id
         LEFT JOIN dim_customers cu ON cu.customer_id = i.customer_id
         WHERE ii.transaction_id = ANY(%s::uuid[])
-        GROUP BY ii.transaction_id, i.invoice_id, i.invoice_number, i.status, cu.customer_name
+        GROUP BY ii.transaction_id, i.invoice_id, i.invoice_number, i.status, i.invoice_date, cu.customer_name
         ORDER BY created_at
     """, ([str(t) for t in tids],))
     for r in cur.fetchall():
-        entry = links.setdefault(r['transaction_id'], {'invoices': [], 'on_draft': False})
+        entry = links.setdefault(r['transaction_id'], {'invoices': [], 'on_draft': False, 'drafts': []})
+        inv = {
+            'invoice_id':   r['invoice_id'],
+            'number':       r['invoice_number'],
+            'status':       r['status'],
+            'client':       r['customer_name'],
+            'invoice_date': r['invoice_date'],
+            'returned':     'all' if r['all_returned'] else ('partial' if r['any_returned'] else None),
+        }
         if r['status'] in LIVE_INVOICE_STATUSES:
-            entry['invoices'].append({
-                'invoice_id': r['invoice_id'],
-                'number':     r['invoice_number'],
-                'status':     r['status'],
-                'client':     r['customer_name'],
-                'returned':   'all' if r['all_returned'] else ('partial' if r['any_returned'] else None),
-            })
+            entry['invoices'].append(inv)
         elif r['status'] == 'draft':
             entry['on_draft'] = True
+            entry['drafts'].append(inv)
     return links
 
 
@@ -650,6 +656,9 @@ def review_submission(tid):
         cards = cur.fetchall()
         cur.execute("SELECT user_id, username FROM dim_users WHERE is_active=TRUE ORDER BY username")
         users = cur.fetchall()
+        # Which invoice(s) this order is on — read live, same source as All Submissions
+        invoice_link = _load_invoice_links(cur, [txn['transaction_id']]).get(
+            txn['transaction_id'], {'invoices': [], 'on_draft': False, 'drafts': []})
 
     if request.method == 'POST':
         action = request.form.get('action')
@@ -775,7 +784,8 @@ def review_submission(tid):
         return redirect(url_for('admin.review_submission', tid=tid))
 
     return render_template('review_submission.html',
-                           txn=txn, items=items, companies=companies, cards=cards, users=users)
+                           txn=txn, items=items, companies=companies, cards=cards, users=users,
+                           invoice_link=invoice_link)
 
 
 @admin_bp.route('/payroll')
