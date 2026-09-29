@@ -53,11 +53,24 @@
     <h1>All Submissions</h1>
     <p>{{ total }} records <span style="color:var(--hint)">· as of <span id="asOf"></span></span></p>
   </div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <button type="button" class="btn btn-ghost btn-sm" onclick="window.location.reload()" title="Reload with the latest invoice and stage data">↻ Refresh</button>
-    <a href="{{ url_for('admin.export_submissions', **page_args) }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
-    <a href="{{ url_for('admin.export_apple_items', **page_args) }}" class="btn btn-ghost btn-sm"
-       title="Apple orders only, one row per unit with serial, IMEI and price breakdown. Follows the filters below.">⬇ Apple items</a>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:100%">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="window.location.reload()" title="Reload with the latest invoice and stage data">↻ Refresh</button>
+      <a href="{{ url_for('admin.export_submissions', **page_args) }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
+      {% if apple_block_reason %}
+      <span class="btn btn-ghost btn-sm" role="link" aria-disabled="true"
+            style="opacity:.45;cursor:not-allowed;text-decoration:line-through"
+            title="{{ apple_block_reason }}">⬇ Apple items</span>
+      {% else %}
+      <a href="{{ url_for('admin.export_apple_items', **page_args) }}" class="btn btn-ghost btn-sm"
+         title="Apple orders only, one row per unit with serial, IMEI and price breakdown. Follows the filters below.">⬇ Apple items <span style="color:var(--hint)">· {{ apple_count }} order{{ '' if apple_count == 1 else 's' }}</span></a>
+      {% endif %}
+    </div>
+    {% if apple_block_reason %}
+    <div style="font-size:11.5px;color:#fbbf24;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--r-sm);padding:5px 10px;max-width:420px;text-align:right;line-height:1.4">
+      Apple items export unavailable. {{ apple_block_reason }}
+    </div>
+    {% endif %}
   </div>
 </div>
 
