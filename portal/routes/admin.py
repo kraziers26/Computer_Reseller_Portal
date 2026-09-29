@@ -510,6 +510,225 @@ def export_submissions():
                      as_attachment=True, download_name=fname)
 
 
+# ── Apple items export (one row per unit, with serial / IMEI) ─────────────────
+#
+# Same filters as All Submissions, limited to Apple. Apple invoices are parsed
+# into one transaction_items row per physical unit, each carrying its serial,
+# IMEI, share of sales tax (tax_amount) and price-with-tax (landed_cost).
+# Order-level money (cashback, gross, net, tax withheld) is split across the
+# order's items by price share, using the exact same function the Apple parser
+# uses for sales tax, so every split column sums back to the order's figure.
+
+_APPLE_GROUPS = [
+    ('ORDER',   ['Order #', 'Purchase Date', 'Person By', 'Submitter', 'Card', 'Company',
+                 'Stage', 'Review Status', 'Order Total']),
+    ('ITEM',    ['Item', 'Part #', 'Serial #', 'IMEI', 'Qty']),
+    ('PRICING', ['Unit Price (pre-tax)', 'Line Total (pre-tax)', 'Sales Tax', 'Price with Tax']),
+    ('SPLIT FROM ORDER (by price share)', ['Cashback', 'Gross', 'Net', 'Tax Withheld']),
+    ('INVOICE', ['Invoice #', 'Invoice Status', 'Client', 'Invoice Note']),
+]
+_APPLE_MONEY = {'Order Total', 'Unit Price (pre-tax)', 'Line Total (pre-tax)', 'Sales Tax',
+                'Price with Tax', 'Cashback', 'Gross', 'Net', 'Tax Withheld'}
+# Columns that add up across rows. Order Total repeats on each item row and a
+# unit price isn't additive, so neither gets a total.
+_APPLE_SUMMED = (_APPLE_MONEY - {'Order Total', 'Unit Price (pre-tax)'}) | {'Qty'}
+_APPLE_TEXT = {'Order #', 'Card', 'Part #', 'Serial #', 'IMEI'}
+_APPLE_BAND = {'ORDER': 'DCE3F5', 'ITEM': 'E4EFE0', 'PRICING': 'FCEBD5',
+               'SPLIT FROM ORDER (by price share)': 'EDE3F5', 'INVOICE': 'E8E8E8'}
+
+
+def _split_by_price(amount, weights):
+    """Split an order-level amount across items by price share, to the cent,
+    via the Apple parser's own allocate_tax_amounts (handles negatives too)."""
+    import os, sys
+    parsers_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'parsers')
+    if parsers_dir not in sys.path:
+        sys.path.insert(0, parsers_dir)
+    import apple_parser
+    amount = float(amount or 0)
+    if amount < 0:
+        return [-x for x in apple_parser.allocate_tax_amounts(weights, -amount)]
+    return apple_parser.allocate_tax_amounts(weights, amount)
+
+
+@admin_bp.route('/submissions/export-apple')
+@login_required
+@require_role('admin')
+def export_apple_items():
+    import io
+    from datetime import datetime
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from flask import send_file
+
+    where, params, _ = _submission_filters(request.args)
+    where += " AND t.retailer = 'Apple'"
+
+    with db_cursor() as (cur, _):
+        cur.execute(f"""
+            SELECT t.transaction_id, t.order_number, t.purchase_date, t.price_total,
+                   t.review_status, t.fulfillment_status, t.card_id,
+                   sub.username AS submitter, per.username AS person_by, c.company_name,
+                   ROUND(COALESCE(t.cashback_value,0)::numeric,2)    AS cashback,
+                   ROUND(COALESCE(t.gross_paid_amount,0)::numeric,2) AS gross_paid,
+                   ROUND(COALESCE(t.net_paid_amount,0)::numeric,2)   AS net_paid,
+                   ROUND(COALESCE(t.sales_payroll_tax_withheld,0)::numeric,2) AS tax_withheld
+            FROM transactions t
+            LEFT JOIN dim_users sub    ON t.submitted_by_email = sub.email
+            LEFT JOIN dim_users per    ON t.user_id = per.user_id
+            LEFT JOIN dim_companies c  ON t.company_id = c.company_id
+            {where}
+            ORDER BY t.submitted_at DESC
+        """, params)
+        orders = cur.fetchall()
+        tids = [o['transaction_id'] for o in orders]
+        links = _load_invoice_links(cur, tids)
+
+        items_by_order = {}
+        if tids:
+            # Devices first (highest line total), then accessories
+            cur.execute("""
+                SELECT transaction_id, item_description, sku_model_color, quantity,
+                       unit_price, line_total, serial_number, imei, tax_amount, landed_cost
+                FROM transaction_items
+                WHERE transaction_id = ANY(%s::uuid[])
+                ORDER BY transaction_id, line_total DESC, item_description, serial_number
+            """, ([str(t) for t in tids],))
+            for it in cur.fetchall():
+                items_by_order.setdefault(it['transaction_id'], []).append(it)
+
+    headers = [h for _, hs in _APPLE_GROUPS for h in hs]
+    rows = []
+    for o in orders:
+        link = links.get(o['transaction_id'], {'invoices': [], 'on_draft': False})
+        invs = link['invoices']
+        notes = []
+        for inv in invs:
+            if inv['returned'] == 'all':
+                notes.append(f"{inv['number']}: Returned")
+            elif inv['returned'] == 'partial':
+                notes.append(f"{inv['number']}: Partial return")
+        if not invs and link['on_draft']:
+            notes.append('On a draft')
+        base = {
+            'Order #':        o['order_number'],
+            'Purchase Date':  o['purchase_date'].strftime('%Y-%m-%d') if o['purchase_date'] else '',
+            'Person By':      o['person_by'] or '',
+            'Submitter':      o['submitter'] or '',
+            'Card':           o['card_id'] or '',
+            'Company':        o['company_name'] or '',
+            'Stage':          (o['fulfillment_status'] or 'uploaded').title(),
+            'Review Status':  o['review_status'],
+            'Order Total':    float(o['price_total'] or 0),
+            'Invoice #':      ', '.join(i['number'] for i in invs),
+            'Invoice Status': ', '.join(i['status'].title() for i in invs),
+            'Client':         ', '.join(i['client'] or '—' for i in invs),
+            'Invoice Note':   '; '.join(notes),
+        }
+        items = items_by_order.get(o['transaction_id'], [])
+        if not items:
+            # Keep the order visible even if it has no parsed line items
+            row = dict(base, **{'Item': '(no line items)', 'Price with Tax': base['Order Total'],
+                                'Cashback': float(o['cashback']), 'Gross': float(o['gross_paid']),
+                                'Net': float(o['net_paid']), 'Tax Withheld': float(o['tax_withheld'])})
+            rows.append(row)
+            continue
+
+        weights = [float(it['line_total'] if it['line_total'] is not None
+                         else (it['unit_price'] or 0) * (it['quantity'] or 1)) for it in items]
+        # Older items saved before tax allocation existed have no tax_amount:
+        # derive the order's tax (total − pre-tax subtotal) and split it the same way.
+        if all(it['tax_amount'] is None for it in items):
+            order_tax = round(float(o['price_total'] or 0) - sum(weights), 2)
+            taxes = _split_by_price(order_tax, weights) if order_tax > 0 else [0.0] * len(items)
+        else:
+            taxes = [float(it['tax_amount'] or 0) for it in items]
+        splits = {k: _split_by_price(o[src], weights) for k, src in
+                  (('Cashback', 'cashback'), ('Gross', 'gross_paid'),
+                   ('Net', 'net_paid'), ('Tax Withheld', 'tax_withheld'))}
+
+        for n, it in enumerate(items):
+            landed = it['landed_cost']
+            row = dict(base, **{
+                'Item':                 it['item_description'],
+                'Part #':               it['sku_model_color'] or '',
+                'Serial #':             it['serial_number'] or '',
+                'IMEI':                 it['imei'] or '',
+                'Qty':                  int(it['quantity'] or 1),
+                'Unit Price (pre-tax)': float(it['unit_price'] or 0),
+                'Line Total (pre-tax)': weights[n],
+                'Sales Tax':            taxes[n],
+                'Price with Tax':       float(landed) if landed is not None else round(weights[n] + taxes[n], 2),
+            })
+            for k in splits:
+                row[k] = splits[k][n]
+            rows.append(row)
+
+    # ── Build workbook (same layout as the approved mockup) ──
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Apple Items'
+    f_base = Font(name='Arial', size=10)
+    f_bold = Font(name='Arial', size=10, bold=True)
+    thin = Side(style='thin', color='BFBFBF')
+
+    col = 1
+    for name, hs in _APPLE_GROUPS:
+        ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + len(hs) - 1)
+        c = ws.cell(row=1, column=col, value=name)
+        c.font = Font(name='Arial', size=9, bold=True, color='404040')
+        c.alignment = Alignment(horizontal='center')
+        for i in range(len(hs)):
+            ws.cell(row=1, column=col + i).fill = PatternFill('solid', fgColor=_APPLE_BAND[name])
+        col += len(hs)
+
+    for i, h in enumerate(headers, start=1):
+        c = ws.cell(row=2, column=i, value=h)
+        c.font = f_bold
+        c.fill = PatternFill('solid', fgColor='F2F2F2')
+        c.border = Border(bottom=thin)
+        c.alignment = Alignment(wrap_text=True, vertical='bottom')
+
+    r = 3
+    for row in rows:
+        for i, h in enumerate(headers, start=1):
+            c = ws.cell(row=r, column=i, value=row.get(h))
+            c.font = f_base
+            if h in _APPLE_MONEY:
+                c.number_format = '$#,##0.00'
+            elif h in _APPLE_TEXT:
+                c.number_format = '@'   # IMEIs/serials stay text, never scientific notation
+        r += 1
+    last = max(r - 1, 3)
+
+    ws.cell(row=r, column=1, value='Totals (visible rows)').font = f_bold
+    for i, h in enumerate(headers, start=1):
+        if h in _APPLE_SUMMED and rows:
+            L = get_column_letter(i)
+            c = ws.cell(row=r, column=i, value=f'=SUBTOTAL(9,{L}3:{L}{last})')
+            c.font = f_bold
+            c.number_format = '$#,##0.00' if h in _APPLE_MONEY else '0'
+        ws.cell(row=r, column=i).border = Border(top=thin)
+
+    for i, h in enumerate(headers, start=1):
+        L = get_column_letter(i)
+        vals = [str(ws.cell(row=x, column=i).value or '') for x in range(3, r)]
+        head = len(h) + 2 if len(h) <= 14 else len(h) * 0.7
+        ws.column_dimensions[L].width = min(max([head, 12 if h in _APPLE_MONEY else 6] +
+                                                [len(v) + 2 for v in vals]), 44)
+    ws.row_dimensions[2].height = 30
+    ws.freeze_panes = 'B3'
+    ws.auto_filter.ref = f'A2:{get_column_letter(len(headers))}{last}'
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    fname = f"apple_items_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx"
+    return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
 @admin_bp.route('/submissions/bulk-action', methods=['POST'])
 @login_required
 @require_role('admin')
@@ -752,32 +971,62 @@ def review_submission(tid):
                     cur.execute(f"UPDATE transactions SET {upd_fields} WHERE transaction_id=%s",
                                 upd_args + (str(tid),))
 
-                # Rebuild line items from form list fields
-                descs = request.form.getlist('item_description[]')
-                if descs:
-                    cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id IN (SELECT item_id FROM transaction_items WHERE transaction_id=%s)", (str(tid),))
-                    cur.execute("DELETE FROM transaction_items WHERE transaction_id=%s", (str(tid),))
+                # Save line items IN PLACE, matched by item_id. The old approach
+                # deleted every item and re-inserted only description/SKU/qty/price,
+                # which silently wiped serial numbers, IMEIs, the allocated sales tax
+                # and price-with-tax, plus the order's receiving records. Existing
+                # rows now keep all of that; only the edited fields change.
+                if request.form.get('items_submitted') or request.form.getlist('item_description[]'):
+                    ids         = request.form.getlist('item_id[]')
+                    descs       = request.form.getlist('item_description[]')
                     skus        = request.form.getlist('item_sku[]')
                     qtys        = request.form.getlist('item_qty[]')
                     unit_prices = request.form.getlist('item_unit_price[]')
                     line_totals = request.form.getlist('item_line_total[]')
+
+                    cur.execute("SELECT item_id FROM transaction_items WHERE transaction_id=%s", (str(tid),))
+                    existing = {str(r['item_id']) for r in cur.fetchall()}
+                    kept = set()
+
                     for i, desc in enumerate(descs):
+                        item_id = (ids[i].strip() if i < len(ids) else '') or None
+                        if item_id not in existing:
+                            item_id = None          # unknown/blank id → treat as a new row
                         desc = desc.strip()
                         if not desc:
-                            continue
+                            continue                # blank description = removed
                         try:
-                            unit_p = float(unit_prices[i]) if i < len(unit_prices) else 0.0
-                            line_t = float(line_totals[i]) if i < len(line_totals) else 0.0
-                            qty    = int(qtys[i]) if i < len(qtys) else 1
+                            unit_p = float(unit_prices[i]) if i < len(unit_prices) and unit_prices[i] != '' else 0.0
+                            line_t = float(line_totals[i]) if i < len(line_totals) and line_totals[i] != '' else 0.0
+                            qty    = int(qtys[i]) if i < len(qtys) and qtys[i] != '' else 1
                             sku    = (skus[i].strip() if i < len(skus) else '') or None
                         except (ValueError, IndexError):
+                            if item_id:
+                                kept.add(item_id)   # bad number on an existing row: leave it untouched
                             continue
-                        cur.execute("""
-                            INSERT INTO transaction_items
-                            (item_id, transaction_id, item_description, sku_model_color,
-                             quantity, unit_price, line_total)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s)
-                        """, (str(_uuid.uuid4()), str(tid), desc, sku, qty, unit_p, line_t))
+                        if item_id:
+                            # landed_cost follows the edited line total; tax share is kept
+                            cur.execute("""
+                                UPDATE transaction_items
+                                SET item_description=%s, sku_model_color=%s, quantity=%s,
+                                    unit_price=%s, line_total=%s,
+                                    landed_cost = CASE WHEN tax_amount IS NULL THEN landed_cost
+                                                       ELSE %s + tax_amount END
+                                WHERE item_id=%s AND transaction_id=%s
+                            """, (desc, sku, qty, unit_p, line_t, line_t, item_id, str(tid)))
+                            kept.add(item_id)
+                        else:
+                            cur.execute("""
+                                INSERT INTO transaction_items
+                                (item_id, transaction_id, item_description, sku_model_color,
+                                 quantity, unit_price, line_total)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                            """, (str(_uuid.uuid4()), str(tid), desc, sku, qty, unit_p, line_t))
+
+                    removed = list(existing - kept)
+                    if removed:
+                        cur.execute("DELETE FROM receiving_item_lines WHERE transaction_item_id = ANY(%s::uuid[])", (removed,))
+                        cur.execute("DELETE FROM transaction_items WHERE item_id = ANY(%s::uuid[])", (removed,))
 
                 audit('transaction_edited', 'transaction', str(tid))
                 flash('Transaction updated.', 'success')
