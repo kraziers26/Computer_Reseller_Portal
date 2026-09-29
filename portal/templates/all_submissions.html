@@ -56,6 +56,8 @@
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button type="button" class="btn btn-ghost btn-sm" onclick="window.location.reload()" title="Reload with the latest invoice and stage data">↻ Refresh</button>
     <a href="{{ url_for('admin.export_submissions', **page_args) }}" class="btn btn-ghost btn-sm">⬇ Export Excel</a>
+    <a href="{{ url_for('admin.export_apple_items', **page_args) }}" class="btn btn-ghost btn-sm"
+       title="Apple orders only, one row per unit with serial, IMEI and price breakdown. Follows the filters below.">⬇ Apple items</a>
   </div>
 </div>
 
