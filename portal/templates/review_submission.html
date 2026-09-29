@@ -39,6 +39,38 @@
   <form method="POST" id="editForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
+    <!-- Invoice (read-only, looked up live from invoice line items) -->
+    {% set il = invoice_link or {'invoices': [], 'drafts': []} %}
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title">Invoice</div>
+      {% set rows = il.invoices + il.drafts %}
+      {% if rows %}
+      <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:8px 16px;align-items:center;font-size:13px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Invoice #</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Status</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Client</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Date</div>
+        {% for inv in rows %}
+        <div class="mono">
+          <a href="{{ url_for('invoicing.view_invoice', invoice_id=inv.invoice_id) }}" style="color:var(--accent2)">{{ inv.number }}</a>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          {% if inv.status == 'paid' %}<span class="badge badge-success">Paid</span>
+          {% elif inv.status == 'unpaid' %}<span class="badge badge-warning">Unpaid</span>
+          {% elif inv.status == 'sent' %}<span class="badge badge-accent">Sent</span>
+          {% else %}<span class="badge badge-muted">Draft</span>{% endif %}
+          {% if inv.returned == 'all' %}<span class="badge badge-danger">Returned</span>
+          {% elif inv.returned == 'partial' %}<span class="badge" style="background:rgba(251,146,60,.15);color:#fb923c">Partial return</span>{% endif %}
+        </div>
+        <div>{% if inv.client %}{{ inv.client }}{% else %}<span style="color:var(--hint)">—</span>{% endif %}</div>
+        <div style="color:var(--muted);white-space:nowrap">{{ inv.invoice_date.strftime('%b %d, %Y') if inv.invoice_date else '—' }}</div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="font-size:13px;color:var(--hint)">—</div>
+      {% endif %}
+    </div>
+
     <!-- Order Info -->
     <div class="card" style="margin-bottom:14px">
       <div class="card-title">Order info</div>
@@ -176,12 +208,14 @@
         <div class="card-title" style="margin:0">Line items</div>
         <button type="button" onclick="addItem()" class="btn btn-ghost btn-sm">+ Add item</button>
       </div>
+      <input type="hidden" name="items_submitted" value="1">
       <div id="items-container">
         {% for item in items %}
         {% set idx = loop.index0 %}
         <div class="item-row" id="item-{{ idx }}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;position:relative">
           <button type="button" onclick="removeItem({{ idx }})"
                   style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+          <input type="hidden" name="item_id[]" value="{{ item.item_id }}">
           <div class="form-row" style="margin-bottom:8px">
             <div class="form-group" style="margin-bottom:0;flex:3">
               <label style="font-size:11px">Description</label>
@@ -206,6 +240,14 @@
               <input type="number" name="item_line_total[]" value="{{ item.line_total }}" step="0.01" min="0" style="font-size:12px">
             </div>
           </div>
+          {% if item.serial_number or item.imei or item.tax_amount is defined and item.tax_amount is not none %}
+          <div style="margin-top:8px;font-size:11px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap">
+            {% if item.serial_number %}<span>Serial <span class="mono" style="color:var(--text)">{{ item.serial_number }}</span></span>{% endif %}
+            {% if item.imei %}<span>IMEI <span class="mono" style="color:var(--text)">{{ item.imei }}</span></span>{% endif %}
+            {% if item.tax_amount is defined and item.tax_amount is not none %}<span>Tax <span style="color:var(--text)">${{ "{:,.2f}".format(item.tax_amount) }}</span></span>{% endif %}
+            {% if item.landed_cost is defined and item.landed_cost is not none %}<span>With tax <span style="color:var(--text)">${{ "{:,.2f}".format(item.landed_cost) }}</span></span>{% endif %}
+          </div>
+          {% endif %}
         </div>
         {% endfor %}
         {% if not items %}
@@ -263,6 +305,7 @@ function addItem() {
   div.innerHTML = `
     <button type="button" onclick="removeItem(${idx})"
             style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">✕</button>
+    <input type="hidden" name="item_id[]" value="">
     <div class="form-row" style="margin-bottom:8px">
       <div class="form-group" style="margin-bottom:0;flex:3"><label style="font-size:11px">Description</label>
         <input type="text" name="item_description[]" placeholder="Item description" style="font-size:12px"></div>
