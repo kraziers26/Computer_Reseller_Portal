@@ -59,6 +59,11 @@ def parse_input(text: str) -> dict:
                 sku = m.group(1) if m else None
             if sku:
                 return {"kind": "bb_sku", "sku": sku, "url": t}
+            # New-style links (bestbuy.com/product/<name>/<code>) carry no SKU:
+            # search Best Buy by the product name in the link instead.
+            words = _slug_words(t)
+            if words:
+                return {"kind": "bb_name", "words": words, "url": t}
         return {"kind": "url", "retailer": r, "url": t}
     digits = re.sub(r"\D", "", t)
     if re.fullmatch(r"\d{6,8}", t):
@@ -66,6 +71,30 @@ def parse_input(text: str) -> dict:
     if re.fullmatch(r"[\d\s-]{11,15}", t) and len(digits) in (12, 13, 14):
         return {"kind": "upc", "upc": digits}
     return {"kind": "model", "model": t}
+
+
+STOP_WORDS = {"with", "and", "the", "for", "of", "in", "a", "an", "to", "new", "site", "product", "inch", "in."}
+
+
+def _slug_words(url: str) -> list:
+    """bestbuy.com/product/lenovo-ideapad-slim-3i-15-3-2k-…/J3ZYG… → ['lenovo','ideapad','slim','3i',…]"""
+    parts = [p for p in urlparse(url).path.split("/") if p]
+    slug = ""
+    for i, part in enumerate(parts):
+        if part.lower() in ("product", "site") and i + 1 < len(parts):
+            slug = parts[i + 1]
+            break
+    if not slug:
+        slug = max(parts, key=len) if parts else ""
+    words = [w for w in re.split(r"[-_+]", slug.lower()) if w]
+    return [w for w in words if w not in STOP_WORDS and (len(w) > 1)]
+
+
+def _rank_by_words(products: list, words: list) -> list:
+    def overlap(p):
+        name = (p.get("name") or "").lower().replace("-", " ")
+        return sum(1 for w in words if w in name)
+    return sorted(products, key=overlap, reverse=True)
 
 
 def _ids_from_page(url: str) -> dict:
@@ -139,6 +168,12 @@ def match(text: str) -> dict:
     elif parsed["kind"] == "model":
         candidates = bestbuy.lookup_by_model(parsed["model"])
         source = "model number"
+    elif parsed["kind"] == "bb_name":
+        candidates = _rank_by_words(bestbuy.search_words(parsed["words"]), parsed["words"])
+        source = "product name in your Best Buy link"
+        if not candidates:
+            message = ("Couldn't match that Best Buy link automatically. On the product page, copy the "
+                       "SKU number (shown near the price) or the model number and paste it here.")
     else:
         r = parsed["retailer"]
         other = {"retailer": r, "label": RETAILER_LABELS.get(r, "Other"), "url": parsed["url"]}

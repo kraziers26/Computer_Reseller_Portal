@@ -586,6 +586,20 @@ def lookup_by_model(model: str, counter: CallCounter = None) -> list:
     return found
 
 
+def search_words(words: list, counter: CallCounter = None) -> list:
+    """Keyword search (all words must match), new items only. Starts with the
+    first 8 words of the name and loosens until something matches."""
+    words = [_clean_term(w) for w in words if _clean_term(w)]
+    for n in (8, 6, 4, 3):
+        if len(words) < n and n != 3:
+            continue
+        terms = "&".join(f"search={w}" for w in words[:n])
+        found = query_products(f"{terms}&{CONDITION_FILTER}", counter, max_pages=1)
+        if found:
+            return found[:20]
+    return []
+
+
 def fetch_raw_product(sku: str) -> dict:
     """Every field Best Buy returns for one SKU (no 'show' filter).
     Used by the diagnostics route to check which seller/marketplace

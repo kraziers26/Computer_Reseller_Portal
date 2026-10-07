@@ -25,6 +25,7 @@ Quiet hours either send silently or hold everything for one morning message.
 import html
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -125,10 +126,28 @@ def _int_or_none(v):
         return None
 
 
+TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{30,}$")
+
+
+def bot_token() -> str:
+    """TELEGRAM_BOT_TOKEN, cleaned of the usual paste mistakes:
+    spaces/newlines, surrounding quotes, a leading 'bot', or a whole API URL."""
+    t = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip().strip('"').strip("'").strip()
+    m = re.search(r"bot(\d{5,}:[A-Za-z0-9_-]+)", t)
+    if m and (t.lower().startswith("bot") or "api.telegram.org" in t):
+        t = m.group(1)
+    return t
+
+
+def chat_id() -> str:
+    return (os.environ.get("TELEGRAM_CHAT_ID") or "").strip().strip('"').strip("'").strip()
+
+
 def connection_info() -> dict:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "")
-    return {"token_set": bool(token), "chat_id": chat or None,
+    token = bot_token()
+    chat = chat_id()
+    return {"token_set": bool(token), "token_looks_valid": bool(TOKEN_RE.match(token)),
+            "chat_id": chat or None, "chat_looks_valid": bool(re.match(r"^-?\d+$", chat)),
             "portal_base_url": portal_base_url()}
 
 
@@ -147,8 +166,15 @@ def portal_link(path):
 
 # ── Telegram API ──────────────────────────────────────────────────────────────
 
+FRIENDLY_ERRORS = {
+    404: "Telegram didn't recognize the bot token. Check TELEGRAM_BOT_TOKEN in Railway — "
+         "it should look like 123456789:AAH… with nothing before or after it.",
+    401: "Telegram rejected the bot token (revoked or wrong). Get the current token from BotFather.",
+}
+
+
 def tg_call(method: str, payload: dict) -> dict:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    token = bot_token()
     if not token:
         raise TelegramError("TELEGRAM_BOT_TOKEN is not set")
     for attempt in range(2):
@@ -164,7 +190,16 @@ def tg_call(method: str, payload: dict) -> dict:
             import time
             time.sleep(min(int(retry), 5))
             continue
-        raise TelegramError(data.get("description") or f"HTTP {r.status_code}")
+        desc = data.get("description") or f"HTTP {r.status_code}"
+        code = data.get("error_code") or r.status_code
+        if code in FRIENDLY_ERRORS and desc in ("Not Found", "Unauthorized"):
+            desc = FRIENDLY_ERRORS[code]
+        elif "chat not found" in desc.lower():
+            desc = ("Telegram can't find that chat. Check TELEGRAM_CHAT_ID (starts with -100) "
+                    "and that the bot has been added to the group.")
+        elif "thread not found" in desc.lower():
+            desc = "That topic ID doesn't exist in the group. Check the topic IDs below."
+        raise TelegramError(desc)
     raise TelegramError("rate limited")
 
 
@@ -201,7 +236,7 @@ def send(conn, s, *, kind, text, topic, alert_key, silent=False, force_loud=Fals
         if cur.fetchone():
             return None
 
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+    chat = chat_id()
     thread = s["topics"].get(topic) if s.get("use_topics") else None
     quiet = is_quiet(s) and not bypass_quiet
 
@@ -279,7 +314,7 @@ def _duration(td):
 
 def after_sync(conn, events: list, run_ok: bool = True):
     s = get_settings(conn)
-    if not s["enabled"] or not os.environ.get("TELEGRAM_BOT_TOKEN"):
+    if not s["enabled"] or not bot_token():
         return
     if run_ok:
         if events:
