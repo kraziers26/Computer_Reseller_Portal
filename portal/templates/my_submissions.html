@@ -1,6 +1,28 @@
 {% extends "base.html" %}
 {% block title %}My Submissions — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
+<style>
+/* This page only: use the full screen width instead of the 1200px site cap.
+   min-width:0 lets the table scroll inside its own box on small screens. */
+.main{max-width:none;min-width:0}
+
+.ms-lbl{font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+.ms-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;align-items:end}
+
+/* Table: columns size to their content, fill the width, scroll sideways when narrow */
+.ms-table{font-size:12.5px;font-variant-numeric:tabular-nums}
+.ms-table th,.ms-table td{white-space:nowrap;padding:9px 10px}
+.ms-table th{font-size:10px}
+.ms-table .r{text-align:right}
+.ms-table .num{font-family:var(--mono);font-size:12px;text-align:right}
+.ms-table .notes{max-width:240px;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+/* Keep Order # pinned on the left when scrolling sideways */
+.ms-table th:first-child,.ms-table td:first-child{position:sticky;left:0;z-index:1;background:var(--surface);box-shadow:inset -1px 0 0 var(--border)}
+.ms-table th:first-child{background:var(--surface2);z-index:2}
+.ms-table tr:hover td:first-child{background:#1e2130}
+.ms-pill{display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:10px;font-weight:500;white-space:nowrap}
+</style>
+
 <div class="page-header page-header-row">
   <div><h1>My Submissions</h1><p>{{ total }} records</p></div>
   <a href="{{ url_for('upload.upload') }}" class="btn btn-primary btn-sm">+ Upload Invoice</a>
@@ -8,27 +30,27 @@
 
 <div class="card" style="margin-bottom:16px">
   <form method="GET">
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-items:end">
+    <div class="ms-grid">
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Order #</div>
+        <div class="ms-lbl">Order #</div>
         <input type="text" name="order_number" value="{{ filters.order_number }}" placeholder="Search..." style="width:100%" oninput="this.form.submit()">
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Retailer</div>
+        <div class="ms-lbl">Retailer</div>
         <select name="retailer" style="width:100%" onchange="this.form.submit()">
           <option value="">All</option>
           {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Company</div>
+        <div class="ms-lbl">Company</div>
         <select name="company" style="width:100%" onchange="this.form.submit()">
           <option value="">All</option>
           {% for c in companies %}<option value="{{ c.company_id }}" {{ 'selected' if filters.company==c.company_id }}>{{ c.company_name }}</option>{% endfor %}
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Type</div>
+        <div class="ms-lbl">Type</div>
         <select name="order_type" style="width:100%" onchange="this.form.submit()">
           <option value="">All</option>
           {% for t in ['Delivery','Store Pick Up','Return (Partial Order)','Return (Full Order)'] %}
@@ -36,7 +58,7 @@
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Status</div>
+        <div class="ms-lbl">Status</div>
         <select name="status" style="width:100%" onchange="this.form.submit()">
           <option value="">All</option>
           {% for s in ['Pending','Auto-approved','Reviewed','Flagged'] %}
@@ -44,7 +66,7 @@
         </select>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Notes</div>
+        <div class="ms-lbl">Notes</div>
         <input type="text" name="notes" value="{{ filters.notes }}" placeholder="Search notes..." style="width:100%" oninput="this.form.submit()">
       </div>
       <div style="display:flex;align-items:flex-end;padding-bottom:2px">
@@ -56,58 +78,63 @@
   </form>
 </div>
 
-<div class="card">
-  <div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
+<div class="card" style="padding:0;overflow:hidden">
+  <div class="table-wrap" style="background:var(--surface)">
+    <table class="ms-table">
       <thead>
-        <tr style="background:var(--surface2)">
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap">Order #</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-          <th style="padding:10px 12px;text-align:right;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Type</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Status</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Submitted</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Submitted By</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Notes</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoice</th>
+        <tr>
+          <th>Order #</th>
+          <th>Retailer</th>
+          <th>Date</th>
+          <th>Person By</th>
+          <th>Company</th>
+          <th class="r">Total</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Submitted</th>
+          <th>Submitted By</th>
+          <th>Notes</th>
+          <th>Invoice</th>
         </tr>
       </thead>
       <tbody>
       {% for r in submissions %}
-      <tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:9px 12px;font-family:var(--mono);font-size:11px;white-space:nowrap">{{ r.order_number[:20] }}</td>
-        <td style="padding:9px 12px;white-space:nowrap">{{ r.retailer }}</td>
-        <td style="padding:9px 12px;white-space:nowrap;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-        <td style="padding:9px 12px;white-space:nowrap">{{ r.person_name or '—' }}</td>
-        <td style="padding:9px 12px;white-space:nowrap;font-size:12px">{{ r.company_name or '—' }}</td>
-        <td style="padding:9px 12px;text-align:right;font-family:var(--mono);white-space:nowrap">${{ "{:,.2f}".format((r.price_total or 0)|float) }}</td>
-        <td style="padding:9px 12px;font-size:11px;white-space:nowrap">{{ r.order_type }}</td>
-        <td style="padding:9px 12px;white-space:nowrap">
-          {% if r.review_status == 'Auto-approved' %}<span style="background:rgba(34,197,94,.15);color:#4ade80;font-size:11px;padding:2px 8px;border-radius:20px">Approved</span>
-          {% elif r.review_status == 'Pending' %}<span style="background:rgba(245,158,11,.15);color:#fbbf24;font-size:11px;padding:2px 8px;border-radius:20px">Pending</span>
-          {% elif r.review_status == 'Flagged' %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:11px;padding:2px 8px;border-radius:20px">Flagged</span>
-          {% else %}<span style="background:var(--surface2);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:20px">{{ r.review_status }}</span>{% endif %}
-          {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
+      {% set rs = r.review_status %}
+      <tr>
+        <td class="mono">
+          {{ r.order_number }}
+          {% if r.is_duplicate %}<span style="background:rgba(239,68,68,.15);color:#f87171;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px">dup</span>{% endif %}
         </td>
-        <td style="padding:9px 12px;color:var(--muted);font-size:11px;white-space:nowrap">{{ r.submitted_at.strftime('%b %d, %Y') if r.submitted_at else '—' }}</td>
-        <td style="padding:9px 12px;font-size:12px;white-space:nowrap">
+        <td>{{ r.retailer }}</td>
+        <td style="color:var(--muted)">{{ r.purchase_date }}</td>
+        <td>{{ r.person_name or '—' }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td class="num">${{ "{:,.2f}".format((r.price_total or 0)|float) }}</td>
+        <td>{{ r.order_type }}</td>
+        <td>
+          {% if rs == 'Auto-approved' or rs == 'Reviewed' %}<span class="ms-pill" style="background:rgba(34,197,94,.15);color:#4ade80">✓ Approved</span>
+          {% elif rs == 'Pending' %}<span class="ms-pill" style="background:rgba(245,158,11,.15);color:#fbbf24">Pending</span>
+          {% elif rs == 'Flagged' %}<span class="ms-pill" style="background:rgba(239,68,68,.15);color:#f87171">Flagged</span>
+          {% elif rs == 'Needs Review' %}<span class="ms-pill" style="background:rgba(251,146,60,.15);color:#fb923c">Needs Review</span>
+          {% elif rs == 'Duplicate' %}<span class="ms-pill" style="background:rgba(239,68,68,.12);color:#f87171">Duplicate</span>
+          {% else %}<span class="ms-pill" style="background:var(--surface2);color:var(--muted)">{{ rs }}</span>{% endif %}
+        </td>
+        <td style="color:var(--muted)">{{ r.submitted_at.strftime('%b %d, %Y') if r.submitted_at else '—' }}</td>
+        <td>
           {% if r.submitted_by_name and r.submitted_by_name != r.person_name %}
             <span style="color:var(--accent2)">{{ r.submitted_by_name }}</span>
           {% else %}
             <span style="color:var(--hint)">Self</span>
           {% endif %}
         </td>
-        <td style="padding:9px 12px;font-size:12px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.notes or '—' }}</td>
-        <td style="padding:9px 12px;white-space:nowrap">
+        <td class="notes" title="{{ r.notes or '' }}">{{ r.notes or '—' }}</td>
+        <td>
           {% if r.has_pdf %}
             <a href="{{ url_for('admin.serve_transaction_pdf', tid=r.transaction_id) }}" target="_blank" class="btn btn-ghost btn-sm">🖨 View</a>
           {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
             <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 View</a>
           {% else %}
-            <span style="color:var(--hint);font-size:11px">—</span>
+            <span style="color:var(--hint)">—</span>
           {% endif %}
         </td>
       </tr>
