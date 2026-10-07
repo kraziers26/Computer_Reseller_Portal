@@ -1,0 +1,220 @@
+{% extends 'base.html' %}
+{% block title %}Watchlist — Deal Scanner{% endblock %}
+
+{% block content %}
+{% include 'deals/_pd_common.html' %}
+<style>
+.pd-addrow{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.pd-match{border:1px solid rgba(79,110,247,.45);background:rgba(79,110,247,.07);border-radius:var(--r-sm);padding:14px;margin-top:12px}
+.pd-cand{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer}
+.pd-cand:last-child{border-bottom:none}
+.pd-cand input{margin-top:3px;accent-color:var(--accent)}
+.pd-cand.off{opacity:.5;cursor:not-allowed}
+.pd-chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.pd-chip{font-size:11px;padding:3px 9px;border-radius:12px;border:1px solid var(--accent);color:var(--accent2)}
+.pd-chip.soon{border-style:dashed;border-color:var(--border2);color:var(--muted)}
+.pd-rules{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:12px}
+.pd-cov{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;color:var(--muted);padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px}
+.pd-cov b{color:var(--text)}
+.pd-ring{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--border2);display:inline-block;margin-right:6px;vertical-align:0}
+.pd-w{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+.pd-w-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--border)}
+.pd-w-best{text-align:right}
+.pd-w-best .v{font-family:var(--mono);font-size:20px;color:var(--text)}
+.pd-l{display:grid;grid-template-columns:110px minmax(0,1fr) 170px 80px;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px}
+.pd-l:last-child{border-bottom:none}
+.pd-l.best{background:rgba(79,110,247,.06)}
+.pd-l.soon{color:var(--muted)}
+.pd-w-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 16px;border-top:1px solid var(--border);background:var(--surface2)}
+.pd-w-actions .pd-in{min-height:30px;padding:4px 8px;width:110px;font-size:12px}
+@media (max-width:700px){.pd-l{grid-template-columns:80px minmax(0,1fr)}.pd-l>:nth-child(3),.pd-l>:nth-child(4){grid-column:2}}
+</style>
+
+<div class="page-header"><div class="page-header-row"><div>
+  <h1>Watchlist</h1>
+  <p>Paste a product from any retailer. We match it to the new, sealed Best Buy listing and alert your Telegram group when the price moves.</p>
+</div></div></div>
+
+{% include 'deals/_view_tabs.html' %}
+
+<div class="pd-card">
+  <h2>Watch a product</h2>
+  <div class="pd-addrow">
+    <label class="pd-lbl" style="flex:999 1 380px">Link from any retailer, model number or UPC
+      <input class="pd-in" id="pd-input" type="text" placeholder="Best Buy / Amazon / Walmart / Newegg link, or a model number like G614JIR-AS94"
+             onkeydown="if(event.key==='Enter') pdFind()">
+    </label>
+    <label class="pd-lbl" style="flex:1 1 130px">Alert below (optional)
+      <input class="pd-in" id="pd-target" type="text" inputmode="decimal" placeholder="$ target">
+    </label>
+    <button class="btn btn-primary" id="pd-find-btn" onclick="pdFind()" style="min-height:38px">Find match</button>
+  </div>
+  <div class="pd-rules">
+    <span class="pd-sub">Alert when:</span>
+    <label class="pd-chk"><input type="checkbox" id="pd-r-drop" checked> Any price drop</label>
+    <label class="pd-chk"><input type="checkbox" id="pd-r-target" checked> Below my target</label>
+    <label class="pd-chk"><input type="checkbox" id="pd-r-atl" checked> New all-time low</label>
+    <label class="pd-chk"><input type="checkbox" id="pd-r-stock" checked> Back in stock</label>
+    <label class="pd-chk"><input type="checkbox" id="pd-r-up"> Price goes up</label>
+  </div>
+  <div id="pd-match"></div>
+  <div class="pd-err" id="pd-add-err" style="display:none"></div>
+</div>
+
+<div class="pd-cov">
+  <b>Retailer coverage</b>
+  <span><span class="pd-dot"></span>Best Buy · every 15 min</span>
+  <span><span class="pd-ring"></span>Amazon · coming soon</span>
+  <span><span class="pd-ring"></span>Walmart · coming soon</span>
+  <span><span class="pd-ring"></span>Costco, Newegg · planned</span>
+  <span class="pd-grow"></span>
+  <span>Other retailers' links are saved now and start tracking when that retailer goes live.</span>
+</div>
+
+<div id="pd-watches"><div class="pd-empty">Loading…</div></div>
+
+<script>
+const pdW = { match: null };
+
+function pdRules() {
+  return {drop: pdChecked('pd-r-drop'), below_target: pdChecked('pd-r-target'), all_time_low: pdChecked('pd-r-atl'),
+          back_in_stock: pdChecked('pd-r-stock'), price_up: pdChecked('pd-r-up')};
+}
+function pdChecked(id) { return document.getElementById(id).checked; }
+function pdShowErr(msg) { const e = document.getElementById('pd-add-err'); e.style.display = msg ? 'block' : 'none'; e.textContent = msg || ''; }
+
+async function pdFind() {
+  const input = document.getElementById('pd-input').value.trim();
+  const box = document.getElementById('pd-match');
+  pdShowErr('');
+  if (!input) { pdShowErr('Paste a link, a model number or a UPC.'); return; }
+  const btn = document.getElementById('pd-find-btn');
+  btn.disabled = true; btn.textContent = 'Searching…';
+  try {
+    const m = await PD.api('/api/watchlist/match', {method: 'POST', body: {input}});
+    pdW.match = m;
+    pdRenderMatch(m);
+  } catch (e) {
+    box.innerHTML = ''; pdShowErr(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Find match';
+  }
+}
+
+function pdRenderMatch(m) {
+  const box = document.getElementById('pd-match');
+  const firstOk = m.candidates.findIndex(c => c.eligible);
+  const cands = m.candidates.map((c, i) => `
+    <label class="pd-cand ${c.eligible ? '' : 'off'}">
+      <input type="radio" name="pd-cand" value="${PD.esc(c.sku)}" ${i === firstOk ? 'checked' : ''} ${c.eligible ? '' : 'disabled'}>
+      <span style="flex:1"><span style="font-weight:600;color:var(--text)">${PD.esc(c.name)}</span>
+        <span class="pd-sub" style="display:block">${c.model_number ? 'Model ' + PD.esc(c.model_number) + ' · ' : ''}${c.upc ? 'UPC ' + PD.esc(c.upc) + ' · ' : ''}SKU ${PD.esc(c.sku)} · ${PD.esc(c.condition)}${c.in_stock ? '' : ' · sold out'}</span>
+        ${c.reason ? `<span class="pd-sub" style="display:block;color:var(--warning)">${PD.esc(c.reason)}</span>` : ''}</span>
+      <span class="pd-mono" style="color:var(--text)">${PD.money(c.price)}</span>
+    </label>`).join('');
+  const other = m.other_listing ? `<span class="pd-chip soon">${PD.esc(m.other_listing.label)} · link saved, tracking coming soon</span>` : '';
+  const anyOk = firstOk >= 0;
+  box.innerHTML = `<div class="pd-match">
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b style="color:var(--accent2)">${anyOk ? 'Is this the right product?' : 'No eligible match'}</b><span class="pd-sub">Matched by ${PD.esc(m.source)}</span></div>
+    ${m.message ? `<div class="pd-sub" style="margin-top:6px;color:var(--text)">${PD.esc(m.message)}</div>` : ''}
+    ${cands ? `<div style="margin-top:6px">${cands}</div>` : ''}
+    ${(cands || other) ? `<div class="pd-chips">${anyOk ? '<span class="pd-chip">Best Buy · tracked every 15 min</span>' : ''}${other}</div>` : ''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${anyOk ? '<button class="btn btn-primary btn-sm" id="pd-confirm" onclick="pdConfirm()">Yes, watch it</button>' : ''}
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'pd-match\').innerHTML=\'\'">${anyOk ? 'Wrong product' : 'Close'}</button>
+    </div></div>`;
+}
+
+async function pdConfirm() {
+  const sel = document.querySelector('input[name="pd-cand"]:checked');
+  if (!sel) { pdShowErr('Pick the right configuration first.'); return; }
+  const btn = document.getElementById('pd-confirm');
+  btn.disabled = true;
+  try {
+    await PD.api('/api/watchlist', {method: 'POST', body: {
+      sku: sel.value, target_price: document.getElementById('pd-target').value,
+      other_url: pdW.match.other_listing ? pdW.match.other_listing.url : null, rules: pdRules()}});
+    document.getElementById('pd-match').innerHTML = '';
+    document.getElementById('pd-input').value = '';
+    document.getElementById('pd-target').value = '';
+    pdLoadWatches();
+  } catch (e) {
+    btn.disabled = false; pdShowErr(e.message);
+  }
+}
+
+function pdListingRow(w, l) {
+  if (l.status !== 'tracked' || l.price == null) {
+    return `<div class="pd-l soon"><div style="font-weight:600">${PD.esc(l.label)}</div><div>${l.url ? `<a href="${PD.esc(l.url)}" target="_blank" rel="noopener" style="color:var(--accent2)">Linked</a>` : 'Linked'}, not tracked yet</div><div>Coming soon</div><div></div></div>`;
+  }
+  const isBest = w.best && w.best.retailer === l.label && l.in_stock;
+  const ch = l.change_since_added;
+  const change = ch == null || Math.abs(ch) < 0.01 ? '<span class="pd-sub">no change since added</span>'
+    : ch < 0 ? `<span class="pd-mono pd-down">−${PD.money(-ch)}</span> <span class="pd-sub">since added</span>`
+    : `<span class="pd-mono">+${PD.money(ch)}</span> <span class="pd-sub">since added</span>`;
+  let status;
+  if (!l.in_stock) status = '<span class="pd-badge pd-b-stock">SOLD OUT · ALERT ON RESTOCK</span>';
+  else if (w.target_price && l.price <= w.target_price) status = '<span class="pd-badge pd-b-target">BELOW TARGET</span>';
+  else if (l.all_time_low != null && l.history_days >= 14 && l.price <= l.all_time_low + 0.01) status = '<span class="pd-badge pd-b-atl">ALL-TIME LOW</span>';
+  else status = `<span class="pd-sub">${l.held_days != null ? 'Price held ' + l.held_days + ' day' + (l.held_days === 1 ? '' : 's') : 'Watching'}</span>`;
+  return `<div class="pd-l ${isBest ? 'best' : ''}">
+    <div style="font-weight:600">${PD.esc(l.label)}</div>
+    <div>${l.in_stock ? `<span class="pd-mono" style="color:var(--text);font-weight:500">${PD.money(l.price)}</span> ` : '<span class="pd-sub">Sold out · last </span><span class="pd-mono">' + PD.money(l.price) + '</span> '}${change}</div>
+    <div>${status}</div>
+    <div class="pd-r">${l.url ? `<a href="${PD.esc(l.url)}" target="_blank" rel="noopener" style="font-weight:600;text-decoration:none;color:var(--accent2)">Buy ↗</a>` : ''}</div>
+  </div>`;
+}
+
+function pdWatchCard(w) {
+  const bb = w.listings.find(l => l.retailer === 'bestbuy');
+  const best = w.best
+    ? `<div class="pd-sub">Best price now</div><div class="v">${PD.money(w.best.price)} <span class="pd-sub">at ${PD.esc(w.best.retailer)}</span></div>`
+    : `<div class="pd-sub">Best price now</div><div class="v" style="color:var(--muted)">—</div>`;
+  const tags = [];
+  if (w.below_target) tags.push('<span class="pd-badge pd-b-target">BELOW TARGET</span>');
+  if (w.snoozed_until) tags.push(`<span class="pd-badge pd-b-end">SNOOZED UNTIL ${PD.esc(PD.time(w.snoozed_until))}</span>`);
+  if (w.last_alert_at) tags.push(`<span class="pd-sub">Last alert ${PD.esc(PD.date(w.last_alert_at))} ${PD.esc(PD.time(w.last_alert_at))}</span>`);
+  return `<div class="pd-w">
+    <div class="pd-w-head">
+      <div><a class="pd-name" style="font-size:14px;font-weight:600" href="${bb && bb.sku ? '/deals/sku/' + PD.esc(bb.sku) : '#'}">${PD.esc(w.name)}</a>
+        <div class="pd-sub">${w.model_number ? 'Model ' + PD.esc(w.model_number) + ' · ' : ''}${w.target_price ? 'target ' + PD.money(w.target_price) + ' · ' : 'no target · '}added ${PD.esc(PD.date(w.created_at))}</div>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${tags.join('')}</div></div>
+      <div class="pd-w-best">${best}</div>
+    </div>
+    ${w.listings.map(l => pdListingRow(w, l)).join('')}
+    <div class="pd-w-actions">
+      <label class="pd-sub" style="display:inline-flex;align-items:center;gap:6px">Target <input class="pd-in" id="pd-t-${w.id}" value="${w.target_price ?? ''}" placeholder="$"></label>
+      <button class="btn btn-ghost btn-sm" onclick="pdUpdate(${w.id}, {target_price: document.getElementById('pd-t-${w.id}').value})">Save target</button>
+      ${w.snoozed_until ? `<button class="btn btn-ghost btn-sm" onclick="pdUpdate(${w.id}, {snooze_hours: 0})">Unsnooze</button>`
+                        : `<button class="btn btn-ghost btn-sm" onclick="pdUpdate(${w.id}, {snooze_hours: 24})">Snooze 24h</button>`}
+      <span class="pd-grow"></span>
+      <button class="btn btn-ghost btn-sm" onclick="pdRemove(${w.id})">Stop watching</button>
+    </div>
+  </div>`;
+}
+
+async function pdLoadWatches() {
+  const box = document.getElementById('pd-watches');
+  try {
+    const d = await PD.api('/api/watchlist');
+    box.innerHTML = d.items.length ? d.items.map(pdWatchCard).join('')
+      : '<div class="pd-card pd-empty">Nothing watched yet. Paste a link above to start.</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="pd-card pd-empty">${PD.esc(e.message)}</div>`;
+  }
+}
+
+async function pdUpdate(id, body) {
+  try { await PD.api('/api/watchlist/' + id, {method: 'PUT', body}); pdLoadWatches(); }
+  catch (e) { alert(e.message); }
+}
+
+async function pdRemove(id) {
+  if (!confirm('Stop watching this product?')) return;
+  try { await PD.api('/api/watchlist/' + id, {method: 'DELETE'}); pdLoadWatches(); }
+  catch (e) { alert(e.message); }
+}
+
+pdLoadWatches();
+</script>
+{% endblock %}

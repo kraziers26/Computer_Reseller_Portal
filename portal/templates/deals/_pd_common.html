@@ -1,0 +1,99 @@
+{# Shared styles + JS helpers for Price Drops / Watchlist / SKU / Alerts pages #}
+<style>
+.pd-bar{display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px;font-size:12px;color:var(--muted)}
+.pd-bar b{color:var(--text);font-weight:600}
+.pd-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:1px;background:var(--success)}
+.pd-dot.err{background:var(--danger)}
+.pd-grow{flex:1}
+.pd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.pd-kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px}
+.pd-kpi-l{font-size:11px;color:var(--muted)}
+.pd-kpi-v{font-family:var(--mono);font-size:26px;font-weight:500;color:var(--text);line-height:1.3}
+.pd-kpi-v.acc{color:var(--accent2)}.pd-kpi-v.warn{color:var(--warning)}.pd-kpi-v.mut{color:var(--muted)}
+.pd-kpi-s{font-size:11px;color:var(--hint)}
+.pd-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.pd-flabel{font-size:11px;color:var(--muted);margin:0 2px 0 8px;font-weight:500}
+.pd-pill{padding:3px 10px;border-radius:20px;border:1px solid var(--border2);font-size:11px;color:var(--muted);cursor:pointer;background:transparent;white-space:nowrap;transition:all .12s;font-family:var(--font);min-height:28px}
+.pd-pill:hover{border-color:var(--accent);color:var(--text)}
+.pd-pill.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.pd-lock{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;background:var(--surface2);border:1px solid var(--border2);color:var(--text)}
+.pd-table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow-x:auto}
+.pd-table{width:100%;min-width:980px;border-collapse:collapse;font-size:12px}
+.pd-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;padding:10px 12px;border-bottom:1px solid var(--border)}
+.pd-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+.pd-table tr:last-child td{border-bottom:none}
+.pd-table tr.ended td{opacity:.55}
+.pd-r{text-align:right}
+.pd-mono{font-family:var(--mono)}
+.pd-sub{font-size:11px;color:var(--muted)}
+.pd-name{color:var(--text);font-weight:500;text-decoration:none}
+.pd-name:hover{color:var(--accent2)}
+.pd-score{display:inline-block;min-width:34px;text-align:center;padding:2px 6px;border-radius:6px;font-family:var(--mono);font-weight:500;font-size:12px}
+.pd-s-hi{background:var(--accent);color:#fff}.pd-s-md{background:rgba(79,110,247,.2);color:var(--accent2)}.pd-s-lo{background:var(--surface2);color:var(--muted)}
+.pd-badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;padding:2px 7px;border-radius:4px;white-space:nowrap;border:1px solid transparent}
+.pd-b-atl{background:var(--accent);color:#fff}
+.pd-b-low{border-color:var(--accent);color:var(--accent2)}
+.pd-b-stock{background:rgba(6,182,212,.18);color:var(--info)}
+.pd-b-fake{border-color:var(--warning);color:var(--warning)}
+.pd-b-end{border-color:var(--border2);color:var(--muted)}
+.pd-b-target{background:var(--success);color:#06210f}
+.pd-down{color:var(--accent2);font-weight:500}
+.pd-empty{padding:28px;text-align:center;color:var(--muted);font-size:13px}
+.pd-note{font-size:11px;color:var(--hint);margin-top:10px;line-height:1.6}
+.pd-banner{font-size:12px;color:var(--text);background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:var(--r-sm);padding:8px 12px;margin-bottom:12px}
+.pd-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:14px}
+.pd-card h2{font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px}
+.pd-in{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-family:var(--font);font-size:13px;padding:8px 10px;min-height:38px}
+.pd-in:focus{outline:none;border-color:var(--accent)}
+.pd-lbl{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted);font-weight:500}
+.pd-chk{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text);cursor:pointer}
+.pd-chk input{accent-color:var(--accent);width:15px;height:15px}
+.pd-err{color:var(--danger);font-size:12px;margin-top:8px}
+.pd-ok{color:var(--success);font-size:12px;margin-top:8px}
+@media (max-width:700px){.pd-kpi-v{font-size:22px}}
+</style>
+<script>
+const PD = {
+  csrf: () => document.querySelector('meta[name="csrf-token"]').content,
+  esc: (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+  money: (v) => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}),
+  ago(mins) {
+    mins = Math.max(0, mins);
+    if (mins < 60) return mins + 'm ago';
+    const h = Math.floor(mins / 60), m = mins % 60;
+    if (h < 48) return h + 'h ' + String(m).padStart(2, '0') + 'm';
+    return Math.floor(h / 24) + ' days';
+  },
+  time: (iso) => iso ? new Date(iso).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : '—',
+  date: (iso) => iso ? new Date(iso).toLocaleDateString([], {month: 'short', day: 'numeric'}) : '—',
+  scoreCls: (t) => t >= 75 ? 'pd-s-hi' : t >= 50 ? 'pd-s-md' : 'pd-s-lo',
+  async api(url, opts = {}) {
+    const o = Object.assign({headers: {}}, opts);
+    if (o.body && typeof o.body !== 'string') { o.body = JSON.stringify(o.body); o.headers['Content-Type'] = 'application/json'; }
+    if ((o.method || 'GET') !== 'GET') o.headers['X-CSRFToken'] = PD.csrf();
+    const r = await fetch(url, o);
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(data.error || ('Request failed (' + r.status + ')'));
+    return data;
+  },
+  // Step line through [[iso, price], …] up to now. Returns an <svg> string.
+  spark(points, w = 96, h = 28, color = 'var(--accent2)') {
+    if (!points || !points.length) return '<span class="pd-sub">—</span>';
+    const now = Date.now();
+    const pts = points.map(p => [new Date(p[0]).getTime(), p[1]]);
+    const t0 = Math.min(pts[0][0], now - 6 * 3600e3), t1 = now;
+    const prices = pts.map(p => p[1]);
+    let lo = Math.min(...prices), hi = Math.max(...prices);
+    if (hi - lo < 0.01) { lo -= 1; hi += 1; }
+    const X = t => 2 + (Math.min(t, t1) - t0) / (t1 - t0) * (w - 6), Y = v => 3 + (hi - v) / (hi - lo) * (h - 6);
+    let d = '';
+    pts.forEach((p, i) => {
+      d += (i ? ' H' + X(p[0]).toFixed(1) + ' V' : 'M' + X(p[0]).toFixed(1) + ' ') + Y(p[1]).toFixed(1);
+    });
+    d += ' H' + X(t1).toFixed(1);
+    const last = pts[pts.length - 1];
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/><circle cx="${X(t1).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="2.6" fill="${color}"/></svg>`;
+  },
+};
+</script>

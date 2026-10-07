@@ -128,6 +128,8 @@
   </div>
 </div>
 
+{% with view='all' %}{% include 'deals/_view_tabs.html' %}{% endwith %}
+
 <!-- Retailer tabs -->
 <div class="db-retailer-tabs">
   <button class="db-rtab on" id="rtab-bb"  onclick="switchRetailer('bb')">Best Buy</button>
@@ -835,8 +837,11 @@ async function saveSchedule() {
     btn.disabled = false; btn.textContent = 'Save Schedule';
   }
 }
-document.getElementById('db-sched-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeModal();
+// The modal markup comes after this script, so wait for the DOM before wiring it up
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('db-sched-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
 });
 </script>
 

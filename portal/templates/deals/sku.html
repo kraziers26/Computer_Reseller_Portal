@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+{% block title %}SKU {{ sku }} — Deal Scanner{% endblock %}
+
+{% block content %}
+{% include 'deals/_pd_common.html' %}
+<style>
+.pd-sku-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.pd-sku-price{font-family:var(--mono);font-size:30px;font-weight:500;color:var(--text);text-align:right;line-height:1.2}
+.pd-compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:14px}
+.pd-cmp{border-radius:var(--r);padding:14px;border:1px solid var(--border)}
+.pd-cmp.claim{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.35)}
+.pd-cmp.real{background:rgba(79,110,247,.08);border-color:rgba(79,110,247,.4)}
+.pd-cmp-l{font-size:11px;font-weight:600;margin-bottom:2px}
+.pd-cmp.claim .pd-cmp-l{color:var(--warning)}.pd-cmp.real .pd-cmp-l{color:var(--accent2)}
+.pd-cmp-v{font-family:var(--mono);font-size:20px;color:var(--text)}
+.pd-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.pd-legend span{display:inline-flex;align-items:center;gap:6px}
+.pd-sbreak{display:grid;grid-template-columns:150px minmax(0,1fr) 60px;gap:10px 14px;align-items:center;font-size:12px}
+.pd-sbar{height:8px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.pd-sbar div{height:8px;background:var(--accent);border-radius:4px}
+.pd-ev{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+.pd-ev:last-child{border-bottom:none}
+.pd-actions{display:flex;gap:8px;flex-wrap:wrap}
+</style>
+
+{% include 'deals/_view_tabs.html' %}
+<a href="{{ url_for('price_drops.drops_page') }}"
+   style="font-size:12px;color:var(--muted);text-decoration:none;display:inline-block;margin-bottom:10px">← Price Drops</a>
+
+<div id="pd-sku"><div class="pd-empty">Loading…</div></div>
+
+<script>
+const PD_SKU = {{ sku|tojson }};
+
+function pdChart(d) {
+  const segs = (d.segments || []).map(s => [new Date(s[0]).getTime(), new Date(s[1]).getTime(), s[2]]);
+  if (!segs.length) return '<div class="pd-empty">No history yet.</div>';
+  const W = 860, H = 260, L = 64, R = 16, T = 14, B = 30;
+  const now = Date.now();
+  const t0 = Math.max(Math.min(segs[0][0], now - 7 * 864e5), now - 90 * 864e5), t1 = now;
+  const vals = segs.map(s => s[2]);
+  if (d.regular_price) vals.push(d.regular_price);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = Math.max((hi - lo) * 0.12, 10); lo -= pad; hi += pad;
+  const X = t => L + (Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0) * (W - L - R);
+  const Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  let grid = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, y = Y(v).toFixed(1);
+    grid += `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="var(--border)"/><text x="${L - 8}" y="${+y + 4}" text-anchor="end" font-size="10" fill="var(--muted)" font-family="DM Mono, monospace">$${Math.round(v).toLocaleString()}</text>`;
+  }
+  let path = '';
+  segs.forEach((s, i) => {
+    path += (i ? ` V${Y(s[2]).toFixed(1)}` : `M${X(s[0]).toFixed(1)} ${Y(s[2]).toFixed(1)}`) + ` H${X(s[1]).toFixed(1)}`;
+  });
+  const reg = d.regular_price ? `<line x1="${L}" y1="${Y(d.regular_price).toFixed(1)}" x2="${W - R}" y2="${Y(d.regular_price).toFixed(1)}" stroke="var(--warning)" stroke-width="1.5" stroke-dasharray="6 5"/>` : '';
+  const prevLow = d.score && d.score.flags && d.score.flags.prev_low;
+  const lowLine = prevLow ? `<line x1="${L}" y1="${Y(prevLow).toFixed(1)}" x2="${W - R}" y2="${Y(prevLow).toFixed(1)}" stroke="var(--accent2)" stroke-width="1.2" stroke-dasharray="2 4"/>` : '';
+  const last = segs[segs.length - 1];
+  const axis = [t0, (t0 + t1) / 2, t1].map((t, i) => `<text x="${X(t)}" y="${H - 8}" text-anchor="${['start', 'middle', 'end'][i]}" font-size="10" fill="var(--muted)">${i === 2 ? 'now' : new Date(t).toLocaleDateString([], {month: 'short', day: 'numeric'})}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;display:block" role="img" aria-label="Price history">${grid}${reg}${lowLine}<path d="${path}" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linejoin="round"/><circle cx="${X(t1)}" cy="${Y(last[2]).toFixed(1)}" r="5" fill="var(--accent)"/>${axis}</svg>`;
+}
+
+function pdEventText(e) {
+  const f = e.flags || {};
+  if (e.type === 'drop') return `${PD.money(e.old_price)} → ${PD.money(e.new_price)}${f.low_status === 'new_low' ? ' · new all-time low' : ''}`;
+  if (e.type === 'rise') return `${PD.money(e.old_price)} → ${PD.money(e.new_price)} · price went up`;
+  if (e.type === 'sold_out') return 'Sold out';
+  if (e.type === 'back_in_stock') return `Back in stock at ${PD.money(e.new_price)}`;
+  return e.type;
+}
+
+function pdRender(d) {
+  const sc = d.score;
+  let badge = '';
+  if (d.fake_sale) badge = '<span class="pd-badge pd-b-fake">FAKE SALE</span>';
+  else if (sc && !sc.ended && sc.flags.low_status === 'new_low') badge = '<span class="pd-badge pd-b-atl">ALL-TIME LOW</span>';
+  else if (sc && sc.ended) badge = '<span class="pd-badge pd-b-end">DEAL ENDED</span>';
+  if (!d.in_stock) badge += ' <span class="pd-badge pd-b-end">SOLD OUT</span>';
+
+  const claim = d.claim
+    ? `<div class="pd-cmp claim"><div class="pd-cmp-l">What Best Buy claims</div><div class="pd-cmp-v">Save ${PD.money(d.claim.save)} · ${d.claim.pct}%</div><div class="pd-sub">vs their "regular" ${PD.money(d.regular_price)}</div></div>`
+    : `<div class="pd-cmp claim"><div class="pd-cmp-l">What Best Buy claims</div><div class="pd-cmp-v">No sale claimed</div></div>`;
+  const real = d.real
+    ? `<div class="pd-cmp real"><div class="pd-cmp-l">What it really is</div><div class="pd-cmp-v">Save ${PD.money(d.real.save)} · ${d.real.pct}%</div><div class="pd-sub">vs our 30-day median ${PD.money(d.real.ref)}</div></div>`
+    : `<div class="pd-cmp real"><div class="pd-cmp-l">What it really is</div><div class="pd-cmp-v">${d.history_days < 7 ? 'Not enough history yet' : 'No real saving vs 30-day median'}</div><div class="pd-sub">${d.history_days} day${d.history_days === 1 ? '' : 's'} of history${d.held_days != null ? ' · this price has held ' + d.held_days + ' days' : ''}</div></div>`;
+
+  let score = '';
+  if (sc) {
+    const b = sc.breakdown, f = sc.flags;
+    const row = (lbl, v, max, why) => `<div style="font-weight:600">${lbl}</div><div><div class="pd-sbar"><div style="width:${Math.round(v / max * 100)}%"></div></div><div class="pd-sub" style="margin-top:3px">${why}</div></div><div class="pd-mono pd-r">${v}/${max}</div>`;
+    const ref = f.ref_kind === 'median_30d' ? 'our 30-day median' : 'the previous price';
+    const histWhy = {new_low: 'New all-time low', ties_low: 'Ties the all-time low', above_low: `${PD.money(f.above_low_by)} above the all-time low`, unknown: 'Under 14 days of history'}[f.low_status] || '';
+    score = `<div class="pd-card"><div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Why it scored ${b.total}${sc.ended ? ' (deal has ended)' : ''}</h2><span class="pd-sub">out of 100 · drop detected ${PD.date(sc.detected_at)} ${PD.time(sc.detected_at)}</span></div>
+      <div class="pd-sbreak">
+        ${row('Freshness', b.freshness, 35, 'How recently the price dropped')}
+        ${row('Real depth', b.depth, 30, `−${f.depth_pct || 0}% vs ${ref}`)}
+        ${row('History position', b.history, 20, histWhy)}
+        ${row('Buyability', b.buyability, 15, (d.in_stock ? 'Orderable online' : 'Not orderable') + (d.qty_limit ? ` · limit ${d.qty_limit} per order` : ''))}
+      </div></div>`;
+  }
+
+  const events = d.events.length ? d.events.map(e => `<div class="pd-ev"><span class="pd-mono pd-sub">${PD.date(e.at)} ${PD.time(e.at)}</span><span>${pdEventText(e)}</span></div>`).join('')
+    : '<div class="pd-sub">No price changes recorded yet.</div>';
+
+  const watchBtn = d.watch_id
+    ? `<a class="btn btn-ghost btn-sm" href="/deals/watchlist">Watching · open Watchlist</a>`
+    : `<button class="btn btn-ghost btn-sm" id="pd-watch-btn" onclick="pdWatch()">Watch this SKU</button>`;
+
+  document.getElementById('pd-sku').innerHTML = `
+    <div class="pd-sku-head">
+      <div><h1 style="font-size:22px">${PD.esc(d.name)}</h1>
+        <div class="pd-sub">${PD.esc(d.brand || '')}${d.model_number ? ' · Model ' + PD.esc(d.model_number) : ''} · SKU ${PD.esc(d.sku)} · New</div></div>
+      <div><div class="pd-sku-price">${PD.money(d.price)}</div><div style="text-align:right;margin-top:4px">${badge}</div></div>
+    </div>
+    <div class="pd-compare">${claim}${real}</div>
+    <div class="pd-card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px"><h2 style="margin:0">Price we recorded · up to 90 days</h2>
+        <div class="pd-legend"><span><svg width="18" height="4"><line x1="0" y1="2" x2="18" y2="2" stroke="var(--text)" stroke-width="2.5"/></svg>Our snapshots</span><span><svg width="18" height="4"><line x1="0" y1="2" x2="18" y2="2" stroke="var(--warning)" stroke-width="2" stroke-dasharray="5 3"/></svg>Best Buy "regular"</span><span><svg width="18" height="4"><line x1="0" y1="2" x2="18" y2="2" stroke="var(--accent2)" stroke-width="2" stroke-dasharray="2 3"/></svg>Previous low</span></div></div>
+      ${pdChart(d)}
+      ${d.history_days < 14 ? `<div class="pd-note">History for this SKU covers ${d.history_days} day${d.history_days === 1 ? '' : 's'}${d.held_days != null ? '; Best Buy reports the current price has held ' + d.held_days + ' days' : ''}.</div>` : ''}
+    </div>
+    ${score}
+    <div class="pd-card"><h2>Price events</h2>${events}</div>
+    <div class="pd-actions">
+      ${d.url ? `<a class="btn btn-primary btn-sm" href="${PD.esc(d.url)}" target="_blank" rel="noopener">Open on BestBuy.com ↗</a>` : ''}
+      ${watchBtn}
+    </div>
+    <div class="pd-err" id="pd-watch-err" style="display:none"></div>`;
+}
+
+async function pdWatch() {
+  const btn = document.getElementById('pd-watch-btn');
+  btn.disabled = true;
+  try {
+    await PD.api('/api/watchlist', {method: 'POST', body: {sku: PD_SKU}});
+    btn.outerHTML = '<a class="btn btn-ghost btn-sm" href="/deals/watchlist">Watching · open Watchlist</a>';
+  } catch (e) {
+    btn.disabled = false;
+    const el = document.getElementById('pd-watch-err'); el.style.display = 'block'; el.textContent = e.message;
+  }
+}
+
+PD.api('/api/drops/sku/' + PD_SKU).then(pdRender).catch(e => {
+  document.getElementById('pd-sku').innerHTML = `<div class="pd-empty">${PD.esc(e.message)}</div>`;
+});
+</script>
+{% endblock %}

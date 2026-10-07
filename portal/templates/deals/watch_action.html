@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}Watchlist — Deal Scanner{% endblock %}
+
+{% block content %}
+<div style="max-width:460px;margin:40px auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px">
+  {% if done %}
+    <h1 style="font-size:18px;margin-bottom:8px">{{ 'Snoozed for 24 hours' if action == 'snooze' else 'Stopped watching' }}</h1>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">{{ w.name }}</p>
+    <a class="btn btn-primary" href="{{ url_for('price_drops.watchlist_page') }}">Open Watchlist</a>
+  {% elif not w.is_active %}
+    <h1 style="font-size:18px;margin-bottom:8px">Not being watched</h1>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">{{ w.name }} was already removed from the watchlist.</p>
+    <a class="btn btn-primary" href="{{ url_for('price_drops.watchlist_page') }}">Open Watchlist</a>
+  {% else %}
+    <h1 style="font-size:18px;margin-bottom:8px">{{ 'Snooze alerts for 24 hours?' if action == 'snooze' else 'Stop watching this item?' }}</h1>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">{{ w.name }}</p>
+    <form method="post" style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary" type="submit" style="min-height:44px;padding:0 20px">{{ 'Snooze 24h' if action == 'snooze' else 'Stop watching' }}</button>
+      <a class="btn btn-ghost" href="{{ url_for('price_drops.watchlist_page') }}" style="min-height:44px;display:inline-flex;align-items:center">Cancel</a>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

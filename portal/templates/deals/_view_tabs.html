@@ -1,0 +1,24 @@
+{# Deal Scanner view tabs — included on /deals, /deals/drops, /deals/watchlist, /deals/alerts #}
+<style>
+.pd-views{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
+.pd-views-tabs{display:flex;gap:2px;flex-wrap:wrap}
+.pd-vtab{padding:9px 14px;font-size:13px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;align-items:center;gap:6px}
+.pd-vtab:hover{color:var(--text)}
+.pd-vtab.on{color:var(--text);font-weight:600;border-bottom-color:var(--accent)}
+.pd-vtab.dim{opacity:.4;pointer-events:none}
+.pd-vtab .pd-soon{font-size:9px;text-transform:uppercase;letter-spacing:.06em;border:1px solid var(--border2);border-radius:8px;padding:0 5px}
+.pd-settings-link{font-size:12px;color:var(--muted);text-decoration:none;padding:8px 4px;display:inline-flex;align-items:center;gap:6px}
+.pd-settings-link:hover,.pd-settings-link.on{color:var(--text)}
+</style>
+<div class="pd-views">
+  <div class="pd-views-tabs">
+    <a class="pd-vtab {{ 'on' if view == 'all' }}" href="{{ url_for('deals.deals_page') }}">All deals</a>
+    <a class="pd-vtab {{ 'on' if view == 'drops' }}" href="{{ url_for('price_drops.drops_page') }}">Price Drops</a>
+    <a class="pd-vtab dim" aria-disabled="true">Saved searches <span class="pd-soon">soon</span></a>
+    <a class="pd-vtab {{ 'on' if view == 'watchlist' }}" href="{{ url_for('price_drops.watchlist_page') }}">Watchlist</a>
+  </div>
+  <a class="pd-settings-link {{ 'on' if view == 'alerts' }}" href="{{ url_for('price_drops.alerts_page') }}">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+    Telegram alerts
+  </a>
+</div>

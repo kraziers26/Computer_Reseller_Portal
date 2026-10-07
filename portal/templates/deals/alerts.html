@@ -1,0 +1,187 @@
+{% extends 'base.html' %}
+{% block title %}Telegram alerts — Deal Scanner{% endblock %}
+
+{% block content %}
+{% include 'deals/_pd_common.html' %}
+<style>
+.pd-grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.pd-rt{width:100%;border-collapse:collapse;font-size:12px;min-width:640px}
+.pd-rt th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border)}
+.pd-rt td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.pd-rt tr:last-child td{border-bottom:none}
+.pd-rt select,.pd-rt input[type=text]{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-family:var(--font);font-size:12px;padding:5px 8px}
+.pd-conn{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600}
+.pd-help{font-size:11px;color:var(--muted);line-height:1.7}
+.pd-help code{font-family:var(--mono);color:var(--text);background:var(--surface2);padding:0 4px;border-radius:3px}
+.pd-inline{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--text)}
+.pd-inline input{width:60px}
+</style>
+
+<div class="page-header"><div class="page-header-row"><div>
+  <h1>Telegram alerts</h1>
+  <p>What the Deal Scanner posts to your Telegram group, and when.</p>
+</div></div></div>
+
+{% include 'deals/_view_tabs.html' %}
+
+<div class="pd-card">
+  <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+    <h2 style="margin:0">1 · Connection</h2>
+    <span class="pd-conn" id="pd-conn"><span class="pd-dot"></span>Checking…</span>
+  </div>
+  <div class="pd-grid3">
+    <div class="pd-help">
+      <b style="color:var(--text)">Bot token</b><br>
+      <span id="pd-c-token">—</span><br>
+      Set <code>TELEGRAM_BOT_TOKEN</code> on the portal service in Railway.
+    </div>
+    <div class="pd-help">
+      <b style="color:var(--text)">Group</b><br>
+      <span id="pd-c-chat">—</span><br>
+      Set <code>TELEGRAM_CHAT_ID</code> (starts with <code>-100</code>).
+      To find it: open the group at web.telegram.org — the number after <code>#</code> in the address bar.
+    </div>
+    <div class="pd-help">
+      <b style="color:var(--text)">Portal links in buttons</b><br>
+      <span id="pd-c-base">—</span><br>
+      Uses <code>PORTAL_BASE_URL</code>, or Railway's public domain automatically.
+      <div style="margin-top:8px"><button class="btn btn-primary btn-sm" id="pd-test-btn" onclick="pdTest()">Send test message</button></div>
+      <div id="pd-test-res"></div>
+    </div>
+  </div>
+  <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+    <label class="pd-chk"><input type="checkbox" id="s-use_topics"> <b>Split alerts into topics</b></label>
+    <div class="pd-help" style="margin:4px 0 10px">Needs Topics turned on in the group. Topic ID: open the topic at web.telegram.org — the last number in the address (e.g. <code>…_5</code> → 5). Leave off to post everything in the main chat.</div>
+    <div class="pd-grid3">
+      <label class="pd-lbl">Watchlist topic ID<input class="pd-in" type="text" id="s-topic-watchlist" placeholder="e.g. 5"></label>
+      <label class="pd-lbl">Price Drops topic ID<input class="pd-in" type="text" id="s-topic-drops" placeholder="e.g. 7"></label>
+      <label class="pd-lbl">System &amp; summary topic ID<input class="pd-in" type="text" id="s-topic-system" placeholder="e.g. 9"></label>
+    </div>
+  </div>
+</div>
+
+<div class="pd-card">
+  <h2>2 · What gets sent</h2>
+  <div style="overflow-x:auto">
+  <table class="pd-rt">
+    <thead><tr><th>On</th><th>Alert</th><th>How</th><th>Sound</th></tr></thead>
+    <tbody>
+      <tr><td><input type="checkbox" id="s-watch_on" aria-label="Watchlist alerts"></td>
+          <td><b>Watchlist alerts</b><div class="pd-sub">Each watched product's own rules (drop, target, low, restock)</div></td>
+          <td>Instant, one message per product</td>
+          <td><select id="s-watch_sound"><option value="loud">Loud</option><option value="silent">Silent</option></select>
+              <div class="pd-sub">"Below my target" always rings</div></td></tr>
+      <tr><td><input type="checkbox" id="s-deal_ended_on" aria-label="Deal ended"></td>
+          <td><b>Deal ended</b><div class="pd-sub">Watched item's price goes back up or it sells out</div></td>
+          <td><select id="s-deal_ended_mode"><option value="edit">Edit the original alert</option><option value="new">Send a new message</option></select></td>
+          <td class="pd-sub">No ping</td></tr>
+      <tr><td><input type="checkbox" id="s-drops_on" aria-label="Price Drops"></td>
+          <td><b>Price Drops tab</b> · score ≥ <input type="text" id="s-drops_min_score" style="width:52px" aria-label="Minimum score">
+              <div class="pd-sub">Fake sales are never sent</div></td>
+          <td><select id="s-drops_delivery"><option value="batch">One message per sync</option><option value="summary">Daily summary only</option></select></td>
+          <td><select id="s-drops_sound"><option value="loud_if_80">Loud if score ≥ 80</option><option value="loud">Loud</option><option value="silent">Silent</option></select></td></tr>
+      <tr><td><input type="checkbox" id="s-system_on" aria-label="System problems"></td>
+          <td><b>System problems</b><div class="pd-sub">After 3 failed syncs in a row, and when it recovers</div></td>
+          <td>Instant</td>
+          <td><select id="s-system_sound"><option value="silent">Silent</option><option value="loud">Loud</option></select></td></tr>
+      <tr><td><input type="checkbox" id="s-summary_on" aria-label="Daily summary"></td>
+          <td><b>Daily summary</b></td>
+          <td>At <input type="text" id="s-summary_time" style="width:70px" aria-label="Summary time"> <span class="pd-sub">(24h, your time zone below)</span></td>
+          <td class="pd-sub">Silent</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="pd-grid3" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+  <div class="pd-card">
+    <h2>3 · Quiet hours</h2>
+    <label class="pd-chk" style="margin-bottom:10px"><input type="checkbox" id="s-quiet_on"> On</label>
+    <div class="pd-addrow" style="display:flex;gap:10px;flex-wrap:wrap">
+      <label class="pd-lbl" style="flex:2 1 160px">Time zone<select class="pd-in" id="s-quiet_tz"></select></label>
+      <label class="pd-lbl" style="flex:1 1 80px">From<input class="pd-in" type="text" id="s-quiet_start" placeholder="00:00"></label>
+      <label class="pd-lbl" style="flex:1 1 80px">To<input class="pd-in" type="text" id="s-quiet_end" placeholder="07:00"></label>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+      <label class="pd-chk"><input type="radio" name="quiet_mode" value="silent"> Still send, but silently</label>
+      <label class="pd-chk"><input type="radio" name="quiet_mode" value="hold"> Hold and send one message when quiet hours end</label>
+    </div>
+    <div class="pd-note">"Below my target" watchlist alerts always ring, even in quiet hours.</div>
+  </div>
+  <div class="pd-card">
+    <h2>4 · Message style &amp; anti-spam</h2>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label class="pd-chk"><input type="checkbox" id="s-photo"> Include product photo (watchlist alerts)</label>
+      <label class="pd-chk"><input type="checkbox" id="s-show_held"> Show how long the old price held</label>
+      <label class="pd-chk"><input type="checkbox" id="s-show_limit"> Show condition and quantity limit</label>
+      <div class="pd-inline">Same SKU in Price Drops at most once every <input class="pd-in" type="text" id="s-same_sku_hours"> hours, unless it drops again</div>
+      <div class="pd-inline">Max <input class="pd-in" type="text" id="s-max_per_sync"> messages per sync; the rest are combined</div>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap">
+  <label class="pd-chk" style="margin-right:auto"><input type="checkbox" id="s-enabled"> <b>Alerts enabled</b></label>
+  <span id="pd-save-msg" class="pd-sub"></span>
+  <button class="btn btn-primary" onclick="pdSave()">Save settings</button>
+</div>
+
+<script>
+const PD_BOOL = ['enabled','use_topics','watch_on','deal_ended_on','drops_on','system_on','summary_on','quiet_on','photo','show_held','show_limit'];
+const PD_TEXT = ['watch_sound','deal_ended_mode','drops_min_score','drops_delivery','drops_sound','system_sound','summary_time','quiet_tz','quiet_start','quiet_end','same_sku_hours','max_per_sync'];
+
+function pdFill(d) {
+  const s = d.settings, c = d.connection;
+  const tz = document.getElementById('s-quiet_tz');
+  tz.innerHTML = d.timezones.map(t => `<option value="${PD.esc(t[0])}">${PD.esc(t[1])}</option>`).join('');
+  PD_BOOL.forEach(k => { const el = document.getElementById('s-' + k); if (el) el.checked = !!s[k]; });
+  PD_TEXT.forEach(k => { const el = document.getElementById('s-' + k); if (el) el.value = s[k] ?? ''; });
+  ['watchlist','drops','system'].forEach(t => document.getElementById('s-topic-' + t).value = s.topics[t] ?? '');
+  document.querySelectorAll('input[name="quiet_mode"]').forEach(r => r.checked = r.value === s.quiet_mode);
+  document.getElementById('pd-c-token').innerHTML = c.token_set ? '<span style="color:var(--success)">Set</span>' : '<span style="color:var(--danger)">Not set</span>';
+  document.getElementById('pd-c-chat').innerHTML = c.chat_id ? `<span class="pd-mono" style="color:var(--text)">${PD.esc(c.chat_id)}</span>` : '<span style="color:var(--danger)">Not set</span>';
+  document.getElementById('pd-c-base').innerHTML = c.portal_base_url ? `<span class="pd-mono" style="color:var(--text)">${PD.esc(c.portal_base_url)}</span>` : '<span style="color:var(--warning)">Not set — buttons back to the portal will be hidden</span>';
+  const ok = c.token_set && c.chat_id;
+  document.getElementById('pd-conn').innerHTML = `<span class="pd-dot ${ok ? '' : 'err'}"></span>${ok ? 'Configured' : 'Not configured'}`;
+}
+
+function pdCollect() {
+  const out = {topics: {}};
+  PD_BOOL.forEach(k => out[k] = document.getElementById('s-' + k).checked);
+  PD_TEXT.forEach(k => out[k] = document.getElementById('s-' + k).value.trim());
+  ['watchlist','drops','system'].forEach(t => out.topics[t] = document.getElementById('s-topic-' + t).value.trim());
+  const qm = document.querySelector('input[name="quiet_mode"]:checked');
+  out.quiet_mode = qm ? qm.value : 'silent';
+  return out;
+}
+
+async function pdSave() {
+  const msg = document.getElementById('pd-save-msg');
+  const data = pdCollect();
+  const bad = ['quiet_start','quiet_end','summary_time'].find(k => !/^([01]\d|2[0-3]):[0-5]\d$/.test(data[k]));
+  if (bad) { msg.style.color = 'var(--danger)'; msg.textContent = 'Times must look like 07:00 (24-hour).'; return; }
+  try {
+    const r = await PD.api('/api/alerts/settings', {method: 'PUT', body: data});
+    msg.style.color = 'var(--success)'; msg.textContent = 'Saved';
+    setTimeout(() => msg.textContent = '', 2500);
+  } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = e.message; }
+}
+
+async function pdTest() {
+  const btn = document.getElementById('pd-test-btn'), res = document.getElementById('pd-test-res');
+  btn.disabled = true; res.innerHTML = '';
+  await pdSave();
+  try {
+    const r = await PD.api('/api/alerts/test', {method: 'POST'});
+    res.innerHTML = Object.entries(r.results).map(([t, v]) => v.ok
+      ? `<div class="pd-ok">Sent to ${PD.esc(t)} ✓</div>`
+      : `<div class="pd-err">${PD.esc(t)}: ${PD.esc(v.error || 'not sent')}</div>`).join('');
+  } catch (e) { res.innerHTML = `<div class="pd-err">${PD.esc(e.message)}</div>`; }
+  btn.disabled = false;
+}
+
+PD.api('/api/alerts/settings').then(pdFill).catch(e => {
+  document.getElementById('pd-conn').textContent = e.message;
+});
+</script>
+{% endblock %}

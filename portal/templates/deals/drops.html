@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+{% block title %}Price Drops — Deal Scanner{% endblock %}
+
+{% block content %}
+{% include 'deals/_pd_common.html' %}
+
+<div class="page-header">
+  <div class="page-header-row">
+    <div>
+      <h1>Price Drops</h1>
+      <p>Best Buy price changes caught every 15 minutes, judged against our own price history.</p>
+    </div>
+  </div>
+</div>
+
+{% include 'deals/_view_tabs.html' %}
+
+<div class="pd-bar" id="pd-status">
+  <span><span class="pd-dot" id="pd-status-dot"></span><b>Sync</b> every 15 min</span>
+  <span>Last run <b id="pd-last-run">—</b> · <b id="pd-last-changes">—</b> changed</span>
+  <span>Next in <b id="pd-next">—</b></span>
+  <span>API today <b id="pd-calls">—</b></span>
+  <span><b id="pd-tracked">—</b> SKUs tracked</span>
+  <span class="pd-grow"></span>
+  <button class="btn btn-primary btn-sm" id="pd-sync-btn" onclick="pdSyncNow()">Sync now</button>
+</div>
+<div class="pd-banner" id="pd-history-banner" style="display:none"></div>
+<div class="pd-err" id="pd-sync-err" style="display:none;margin:-6px 0 12px"></div>
+
+<div class="pd-kpis">
+  <div class="pd-kpi"><div class="pd-kpi-l">New all-time lows · 24h</div><div class="pd-kpi-v acc" id="pd-k-lows">—</div><div class="pd-kpi-s">Lowest price we've recorded</div></div>
+  <div class="pd-kpi"><div class="pd-kpi-l">Real drops ≥10% · 24h</div><div class="pd-kpi-v" id="pd-k-real">—</div><div class="pd-kpi-s">vs our 30-day median</div></div>
+  <div class="pd-kpi"><div class="pd-kpi-l">Fake sales flagged</div><div class="pd-kpi-v warn" id="pd-k-fake">—</div><div class="pd-kpi-s">"On sale" but same price 30+ days</div></div>
+  <div class="pd-kpi"><div class="pd-kpi-l">Deals that died · 24h</div><div class="pd-kpi-v mut" id="pd-k-died">—</div><div class="pd-kpi-s">Price went back up or sold out</div></div>
+</div>
+
+<div class="pd-filters">
+  <span class="pd-lock" title="condition=new on every query, plus refurbished / open-box / pre-owned names excluded">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+    New · sealed only
+  </span>
+  <span class="pd-flabel">Category</span>
+  <button class="pd-pill on" data-pdcat="all">All</button>
+  <button class="pd-pill" data-pdcat="laptop">Laptops</button>
+  <button class="pd-pill" data-pdcat="gaming">Gaming laptops</button>
+  <button class="pd-pill" data-pdcat="macbook">Apple</button>
+  <button class="pd-pill" data-pdcat="desktop">Desktops</button>
+  <button class="pd-pill" data-pdcat="aio">All-in-one</button>
+  <button class="pd-pill" data-pdcat="watch">Watched</button>
+  <span class="pd-flabel">Window</span>
+  <button class="pd-pill" data-pdwin="1">1h</button>
+  <button class="pd-pill on" data-pdwin="6">6h</button>
+  <button class="pd-pill" data-pdwin="24">24h</button>
+  <button class="pd-pill" data-pdwin="168">7d</button>
+  <label class="pd-chk" style="margin-left:10px"><input type="checkbox" id="pd-show-fake" onchange="pdLoad()"> Show fake sales instead</label>
+</div>
+
+<div class="pd-table-wrap">
+  <table class="pd-table">
+    <thead id="pd-thead"></thead>
+    <tbody id="pd-rows"><tr><td colspan="9" class="pd-empty">Loading…</td></tr></tbody>
+  </table>
+</div>
+<div class="pd-note" id="pd-note">Sorted by score: freshness 35 · real depth 30 · history position 20 · buyability 15. "Before drop" is the last price <b>we</b> recorded, not Best Buy's "was" price.</div>
+
+<script>
+const pdState = { cat: 'all', win: '6', statusTimer: null, nextAt: null };
+
+document.querySelectorAll('[data-pdcat]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-pdcat]').forEach(x => x.classList.toggle('on', x === b));
+  pdState.cat = b.dataset.pdcat; pdLoad();
+}));
+document.querySelectorAll('[data-pdwin]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-pdwin]').forEach(x => x.classList.toggle('on', x === b));
+  pdState.win = b.dataset.pdwin; pdLoad();
+}));
+
+function pdSignal(it) {
+  if (it.ended) return '<span class="pd-badge pd-b-end">DEAL ENDED</span>';
+  const f = it.flags || {};
+  const parts = [];
+  if (f.low_status === 'new_low') parts.push('<span class="pd-badge pd-b-atl">ALL-TIME LOW</span>');
+  else if (f.low_status === 'ties_low') parts.push('<span class="pd-badge pd-b-low">TIES LOW</span>');
+  else if (f.low_status === 'above_low' && f.above_low_by) parts.push(`<span class="pd-sub">${PD.money(f.above_low_by)} above all-time low</span>`);
+  if (it.event_type === 'back_in_stock') parts.push('<span class="pd-badge pd-b-stock">BACK IN STOCK</span>');
+  return parts.join(' ') || '<span class="pd-sub">—</span>';
+}
+
+function pdDropRow(it) {
+  const f = it.flags || {};
+  const depth = f.depth_pct || 0;
+  const refLbl = f.ref_kind === 'median_30d' ? '30-day median' : 'previous price';
+  const held = f.held_days != null && it.event_type === 'drop' ? `<div class="pd-sub">held ${f.held_days} day${f.held_days === 1 ? '' : 's'}</div>` : '';
+  const before = it.event_type === 'back_in_stock' ? 'Sold out' : PD.money(it.old_price);
+  const now = it.ended ? `${PD.money(it.price)}<div class="pd-sub">was ${PD.money(it.new_price)} at drop</div>` : PD.money(it.new_price);
+  const ql = it.qty_limit ? it.qty_limit : '—';
+  return `<tr class="${it.ended ? 'ended' : ''}">
+    <td><span class="pd-score ${PD.scoreCls(it.score.total)}" title="Freshness ${it.score.freshness} · depth ${it.score.depth} · history ${it.score.history} · buyability ${it.score.buyability}">${it.ended ? '—' : it.score.total}</span></td>
+    <td class="pd-mono">${PD.ago(it.minutes_ago)}</td>
+    <td><a class="pd-name" href="/deals/sku/${PD.esc(it.sku)}">${PD.esc(it.name)}</a><div class="pd-sub">${PD.esc(it.brand || '')} · SKU ${PD.esc(it.sku)}</div></td>
+    <td class="pd-r pd-mono" style="font-weight:500">${now}</td>
+    <td class="pd-r pd-mono" style="color:var(--muted)">${before}${held}</td>
+    <td class="pd-r pd-mono ${depth > 0 ? 'pd-down' : ''}" title="vs ${refLbl}">${depth > 0 ? '−' + depth + '%' : '0%'}<div class="pd-sub">vs ${refLbl}</div></td>
+    <td>${PD.spark(it.history)}</td>
+    <td>${pdSignal(it)}</td>
+    <td class="pd-r pd-mono">${ql}</td>
+  </tr>`;
+}
+
+function pdFakeRow(it) {
+  return `<tr>
+    <td><span class="pd-badge pd-b-fake">FAKE SALE</span></td>
+    <td><a class="pd-name" href="/deals/sku/${PD.esc(it.sku)}">${PD.esc(it.name)}</a><div class="pd-sub">${PD.esc(it.brand || '')} · SKU ${PD.esc(it.sku)}</div></td>
+    <td class="pd-r pd-mono" style="font-weight:500">${PD.money(it.price)}</td>
+    <td class="pd-r pd-mono" style="color:var(--muted)">${PD.money(it.regular_price)}<div class="pd-sub">Best Buy "was"</div></td>
+    <td class="pd-r pd-mono" style="color:var(--warning)">−${it.claim_pct}%<div class="pd-sub">claimed</div></td>
+    <td class="pd-r pd-mono">${it.held_days != null ? it.held_days + ' days' : '—'}<div class="pd-sub">at this price</div></td>
+  </tr>`;
+}
+
+async function pdLoad() {
+  const fake = document.getElementById('pd-show-fake').checked;
+  const head = document.getElementById('pd-thead'), body = document.getElementById('pd-rows');
+  body.innerHTML = '<tr><td colspan="9" class="pd-empty">Loading…</td></tr>';
+  try {
+    if (fake) {
+      head.innerHTML = '<tr><th>Flag</th><th>Product</th><th class="pd-r">Price</th><th class="pd-r">Best Buy "was"</th><th class="pd-r">Claimed saving</th><th class="pd-r">Held</th></tr>';
+      const d = await PD.api('/api/drops/fake?category=' + pdState.cat);
+      body.innerHTML = d.items.length ? d.items.map(pdFakeRow).join('')
+        : '<tr><td colspan="6" class="pd-empty">No fake sales flagged in this category.</td></tr>';
+      return;
+    }
+    head.innerHTML = '<tr><th>Score</th><th>Dropped</th><th>Product</th><th class="pd-r">Now</th><th class="pd-r">Before drop · held</th><th class="pd-r">Real drop</th><th>Trend</th><th>Signal</th><th class="pd-r">Qty limit</th></tr>';
+    const d = await PD.api(`/api/drops?window=${pdState.win}&category=${pdState.cat}`);
+    document.getElementById('pd-k-lows').textContent = d.kpis.new_lows;
+    document.getElementById('pd-k-real').textContent = d.kpis.real_drops;
+    document.getElementById('pd-k-fake').textContent = d.kpis.fake_sales;
+    document.getElementById('pd-k-died').textContent = d.kpis.died;
+    body.innerHTML = d.items.length ? d.items.map(pdDropRow).join('')
+      : '<tr><td colspan="9" class="pd-empty">No price drops in this window yet. Try 24h or 7d — or wait for the next sync.</td></tr>';
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9" class="pd-empty">${PD.esc(e.message)}</td></tr>`;
+  }
+}
+
+async function pdStatus() {
+  try {
+    const s = await PD.api('/api/drops/status');
+    document.getElementById('pd-calls').textContent = s.api_calls_today.toLocaleString();
+    document.getElementById('pd-tracked').textContent = s.skus_tracked.toLocaleString();
+    if (s.last) {
+      document.getElementById('pd-last-run').textContent = PD.time(s.last.started_at) + (s.last.kind === 'full' ? ' (full sweep)' : '');
+      document.getElementById('pd-last-changes').textContent = s.last.changes;
+      document.getElementById('pd-status-dot').classList.toggle('err', s.last.status === 'error');
+      const err = document.getElementById('pd-sync-err');
+      err.style.display = s.last.status === 'error' ? 'block' : 'none';
+      err.textContent = s.last.status === 'error' ? 'Last sync failed: ' + (s.last.error || 'unknown error') : '';
+      pdState.nextAt = s.next_at ? new Date(s.next_at).getTime() : null;
+    }
+    const banner = document.getElementById('pd-history-banner');
+    if (s.history_started) {
+      const days = Math.floor((Date.now() - new Date(s.history_started).getTime()) / 864e5);
+      if (days < 14) {
+        banner.style.display = 'block';
+        banner.innerHTML = `Price history started <b>${PD.date(s.history_started)}</b> (${days} day${days === 1 ? '' : 's'} ago). "All-time low" appears once a SKU has 14 days of data; the 30-day median kicks in after 7. Until then drops are measured against the previous price.`;
+      } else banner.style.display = 'none';
+    }
+  } catch (e) {}
+}
+
+function pdTick() {
+  const el = document.getElementById('pd-next');
+  if (!pdState.nextAt) { el.textContent = '—'; return; }
+  const ms = pdState.nextAt - Date.now();
+  if (ms <= 0) { el.textContent = 'any moment'; return; }
+  el.textContent = Math.floor(ms / 60000) + ':' + String(Math.floor(ms / 1000) % 60).padStart(2, '0');
+}
+
+async function pdSyncNow() {
+  const btn = document.getElementById('pd-sync-btn');
+  btn.disabled = true; btn.textContent = 'Syncing…';
+  try {
+    const r = await PD.api('/api/drops/sync', {method: 'POST'});
+    btn.textContent = r.skipped ? 'Already running' : `Done · ${r.changes} changes`;
+  } catch (e) {
+    btn.textContent = 'Sync failed';
+    const err = document.getElementById('pd-sync-err');
+    err.style.display = 'block'; err.textContent = e.message;
+  }
+  await Promise.all([pdStatus(), pdLoad()]);
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Sync now'; }, 2500);
+}
+
+pdLoad(); pdStatus();
+setInterval(pdTick, 1000);
+setInterval(() => { pdStatus(); }, 60000);
+</script>
+{% endblock %}
