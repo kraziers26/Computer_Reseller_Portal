@@ -138,10 +138,14 @@ function pdFill(d) {
   PD_TEXT.forEach(k => { const el = document.getElementById('s-' + k); if (el) el.value = s[k] ?? ''; });
   ['watchlist','drops','system'].forEach(t => document.getElementById('s-topic-' + t).value = s.topics[t] ?? '');
   document.querySelectorAll('input[name="quiet_mode"]').forEach(r => r.checked = r.value === s.quiet_mode);
-  document.getElementById('pd-c-token').innerHTML = c.token_set ? '<span style="color:var(--success)">Set</span>' : '<span style="color:var(--danger)">Not set</span>';
-  document.getElementById('pd-c-chat').innerHTML = c.chat_id ? `<span class="pd-mono" style="color:var(--text)">${PD.esc(c.chat_id)}</span>` : '<span style="color:var(--danger)">Not set</span>';
+  document.getElementById('pd-c-token').innerHTML = !c.token_set ? '<span style="color:var(--danger)">Not set</span>'
+    : c.token_looks_valid ? '<span style="color:var(--success)">Set</span>'
+    : '<span style="color:var(--warning)">Set, but it doesn\'t look like a bot token (expected 123456789:AAH…)</span>';
+  document.getElementById('pd-c-chat').innerHTML = !c.chat_id ? '<span style="color:var(--danger)">Not set</span>'
+    : `<span class="pd-mono" style="color:${c.chat_looks_valid ? 'var(--text)' : 'var(--warning)'}">${PD.esc(c.chat_id)}</span>`
+      + (c.chat_looks_valid ? '' : ' <span style="color:var(--warning)">— should be a number like -1001234567890</span>');
   document.getElementById('pd-c-base').innerHTML = c.portal_base_url ? `<span class="pd-mono" style="color:var(--text)">${PD.esc(c.portal_base_url)}</span>` : '<span style="color:var(--warning)">Not set — buttons back to the portal will be hidden</span>';
-  const ok = c.token_set && c.chat_id;
+  const ok = c.token_looks_valid && c.chat_looks_valid;
   document.getElementById('pd-conn').innerHTML = `<span class="pd-dot ${ok ? '' : 'err'}"></span>${ok ? 'Configured' : 'Not configured'}`;
 }
 
