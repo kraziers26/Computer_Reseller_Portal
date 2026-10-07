@@ -15,6 +15,7 @@ from apscheduler.jobstores.memory      import MemoryJobStore
 from psycopg.types.json                import Json
 
 from .bestbuy import run_scan, upsert_deals
+from .price_engine import run_price_sync, claim_job, SYNC_EVERY_MIN
 from ..db     import get_db
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,13 @@ def _run_schedule_job(schedule_id: int):
 
         if not schedule["is_active"]:
             logger.info(f"[Scheduler] schedule_id={schedule_id} is paused — skipping")
+            return
+
+        # Gunicorn runs 2 workers and each has its own scheduler. Only the
+        # worker that claims this slot runs the job; the other skips it.
+        gap = 5 if schedule["trigger_type"] == "cron" else max(5, (schedule.get("interval_hours") or 2) * 30)
+        if not claim_job(conn, f"scan_schedule:{schedule_id}", gap):
+            logger.info(f"[Scheduler] schedule_id={schedule_id} already ran in another worker — skipping")
             return
 
         filters = schedule["filters"] or {}
@@ -218,6 +226,13 @@ def init_scheduler(app):
 
     _scheduler.start()
     logger.info("[Scheduler] Started")
+
+    # Price-drop engine: every 15 minutes. run_price_sync claims its slot in
+    # job_claims, so with 2 workers it still runs once per tick.
+    _scheduler.add_job(func=run_price_sync, trigger=IntervalTrigger(minutes=SYNC_EVERY_MIN),
+                       id="price_sync", name="Price-drop sync", replace_existing=True,
+                       next_run_time=datetime.now(timezone.utc))
+    logger.info(f"[Scheduler] Registered price sync every {SYNC_EVERY_MIN} min")
 
     conn = None
     try:
