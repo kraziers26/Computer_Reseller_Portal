@@ -32,9 +32,13 @@ CATEGORIES = [
 ]
 
 CATEGORY_FALLBACKS = {
-    "Gaming Laptops":  "categoryPath.name=Gaming Laptops",
-    "Gaming Desktops": "categoryPath.name=Gaming Desktops",
+    "Gaming Laptops":  "categoryPath.name=Gaming Laptops&condition=new",
+    "Gaming Desktops": "categoryPath.name=Gaming Desktops&condition=new",
 }
+
+# New, sealed only: Best Buy's condition attribute (New / Refurbished / Pre-Owned).
+# Open-box is a separate buying option on the same SKU and never shows up here.
+CONDITION_FILTER = "condition=new"
 
 SHOW_FIELDS = ",".join([
     "sku", "name", "manufacturer", "salePrice", "regularPrice",
@@ -47,12 +51,16 @@ POOL_SIZE       = 50
 ALERT_THRESHOLD = 9
 ALERT_MAX_HOURS = 6
 
-EXCLUDE_WORDS = ("refurbished", "open-box", "open box", "pre-owned", "preowned", "renewed")
+EXCLUDE_WORDS = ("refurbished", "open-box", "open box", "pre-owned", "preowned", "renewed",
+                 "geek squad certified")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def is_new(p: dict) -> bool:
+    """Name-based safety net on top of condition=new in the query."""
+    if (p.get("condition") or "new").strip().lower() != "new":
+        return False
     return not any(w in (p.get("name") or "").lower() for w in EXCLUDE_WORDS)
 
 def is_in_stock(p: dict) -> bool:
@@ -230,7 +238,7 @@ def fetch_category(cat: dict, filters: dict = None) -> list:
     """
     filters = filters or {}
 
-    query_parts = [f"categoryPath.id={cat['id']}", "onSale=true"]
+    query_parts = [f"categoryPath.id={cat['id']}", CONDITION_FILTER, "onSale=true"]
     if filters.get("brands"):
         brand_filter = " or ".join(f'manufacturer="{b}"' for b in filters["brands"])
         query_parts.append(f"({brand_filter})")
@@ -426,6 +434,146 @@ def upsert_deals(conn, products: list) -> tuple:
 
     logger.info(f"Upserted {deals_found} deals ({new_deals} new)")
     return deals_found, new_deals
+
+
+# ── Price-drop engine fetchers ────────────────────────────────────────────────
+# Used by services/price_engine.py. Unlike fetch_category() above, these:
+#   • raise BBApiError instead of returning {} (so a failed sync is visible)
+#   • page through every result (pageSize 100)
+#   • don't require onSale=true (a drop can happen on a non-sale item)
+#   • count API calls
+
+import time as _time
+import re as _re
+
+PRICE_FIELDS = ",".join([
+    "sku", "name", "manufacturer", "salePrice", "regularPrice", "onSale",
+    "percentSavings", "dollarSavings", "onlineAvailability", "orderable",
+    "url", "image", "priceUpdateDate", "condition", "quantityLimit",
+    "modelNumber", "upc",
+])
+
+PAGE_SIZE       = 100
+MAX_PAGES       = 30      # safety cap per query (3,000 products)
+CALL_SPACING_S  = 0.25    # stay well under Best Buy's 5 calls/second
+
+
+class BBApiError(Exception):
+    pass
+
+
+class CallCounter:
+    def __init__(self):
+        self.calls = 0
+
+
+def _get_strict(url: str, params: dict, counter: CallCounter = None, timeout: int = 25) -> dict:
+    if not API_KEY:
+        raise BBApiError("BESTBUY_API_KEY is not set")
+    params = dict(params, apiKey=API_KEY, format="json")
+    last_err = None
+    for attempt in range(3):
+        if counter is not None:
+            counter.calls += 1
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+        except Exception as e:
+            last_err = f"request error: {e}"
+            _time.sleep(1.5 * (attempt + 1))
+            continue
+        if resp.status_code == 429:          # per-second limit hit — back off and retry
+            last_err = "rate limited (429)"
+            _time.sleep(2 * (attempt + 1))
+            continue
+        if resp.status_code != 200:
+            raise BBApiError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        _time.sleep(CALL_SPACING_S)
+        return resp.json()
+    raise BBApiError(last_err or "unknown error")
+
+
+def query_products(query: str, counter: CallCounter = None, sort: str = None,
+                   max_pages: int = MAX_PAGES) -> list:
+    """All products matching a Best Buy query string, e.g.
+    'categoryPath.id=abc&condition=new'. Pages until done."""
+    url = f"{BB_BASE}/products({query})"
+    out = []
+    page = 1
+    while page <= max_pages:
+        params = {"show": PRICE_FIELDS, "pageSize": str(PAGE_SIZE), "page": str(page)}
+        if sort:
+            params["sort"] = sort
+        data = _get_strict(url, params, counter)
+        out.extend(data.get("products") or [])
+        total_pages = int(data.get("totalPages") or 1)
+        if page >= total_pages:
+            break
+        page += 1
+    return out
+
+
+def bb_date_param(dt) -> str:
+    """Best Buy query dates look like 2026-10-07T16:30:00 (no timezone)."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def fetch_category_all(cat: dict, counter: CallCounter = None) -> list:
+    """Full sweep: every new product in the category, on sale or not."""
+    prods = query_products(f"categoryPath.id={cat['id']}&{CONDITION_FILTER}", counter)
+    return [p for p in prods if is_new(p)]
+
+
+def fetch_category_changed_since(cat: dict, since_dt, counter: CallCounter = None) -> list:
+    """Delta: only products whose price changed after since_dt.
+    The caller passes a generous window; change detection is done against
+    our own stored prices, so overlap is harmless."""
+    q = (f"categoryPath.id={cat['id']}&{CONDITION_FILTER}"
+         f"&priceUpdateDate>{bb_date_param(since_dt)}")
+    prods = query_products(q, counter, sort="priceUpdateDate.dsc")
+    return [p for p in prods if is_new(p)]
+
+
+def fetch_skus(skus: list, counter: CallCounter = None) -> list:
+    """Current state of specific SKUs (watched items), 100 per call."""
+    skus = [str(s) for s in skus if str(s).isdigit()]
+    out = []
+    for i in range(0, len(skus), PAGE_SIZE):
+        chunk = ",".join(skus[i:i + PAGE_SIZE])
+        out.extend(query_products(f"sku in({chunk})", counter, max_pages=1))
+    return out
+
+
+def _clean_term(s: str) -> str:
+    # Best Buy query values can't contain these characters
+    return _re.sub(r"[&()=<>,\"*]", " ", s or "").strip()
+
+
+def lookup_by_upc(upc: str, counter: CallCounter = None) -> list:
+    upc = _re.sub(r"\D", "", upc or "")
+    if not upc:
+        return []
+    return query_products(f"upc={upc}", counter, max_pages=1)
+
+
+def lookup_by_model(model: str, counter: CallCounter = None) -> list:
+    model = _clean_term(model)
+    if not model:
+        return []
+    found = query_products(f"modelNumber={model}", counter, max_pages=1)
+    if not found:
+        # Fall back to keyword search on the model text
+        terms = "&".join(f"search={t}" for t in model.split()[:6])
+        found = query_products(terms, counter, max_pages=1)
+    return found
+
+
+def fetch_raw_product(sku: str) -> dict:
+    """Every field Best Buy returns for one SKU (no 'show' filter).
+    Used by the diagnostics route to check which seller/marketplace
+    fields exist before relying on them."""
+    data = _get_strict(f"{BB_BASE}/products(sku={int(sku)})", {})
+    prods = data.get("products") or []
+    return prods[0] if prods else {}
 
 
 # ── Connection test ───────────────────────────────────────────────────────────
