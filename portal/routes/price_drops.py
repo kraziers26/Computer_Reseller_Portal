@@ -137,9 +137,14 @@ def api_status():
 @price_drops_bp.route('/api/drops/sync', methods=['POST'])
 @login_required
 def api_sync_now():
-    res = price_engine.run_price_sync(kind="delta", scheduled=False)
-    audit('price_sync_manual', 'price_sync', None, str(res)[:200])
-    return jsonify(res), (200 if res.get("ok") else 502)
+    """Starts a sync in the background and returns immediately — a full sweep
+    can take a few minutes at Best Buy's per-second limit. The page polls
+    /api/drops/status for the result."""
+    import threading
+    threading.Thread(target=price_engine.run_price_sync,
+                     kwargs={"kind": "delta", "scheduled": False}, daemon=True).start()
+    audit('price_sync_manual', 'price_sync', None, None)
+    return jsonify({"ok": True, "started": True})
 
 
 @price_drops_bp.route('/api/drops/sku/<sku>')
