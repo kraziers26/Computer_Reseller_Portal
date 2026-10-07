@@ -149,7 +149,9 @@ async function pdStatus() {
     document.getElementById('pd-calls').textContent = s.api_calls_today.toLocaleString();
     document.getElementById('pd-tracked').textContent = s.skus_tracked.toLocaleString();
     if (s.last) {
-      document.getElementById('pd-last-run').textContent = PD.time(s.last.started_at) + (s.last.kind === 'full' ? ' (full sweep)' : '');
+      const running = s.last.status === 'running';
+      document.getElementById('pd-last-run').textContent = PD.time(s.last.started_at)
+        + (s.last.kind === 'full' ? ' (full sweep)' : '') + (running ? ' · running…' : '');
       document.getElementById('pd-last-changes').textContent = s.last.changes;
       document.getElementById('pd-status-dot').classList.toggle('err', s.last.status === 'error');
       const err = document.getElementById('pd-sync-err');
@@ -165,7 +167,8 @@ async function pdStatus() {
         banner.innerHTML = `Price history started <b>${PD.date(s.history_started)}</b> (${days} day${days === 1 ? '' : 's'} ago). "All-time low" appears once a SKU has 14 days of data; the 30-day median kicks in after 7. Until then drops are measured against the previous price.`;
       } else banner.style.display = 'none';
     }
-  } catch (e) {}
+    return s;
+  } catch (e) { return null; }
 }
 
 function pdTick() {
@@ -179,15 +182,25 @@ function pdTick() {
 async function pdSyncNow() {
   const btn = document.getElementById('pd-sync-btn');
   btn.disabled = true; btn.textContent = 'Syncing…';
+  const err = document.getElementById('pd-sync-err');
   try {
-    const r = await PD.api('/api/drops/sync', {method: 'POST'});
-    btn.textContent = r.skipped ? 'Already running' : `Done · ${r.changes} changes`;
+    await PD.api('/api/drops/sync', {method: 'POST'});
   } catch (e) {
-    btn.textContent = 'Sync failed';
-    const err = document.getElementById('pd-sync-err');
+    btn.disabled = false; btn.textContent = 'Sync now';
     err.style.display = 'block'; err.textContent = e.message;
+    return;
   }
-  await Promise.all([pdStatus(), pdLoad()]);
+  // Runs in the background; poll until a finished run newer than the click shows up
+  const clickedAt = Date.now() - 5000;
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const s = await pdStatus();
+    if (s && s.last && s.last.status !== 'running' && new Date(s.last.started_at).getTime() >= clickedAt) {
+      btn.textContent = s.last.status === 'ok' ? `Done · ${s.last.changes} changes` : 'Sync failed';
+      await pdLoad();
+      break;
+    }
+  }
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Sync now'; }, 2500);
 }
 
