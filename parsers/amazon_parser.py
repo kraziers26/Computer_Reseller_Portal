@@ -165,8 +165,8 @@ def translate_es_to_en(text: str) -> str:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def parse_amount(s: str) -> float:
-    """Parse US$1,797.00 or $1,797.00 into float."""
-    s = re.sub(r'US\$|,', '', s.strip())
+    """Parse US$1,797.00, $1,797.00, or USD 2,598.00 into float."""
+    s = re.sub(r'USD\s*|US\$|,', '', s.strip())
     s = s.replace('$', '').strip()
     try:
         return float(s)
@@ -198,7 +198,7 @@ def is_amazon_invoice(text: str) -> bool:
 
 def detect_format(text: str) -> str:
     """Detect which Amazon invoice format this is."""
-    if re.search(r'Final Details for Order', text, re.IGNORECASE):
+    if re.search(r'Details for Order', text, re.IGNORECASE):
         return 'B'
     if re.search(r'Resumen del pedido|N\.º de pedido|Pedido realizado', text):
         return 'A_es'
@@ -303,8 +303,8 @@ def parse_total(text: str, invoice: AmazonInvoice):
             invoice.price_total = parse_amount(sub_m.group(1))
             return
 
-    # Format B
-    m = re.search(r'Order Total:\s*\$?([\d,]+\.\d{2})', text)
+    # Format B (including new USD-notation format)
+    m = re.search(r'Order Total:\s*(?:USD\s+|US\$|\$)?([\d,]+\.\d{2})', text)
     if m:
         invoice.price_total = parse_amount(m.group(1))
         return
@@ -316,13 +316,13 @@ def parse_total(text: str, invoice: AmazonInvoice):
         return
 
     # Format A_en
-    m = re.search(r'Grand Total:\s*\$?([\d,]+\.\d{2})', text)
+    m = re.search(r'Grand Total:\s*(?:USD\s+|US\$|\$)?([\d,]+\.\d{2})', text)
     if m:
         val = parse_amount(m.group(1))
         if val > 0:
             invoice.price_total = val
             return
-        sub_m = re.search(r'Item\(?s\)? Subtotal:\s*\$?([\d,]+\.\d{2})', text)
+        sub_m = re.search(r'Item\(?s\)? Subtotal:\s*(?:USD\s+|US\$|\$)?([\d,]+\.\d{2})', text)
         if sub_m:
             invoice.price_total = parse_amount(sub_m.group(1))
             return
