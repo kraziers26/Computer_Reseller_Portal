@@ -6,7 +6,7 @@ APScheduler integration for the ComputerReseller Portal — Deal Blaster.
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron         import CronTrigger
@@ -231,7 +231,8 @@ def init_scheduler(app):
     # job_claims, so with 2 workers it still runs once per tick.
     _scheduler.add_job(func=run_price_sync, trigger=IntervalTrigger(minutes=SYNC_EVERY_MIN),
                        id="price_sync", name="Price-drop sync", replace_existing=True,
-                       next_run_time=datetime.now(timezone.utc))
+                       # first run 90s after boot, so deploys don't stack calls
+                       next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
     logger.info(f"[Scheduler] Registered price sync every {SYNC_EVERY_MIN} min")
 
     conn = None

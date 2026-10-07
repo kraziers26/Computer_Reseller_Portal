@@ -455,7 +455,10 @@ PRICE_FIELDS = ",".join([
 
 PAGE_SIZE       = 100
 MAX_PAGES       = 30      # safety cap per query (3,000 products)
-CALL_SPACING_S  = 0.25    # stay well under Best Buy's 5 calls/second
+# Pause after every call. Best Buy enforces a per-second limit per API key
+# (shared with anything else using the same key, e.g. the morning-report bot).
+CALL_SPACING_S  = float(os.environ.get("BESTBUY_CALL_SPACING_S", "1.0"))
+RATE_LIMIT_WAITS = (2, 4, 8, 16, 30)   # back-off when Best Buy says "per second limit"
 
 
 class BBApiError(Exception):
@@ -467,23 +470,39 @@ class CallCounter:
         self.calls = 0
 
 
+def _is_rate_limited(resp) -> bool:
+    """Best Buy answers 429 *or* 403 + "per second limit" when throttling."""
+    if resp.status_code == 429:
+        return True
+    if resp.status_code == 403:
+        body = (resp.text or "").lower()
+        return "per second" in body or "rate limit" in body
+    return False
+
+
 def _get_strict(url: str, params: dict, counter: CallCounter = None, timeout: int = 25) -> dict:
     if not API_KEY:
         raise BBApiError("BESTBUY_API_KEY is not set")
     params = dict(params, apiKey=API_KEY, format="json")
     last_err = None
-    for attempt in range(3):
+    net_failures = 0
+    for attempt in range(len(RATE_LIMIT_WAITS) + 1):
         if counter is not None:
             counter.calls += 1
         try:
             resp = requests.get(url, params=params, timeout=timeout)
         except Exception as e:
+            net_failures += 1
             last_err = f"request error: {e}"
-            _time.sleep(1.5 * (attempt + 1))
+            if net_failures >= 3:
+                break
+            _time.sleep(1.5 * net_failures)
             continue
-        if resp.status_code == 429:          # per-second limit hit — back off and retry
-            last_err = "rate limited (429)"
-            _time.sleep(2 * (attempt + 1))
+        if _is_rate_limited(resp):
+            last_err = f"Best Buy per-second limit (HTTP {resp.status_code}) — still limited after {attempt + 1} tries"
+            if attempt < len(RATE_LIMIT_WAITS):
+                logger.warning(f"BB API rate limited, waiting {RATE_LIMIT_WAITS[attempt]}s")
+                _time.sleep(RATE_LIMIT_WAITS[attempt])
             continue
         if resp.status_code != 200:
             raise BBApiError(f"HTTP {resp.status_code}: {resp.text[:200]}")

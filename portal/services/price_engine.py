@@ -41,6 +41,7 @@ MEDIAN_MIN_DAYS       = 7      # use 30-day median as reference once we have a w
 FAKE_SALE_CLAIM_PCT   = 10     # Best Buy claims ≥10% off ...
 FAKE_SALE_HELD_DAYS   = 30     # ... but the price hasn't moved in 30+ days
 PRICE_EPS             = 0.009
+SYNC_LOCK_KEY         = 731_004   # pg advisory lock id for "price sync running"
 
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
@@ -408,9 +409,19 @@ def run_price_sync(kind: str = "delta", scheduled: bool = True) -> dict:
 
     conn = get_db()
     run_id = None
+    counter = bestbuy.CallCounter()
     try:
         if scheduled and not claim_job(conn, "price_sync", SYNC_EVERY_MIN * 0.66):
             return {"ok": True, "skipped": True}
+
+        # One sync at a time across both workers and the "Sync now" button.
+        # Session-level lock: released automatically if the process dies.
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (SYNC_LOCK_KEY,))
+            got = cur.fetchone()["ok"]
+        conn.commit()
+        if not got:
+            return {"ok": True, "skipped": True, "reason": "a sync is already running"}
 
         # Full sweep every few hours (or the very first time)
         if kind == "delta":
@@ -426,7 +437,6 @@ def run_price_sync(kind: str = "delta", scheduled: bool = True) -> dict:
             run_id = cur.fetchone()["id"]
         conn.commit()
 
-        counter = bestbuy.CallCounter()
         now = now_utc()
         events, checked = [], 0
 
@@ -473,7 +483,8 @@ def run_price_sync(kind: str = "delta", scheduled: bool = True) -> dict:
             with conn.cursor() as cur:
                 if run_id:
                     cur.execute("""UPDATE price_sync_runs SET finished_at = NOW(), status = 'error',
-                                   error_message = %s WHERE id = %s""", (str(e)[:500], run_id))
+                                   error_message = %s, api_calls = %s WHERE id = %s""",
+                                (str(e)[:500], counter.calls, run_id))
                 else:
                     cur.execute("""INSERT INTO price_sync_runs (kind, finished_at, status, error_message)
                                    VALUES (%s, NOW(), 'error', %s)""", (kind, str(e)[:500]))
