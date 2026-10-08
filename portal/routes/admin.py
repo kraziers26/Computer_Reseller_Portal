@@ -1302,6 +1302,29 @@ def print_batch():
             ORDER BY t.submitted_at DESC
         """, params)
         unprinted = cur.fetchall()
+
+        # Item summary per order for the "Items" column. Grouped by description +
+        # SKU so per-unit rows (Apple stores one row per serial) collapse back
+        # into a single "qty × item" line. Biggest lines first.
+        items_by_tid = {}
+        tids = [str(r['transaction_id']) for r in unprinted]
+        if tids:
+            cur.execute("""
+                SELECT transaction_id, item_description, sku_model_color,
+                       SUM(quantity)   AS qty,
+                       SUM(line_total) AS amount
+                FROM transaction_items
+                WHERE transaction_id = ANY(%s::uuid[])
+                GROUP BY transaction_id, item_description, sku_model_color
+                ORDER BY transaction_id, SUM(line_total) DESC, item_description
+            """, (tids,))
+            for it in cur.fetchall():
+                items_by_tid.setdefault(str(it['transaction_id']), []).append(it)
+        for r in unprinted:
+            lines = items_by_tid.get(str(r['transaction_id']), [])
+            r['item_lines'] = lines
+            r['unit_count'] = sum(int(l['qty'] or 0) for l in lines)
+
         cur.execute("""
             SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS cnt,
                    MIN(submitted_by_email) AS created_by_email
