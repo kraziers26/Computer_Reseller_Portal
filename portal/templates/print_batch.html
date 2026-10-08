@@ -2,25 +2,47 @@
 {% block title %}Print Batches — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
 <style>
-.isum-cell{padding:8px 12px;vertical-align:top;min-width:260px;max-width:420px}
-.isum-line{display:flex;align-items:baseline;gap:8px;padding:2px 0;font-size:12px;line-height:1.45}
+/* Full screen width on this page (same as All Submissions); table scrolls sideways when narrow */
+.main{max-width:none;min-width:0}
+
+.pb-table{font-size:12.5px;font-variant-numeric:tabular-nums}
+.pb-table th,.pb-table td{white-space:nowrap;padding:10px 12px;vertical-align:top}
+.pb-table th{font-size:10px;vertical-align:middle}
+.pb-table tbody tr{border-bottom:1px solid var(--border)}
+.pb-table tr:hover td{background:#1e2130}
+.pb-table .r{text-align:right}
+.pb-table .num{font-family:var(--mono);font-size:12px;text-align:right}
+.pb-table .muted{color:var(--muted)}
+.pb-table .ord{font-family:var(--mono);font-size:12px}
+.pb-table .chk{width:36px;min-width:36px;max-width:36px;padding-right:4px}
+.pb-table input[type=checkbox]{width:auto;cursor:pointer}
+/* Keep checkbox + Order # pinned on the left when scrolling sideways */
+.pb-table th:nth-child(-n+2),.pb-table td:nth-child(-n+2){position:sticky;z-index:1;background:var(--surface)}
+.pb-table th:nth-child(-n+2){background:var(--surface2);z-index:2}
+.pb-table th:nth-child(1),.pb-table td:nth-child(1){left:0}
+.pb-table th:nth-child(2),.pb-table td:nth-child(2){left:36px;box-shadow:inset -1px 0 0 var(--border)}
+.pb-table tr:hover td:nth-child(-n+2){background:#1e2130}
+.pb-print{display:flex;align-items:center;gap:8px}
+
+/* Items column: the one column that wraps */
+.pb-table td.items{white-space:normal;min-width:380px;width:100%}
+.isum-line{display:flex;align-items:flex-start;gap:10px;padding:4px 0;font-size:12.5px;line-height:1.4}
 .isum-line + .isum-line{border-top:1px dashed var(--border)}
-.isum-qty{flex:none;min-width:30px;text-align:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent2);background:rgba(79,110,247,.12);border-radius:4px;padding:0 5px}
-.isum-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
-.isum-sku{color:var(--muted)}
-.isum-amt{flex:none;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.isum-qty{flex:none;min-width:30px;margin-top:1px;text-align:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent2);background:rgba(79,110,247,.12);border-radius:4px;padding:0 5px}
+.isum-name{flex:1;min-width:0;color:var(--text);overflow-wrap:anywhere}
+.isum-sku{display:block;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.isum-amt{flex:none;font-family:var(--mono);font-size:12px;color:var(--muted);padding-left:8px}
 .isum-count{margin-top:3px;font-family:var(--font);font-size:11px;color:var(--muted)}
-.isum-more summary{cursor:pointer;font-size:11px;color:var(--accent2);padding-top:2px;list-style:none}
+.isum-more summary{cursor:pointer;font-size:11px;color:var(--accent2);padding-top:4px;list-style:none}
 .isum-more summary::-webkit-details-marker{display:none}
 .isum-more[open] summary{color:var(--muted)}
 .isum-more[open] summary::after{content:' — hide'}
-#createBatchForm tbody td{vertical-align:top}
 .isum-empty{font-size:12px;color:var(--hint);font-style:italic}
 </style>
 {% macro isum_line(l) %}
               <div class="isum-line" title="{{ l.item_description }}{{ ' — ' ~ l.sku_model_color if l.sku_model_color }}">
                 <span class="isum-qty">{{ l.qty }}×</span>
-                <span class="isum-name">{{ l.item_description }}{% if l.sku_model_color %}<span class="isum-sku"> · {{ l.sku_model_color }}</span>{% endif %}</span>
+                <span class="isum-name">{{ l.item_description }}{% if l.sku_model_color %}<span class="isum-sku">{{ l.sku_model_color }}</span>{% endif %}</span>
                 <span class="isum-amt">${{ "{:,.2f}".format(l.amount or 0) }}</span>
               </div>
               {% endmacro %}
@@ -96,33 +118,31 @@
       <input type="text" name="batch_id" placeholder="BATCH-YYYY-MM" required>
     </div>
     {% if unprinted %}
-    <div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <div class="table-wrap">
+      <table class="pb-table">
         <thead>
-          <tr style="background:var(--surface2)">
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">
-              <input type="checkbox" id="selectAll" style="width:auto">
-            </th>
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Order #</th>
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Items</th>
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Retailer</th>
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Date</th>
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Person By</th>
-            <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Total</th>
-            <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Print</th>
+          <tr>
+            <th class="chk"><input type="checkbox" id="selectAll" aria-label="Select all"></th>
+            <th>Order #</th>
+            <th class="items">Items</th>
+            <th>Retailer</th>
+            <th>Date</th>
+            <th>Person By</th>
+            <th class="r">Total</th>
+            <th>Print</th>
           </tr>
         </thead>
         <tbody>
         {% for r in unprinted %}
-        <tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:8px 12px"><input type="checkbox" name="txn_ids" value="{{ r.transaction_id }}" class="row-check" style="width:auto"></td>
-          <td style="padding:8px 12px;font-family:var(--mono);font-size:12px;vertical-align:top">
-            {{ r.order_number[:22] }}
+        <tr>
+          <td class="chk"><input type="checkbox" name="txn_ids" value="{{ r.transaction_id }}" class="row-check"></td>
+          <td class="ord">
+            {{ r.order_number }}
             {% if r.item_lines %}
             <div class="isum-count">{{ r.unit_count }} unit{{ 's' if r.unit_count != 1 }} · {{ r.item_lines|length }} line{{ 's' if r.item_lines|length != 1 }}</div>
             {% endif %}
           </td>
-          <td class="isum-cell">
+          <td class="items">
             {% if r.item_lines %}
               {% for l in r.item_lines[:3] %}{{ isum_line(l) }}{% endfor %}
               {% if r.item_lines|length > 3 %}
@@ -135,14 +155,14 @@
               <span class="isum-empty">No items parsed</span>
             {% endif %}
           </td>
-          <td style="padding:8px 12px">{{ r.retailer }}</td>
-          <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-          <td style="padding:8px 12px">{{ r.username or '—' }}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-          <td style="padding:8px 12px">
+          <td>{{ r.retailer }}</td>
+          <td class="muted">{{ r.purchase_date }}</td>
+          <td>{{ r.username or '—' }}</td>
+          <td class="num">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+          <td>
+            <div class="pb-print">
             <input type="checkbox" name="skip_tids" value="{{ r.transaction_id }}"
                    title="Skip for later — move to review pile"
-                   style="width:auto;margin-right:4px"
                    {{ 'checked' if r.skip_print }}>
             {% if r.invoice_file_path and r.invoice_file_path.startswith('http') %}
               <a href="{{ r.invoice_file_path }}" target="_blank" class="btn btn-ghost btn-sm">🔗 Open</a>
@@ -151,6 +171,7 @@
             {% else %}
               <span style="color:var(--hint);font-size:12px">No PDF</span>
             {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}
