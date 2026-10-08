@@ -1202,6 +1202,51 @@ def cashback():
                            filters={'month':f_month,'year':f_year,'company':f_company,'person_by':f_person})
 
 
+# ── Brand detection for the Print Batches "Brand" filter ──────────────────────
+# Items don't store a brand, so it's read from the description. Each brand has
+# its name plus product lines that imply it (an "iPhone" is Apple, "ROG" is Asus).
+# When several brands appear in one description ("MSI Cyborg ... Intel Core ...
+# NVIDIA RTX"), the one mentioned FIRST wins -- retailers lead with the maker,
+# and component brands come later in the spec list. Add entries here as needed.
+import re as _re
+_BRAND_KEYWORDS = {
+    'Apple':     ['apple', 'iphone', 'ipad', 'macbook', 'imac', 'mac mini', 'mac studio', 'mac pro', 'airpods', 'apple watch', 'vision pro'],
+    'Asus':      ['asus', 'rog', 'zenbook', 'vivobook', 'tuf gaming', 'proart'],
+    'Acer':      ['acer', 'predator', 'nitro', 'swift', 'aspire', 'chromebook spin'],
+    'Alienware': ['alienware'],
+    'Dell':      ['dell', 'xps', 'inspiron', 'latitude'],
+    'HP':        ['hp', 'omen', 'victus', 'pavilion', 'elitebook', 'spectre'],
+    'Lenovo':    ['lenovo', 'legion', 'thinkpad', 'ideapad', 'yoga', 'loq'],
+    'MSI':       ['msi'],
+    'Razer':     ['razer'],
+    'Gigabyte':  ['gigabyte', 'aorus'],
+    'Samsung':   ['samsung', 'galaxy'],
+    'Microsoft': ['microsoft', 'surface', 'xbox'],
+    'Sony':      ['sony', 'playstation', 'ps5'],
+    'Nintendo':  ['nintendo', 'switch 2'],
+    'Meta':      ['meta quest', 'oculus'],
+    'LG':        ['lg'],
+    'Logitech':  ['logitech'],
+    'Corsair':   ['corsair'],
+    'NVIDIA':    ['nvidia', 'geforce'],
+    'AMD':       ['amd', 'ryzen', 'radeon'],
+    'Intel':     ['intel'],
+}
+_BRAND_PATTERNS = [
+    (brand, _re.compile(r'(?<![a-z0-9])' + _re.escape(kw) + r'(?![a-z0-9])'))
+    for brand, kws in _BRAND_KEYWORDS.items() for kw in kws
+]
+
+def _detect_brand(description):
+    text = (description or '').lower()
+    best, best_pos = None, None
+    for brand, pat in _BRAND_PATTERNS:
+        m = pat.search(text)
+        if m and (best_pos is None or m.start() < best_pos):
+            best, best_pos = brand, m.start()
+    return best or 'Other'
+
+
 @admin_bp.route('/print-batch', methods=['GET', 'POST'])
 @login_required
 @require_role('admin')
@@ -1271,6 +1316,8 @@ def print_batch():
     f_role      = request.args.get('role', '')
     f_date_from = request.args.get('date_from', '')
     f_date_to   = request.args.get('date_to', '')
+    f_brand     = request.args.get('brand', '')
+    f_q         = request.args.get('q', '').strip()
 
     conditions = ["t.print_date IS NULL", "t.review_status != 'Flagged'",
                   "t.is_active=TRUE", "COALESCE(t.skip_print,FALSE)=FALSE"]
@@ -1302,6 +1349,58 @@ def print_batch():
             ORDER BY t.submitted_at DESC
         """, params)
         unprinted = cur.fetchall()
+
+        # Item summary per order for the "Items" column. Grouped by description +
+        # SKU so per-unit rows (Apple stores one row per serial) collapse back
+        # into a single "qty × item" line. Biggest lines first.
+        items_by_tid = {}
+        tids = [str(r['transaction_id']) for r in unprinted]
+        if tids:
+            cur.execute("""
+                SELECT transaction_id, item_description, sku_model_color,
+                       SUM(quantity)   AS qty,
+                       SUM(line_total) AS amount
+                FROM transaction_items
+                WHERE transaction_id = ANY(%s::uuid[])
+                GROUP BY transaction_id, item_description, sku_model_color
+                ORDER BY transaction_id, SUM(line_total) DESC, item_description
+            """, (tids,))
+            for it in cur.fetchall():
+                items_by_tid.setdefault(str(it['transaction_id']), []).append(it)
+        for r in unprinted:
+            lines = items_by_tid.get(str(r['transaction_id']), [])
+            r['item_lines'] = lines
+            r['unit_count'] = sum(int(l['qty'] or 0) for l in lines)
+            r['brands'] = sorted({_detect_brand(l['item_description']) for l in lines})
+
+        # Keyword search: every word must appear somewhere in the order --
+        # order #, retailer, person, or any item's description / SKU.
+        if f_q:
+            words = f_q.lower().split()
+            def _haystack(r):
+                parts = [r['order_number'], r['retailer'], r['username'] or '']
+                for l in r['item_lines']:
+                    parts += [l['item_description'] or '', l['sku_model_color'] or '']
+                return ' '.join(parts).lower()
+            unprinted = [r for r in unprinted if all(w in _haystack(r) for w in words)]
+
+        # Brand options reflect every other filter (incl. the search), so the
+        # counts always match what you'd see after picking one.
+        brand_counts = {}
+        for r in unprinted:
+            for b in r['brands']:
+                brand_counts[b] = brand_counts.get(b, 0) + 1
+        brand_options = sorted(brand_counts.items(), key=lambda kv: (kv[0] == 'Other', kv[0]))
+        if f_brand:
+            unprinted = [r for r in unprinted if f_brand in r['brands']]
+
+        # Pagination: 30 orders per page, applied after every filter.
+        per_page   = 30
+        total_rows = len(unprinted)
+        last_page  = max(1, (total_rows + per_page - 1) // per_page)
+        page       = min(max(request.args.get('page', 1, type=int) or 1, 1), last_page)
+        unprinted  = unprinted[(page - 1) * per_page : page * per_page]
+
         cur.execute("""
             SELECT DISTINCT print_batch_id, MIN(print_date) AS batch_date, COUNT(*) AS cnt,
                    MIN(submitted_by_email) AS created_by_email
@@ -1320,7 +1419,11 @@ def print_batch():
                            retailers=retailers, users=users, companies=companies,
                            filters={'retailer':f_retailer,'person_by':f_person,'company':f_company,
                                     'submitter':f_submitter,'role':f_role,
-                                    'date_from':f_date_from,'date_to':f_date_to})
+                                    'date_from':f_date_from,'date_to':f_date_to,
+                                    'brand':f_brand,'q':f_q},
+                           brand_options=brand_options,
+                           page=page, per_page=per_page, last_page=last_page, total_rows=total_rows,
+                           page_args={k: v for k, v in request.args.items() if k != 'page' and v})
 
 
 @admin_bp.route('/batch/check-name')
