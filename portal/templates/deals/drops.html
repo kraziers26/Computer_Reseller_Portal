@@ -86,6 +86,10 @@ function pdSignal(it) {
   return parts.join(' ') || '<span class="pd-sub">—</span>';
 }
 
+function pdBuy(it) {
+  return it.url ? ` · <a class="pd-buy" href="${PD.esc(it.url)}" target="_blank" rel="noopener" title="Open on BestBuy.com">Buy ↗</a>` : '';
+}
+
 function pdDropRow(it) {
   const f = it.flags || {};
   const depth = f.depth_pct || 0;
@@ -97,7 +101,7 @@ function pdDropRow(it) {
   return `<tr class="${it.ended ? 'ended' : ''}">
     <td><span class="pd-score ${PD.scoreCls(it.score.total)}" title="Freshness ${it.score.freshness} · depth ${it.score.depth} · history ${it.score.history} · buyability ${it.score.buyability}">${it.ended ? '—' : it.score.total}</span></td>
     <td class="pd-mono">${PD.ago(it.minutes_ago)}</td>
-    <td><a class="pd-name" href="/deals/sku/${PD.esc(it.sku)}">${PD.esc(it.name)}</a><div class="pd-sub">${PD.esc(it.brand || '')} · SKU ${PD.esc(it.sku)}</div></td>
+    <td><a class="pd-name" href="/deals/sku/${PD.esc(it.sku)}">${PD.esc(it.name)}</a><div class="pd-sub">${PD.esc(it.brand || '')} · SKU ${PD.esc(it.sku)}${pdBuy(it)}</div></td>
     <td class="pd-r pd-mono" style="font-weight:500">${now}</td>
     <td class="pd-r pd-mono" style="color:var(--muted)">${before}${held}</td>
     <td class="pd-r pd-mono ${depth > 0 ? 'pd-down' : ''}" title="vs ${refLbl}">${depth > 0 ? '−' + depth + '%' : '0%'}<div class="pd-sub">vs ${refLbl}</div></td>
@@ -110,7 +114,7 @@ function pdDropRow(it) {
 function pdFakeRow(it) {
   return `<tr>
     <td><span class="pd-badge pd-b-fake">FAKE SALE</span></td>
-    <td><a class="pd-name" href="/deals/sku/${PD.esc(it.sku)}">${PD.esc(it.name)}</a><div class="pd-sub">${PD.esc(it.brand || '')} · SKU ${PD.esc(it.sku)}</div></td>
+    <td><a class="pd-name" href="/deals/sku/${PD.esc(it.sku)}">${PD.esc(it.name)}</a><div class="pd-sub">${PD.esc(it.brand || '')} · SKU ${PD.esc(it.sku)}${pdBuy(it)}</div></td>
     <td class="pd-r pd-mono" style="font-weight:500">${PD.money(it.price)}</td>
     <td class="pd-r pd-mono" style="color:var(--muted)">${PD.money(it.regular_price)}<div class="pd-sub">Best Buy "was"</div></td>
     <td class="pd-r pd-mono" style="color:var(--warning)">−${it.claim_pct}%<div class="pd-sub">claimed</div></td>
