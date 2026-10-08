@@ -22,6 +22,9 @@
 .pb-table th:nth-child(1),.pb-table td:nth-child(1){left:0}
 .pb-table th:nth-child(2),.pb-table td:nth-child(2){left:36px;box-shadow:inset -1px 0 0 var(--border)}
 .pb-table tr:hover td:nth-child(-n+2){background:#1e2130}
+.pb-search{position:relative;flex:1 1 260px;min-width:240px;max-width:380px}
+.pb-search input{width:100%;padding-left:30px}
+.pb-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-52%);color:var(--muted);font-size:17px;pointer-events:none}
 .pb-print{display:flex;align-items:center;gap:8px}
 
 /* Items column: the one column that wraps */
@@ -83,6 +86,20 @@
 <!-- Filters -->
 <div class="card" style="margin-bottom:16px">
   <form method="GET" class="flex gap-12 flex-wrap items-center">
+    <div class="pb-search">
+      <span class="pb-search-icon" aria-hidden="true">⌕</span>
+      <input type="search" name="q" value="{{ filters.get('q','') }}"
+             placeholder="Search order #, item, SKU…" aria-label="Search by keyword"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();this.form.submit()}"
+             onsearch="if(!this.value) this.form.submit()">
+    </div>
+    <select name="brand" style="width:150px" onchange="this.form.submit()" aria-label="Brand">
+      <option value="">All brands</option>
+      {% for b, n in brand_options %}<option value="{{ b }}" {{ 'selected' if filters.get('brand')==b }}>{{ b }} ({{ n }})</option>{% endfor %}
+      {% if filters.get('brand') and filters.get('brand') not in brand_options|map('first')|list %}
+      <option value="{{ filters.brand }}" selected>{{ filters.brand }} (0)</option>
+      {% endif %}
+    </select>
     <select name="retailer" style="width:130px" onchange="this.form.submit()">
       <option value="">All retailers</option>
       {% for r in retailers %}<option value="{{ r }}" {{ 'selected' if filters.retailer==r }}>{{ r }}</option>{% endfor %}
@@ -102,7 +119,7 @@
     </select>
     <input type="date" name="date_from" value="{{ filters.get('date_from','') }}" style="width:130px" onchange="this.form.submit()" title="From date">
     <input type="date" name="date_to"   value="{{ filters.get('date_to','') }}"   style="width:130px" onchange="this.form.submit()" title="To date">
-    {% if filters.retailer or filters.person_by or filters.submitter or filters.company or filters.get('role') or filters.get('date_from') or filters.get('date_to') %}
+    {% if filters.get('q') or filters.get('brand') or filters.retailer or filters.person_by or filters.submitter or filters.company or filters.get('role') or filters.get('date_from') or filters.get('date_to') %}
     <a href="{{ url_for('admin.print_batch') }}" class="btn btn-ghost btn-sm">Clear</a>
     {% endif %}
   </form>
@@ -112,7 +129,7 @@
 <form method="POST" id="createBatchForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="card">
-    <div class="card-title">Create new batch <span style="font-size:12px;color:var(--muted);font-weight:400">({{ unprinted|length }} unprinted invoices)</span></div>
+    <div class="card-title">Create new batch <span style="font-size:12px;color:var(--muted);font-weight:400">({{ total_rows }} unprinted invoice{{ 's' if total_rows != 1 }}{% if last_page > 1 %} · showing {{ (page-1)*per_page + 1 }}–{{ (page-1)*per_page + unprinted|length }}{% endif %})</span></div>
     <div class="form-group" style="max-width:300px;margin-bottom:16px">
       <label>Batch ID</label>
       <input type="text" name="batch_id" placeholder="BATCH-YYYY-MM" required>
@@ -122,7 +139,7 @@
       <table class="pb-table">
         <thead>
           <tr>
-            <th class="chk"><input type="checkbox" id="selectAll" aria-label="Select all"></th>
+            <th class="chk"><input type="checkbox" id="selectAll" aria-label="Select all on this page" title="Select all on this page"></th>
             <th>Order #</th>
             <th class="items">Items</th>
             <th>Retailer</th>
@@ -178,20 +195,32 @@
         </tbody>
       </table>
     </div>
+    {% if last_page > 1 %}
+    <div class="pagination">
+      {% if page > 1 %}<a href="{{ url_for('admin.print_batch', page=page-1, **page_args) }}">← Prev</a>{% endif %}
+      <span class="current">{{ page }} / {{ last_page }}</span>
+      {% if page < last_page %}<a href="{{ url_for('admin.print_batch', page=page+1, **page_args) }}">Next →</a>{% endif %}
+    </div>
+    {% endif %}
     <div class="mt-16 flex gap-12">
       <button type="submit" class="btn btn-primary">Tag Selected as Batch</button>
       <span style="font-size:12px;color:var(--muted);align-self:center">Select invoices above then click to create batch</span>
     </div>
     {% else %}
     <div style="padding:32px;text-align:center;color:var(--muted);font-size:13px">
+      {% if filters.get('q') or filters.get('brand') or filters.retailer or filters.submitter or filters.company or filters.get('role') or filters.get('date_from') or filters.get('date_to') %}
+      No unprinted orders match these filters. <a href="{{ url_for('admin.print_batch') }}" style="color:var(--accent2)">Clear filters</a>
+      {% else %}
       All submitted invoices have already been batched, or no invoices have been submitted yet.
+      {% endif %}
     </div>
     {% endif %}
   </div>
 </form>
 
 <script>
-document.getElementById('selectAll').addEventListener('change', function(){
+const selectAllBox = document.getElementById('selectAll');
+if (selectAllBox) selectAllBox.addEventListener('change', function(){
   document.querySelectorAll('.row-check').forEach(c => c.checked = this.checked);
 });
 
