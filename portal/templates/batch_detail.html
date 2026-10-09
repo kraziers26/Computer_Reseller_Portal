@@ -1,6 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Batch {{ batch_name }} — ComputerReseller Invoices Portal{% endblock %}
 {% block content %}
+{% import "_item_summary.html" as isum %}
+{{ isum.styles() }}
+<style>
+/* Full screen width on this page (same as All Submissions / Print Batches) */
+.main{max-width:none;min-width:0}
+
+/* ── Orders table ── */
+.bd-table{font-size:12.5px;font-variant-numeric:tabular-nums}
+.bd-table th,.bd-table td{white-space:nowrap;padding:10px 12px;vertical-align:top}
+.bd-table th{font-size:10px;vertical-align:middle}
+.bd-table tr:hover td{background:#1e2130}
+.bd-table .r{text-align:right}
+.bd-table .num{font-family:var(--mono);font-size:12px;text-align:right}
+.bd-table .muted{color:var(--muted)}
+.bd-table .ord{font-family:var(--mono);font-size:12px}
+.bd-table .chk{width:36px;min-width:36px;padding-right:4px}
+.bd-table input[type=checkbox]{width:auto}
+.bd-table td.items{white-space:normal;min-width:340px}
+
+</style>
 <div class="page-header page-header-row">
   <div>
     <div id="name-display" style="display:flex;align-items:center;gap:8px">
@@ -21,7 +41,7 @@
     </p>
   </div>
   <div class="flex gap-8">
-    <button onclick="printCombined()" class="btn btn-primary btn-sm">🖨 Print Combined PDF</button>
+    <button onclick="printCombined()" class="btn btn-primary btn-sm" id="printCombinedBtn">🖨 Print Combined PDF</button>
     <form method="POST" action="{{ url_for('admin.unbatch') }}" style="display:inline"
           onsubmit="return confirm('Undo this entire batch? Orders still at Batched will be released back to the unprinted queue. Orders already received, invoiced, or counted in an open receiving session will be left in place.')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -87,41 +107,40 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <div class="card">
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <div class="table-wrap">
+    <table class="bd-table">
       <thead>
-        <tr style="background:var(--surface2)">
-          <th style="padding:8px 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">
-            <input type="checkbox" id="selectAll" style="width:auto" checked>
-          </th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Order #</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Retailer</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Date</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Person By</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Company</th>
-          <th style="padding:8px 12px;text-align:right;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Total</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">Invoice</th>
-          <th style="padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+        <tr>
+          <th class="chk"><input type="checkbox" id="selectAll" checked aria-label="Select all for combined PDF"></th>
+          <th>Order #</th>
+          <th class="items">Items</th>
+          <th>Retailer</th>
+          <th>Date</th>
+          <th>Person By</th>
+          <th>Company</th>
+          <th class="r">Total</th>
+          <th>Invoice</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
       {% for r in invoices %}
-      <tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:8px 12px">
+      <tr>
+        <td class="chk">
           {% if r.has_pdf %}
-          <input type="checkbox" name="tids" value="{{ r.transaction_id }}"
-                 class="row-check" style="width:auto" checked>
+          <input type="checkbox" name="tids" value="{{ r.transaction_id }}" class="row-check" checked>
           {% else %}
-          <input type="checkbox" style="width:auto;opacity:.3" disabled
-                 title="No DB PDF — cannot include in combined print">
+          <input type="checkbox" style="opacity:.3" disabled title="No DB PDF — cannot include in combined print">
           {% endif %}
         </td>
-        <td style="padding:8px 12px;font-family:var(--mono);font-size:12px">{{ r.order_number[:24] }}</td>
-        <td style="padding:8px 12px">{{ r.retailer }}</td>
-        <td style="padding:8px 12px;font-size:12px;color:var(--muted)">{{ r.purchase_date }}</td>
-        <td style="padding:8px 12px">{{ r.person_name or '—' }}</td>
-        <td style="padding:8px 12px;font-size:12px">{{ r.company_name or '—' }}</td>
-        <td style="padding:8px 12px;text-align:right;font-family:var(--mono)">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
-        <td style="padding:8px 12px">
+        <td class="ord">{{ r.order_number }}{{ isum.count(r) }}</td>
+        <td class="items">{{ isum.cell(r) }}</td>
+        <td>{{ r.retailer }}</td>
+        <td class="muted">{{ r.purchase_date }}</td>
+        <td>{{ r.person_name or '—' }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.price_total or 0) }}</td>
+        <td>
           {% if r.has_pdf %}
             <span style="font-size:11px;color:#4ade80">✓ In DB</span>
           {% elif r.invoice_file_path and r.invoice_file_path.startswith('http') %}
@@ -130,7 +149,7 @@
             <span style="color:var(--hint);font-size:11px">No PDF</span>
           {% endif %}
         </td>
-        <td style="padding:8px 12px">
+        <td>
           {% if r.is_editable %}
           <button type="button" class="btn btn-ghost btn-sm remove-order-btn"
                   data-tid="{{ r.transaction_id }}"
@@ -143,10 +162,11 @@
       </tr>
       {% endfor %}
       {% if not invoices %}
-      <tr><td colspan="9" style="padding:32px;text-align:center;color:var(--muted)">No invoices in this batch.</td></tr>
+      <tr><td colspan="10" style="padding:32px;text-align:center;color:var(--muted)">No invoices in this batch.</td></tr>
       {% endif %}
       </tbody>
     </table>
+    </div>
   </div>
 
   <!-- Hidden submit trigger -->
@@ -157,7 +177,8 @@
 const REMOVE_ORDER_URL = "{{ url_for('admin.batch_remove_order', batch_id=batch_id) }}";
 const REMOVE_CSRF_TOKEN = "{{ csrf_token() }}";
 
-document.getElementById('selectAll').addEventListener('change', function(){
+const selectAllBox = document.getElementById('selectAll');
+if (selectAllBox) selectAllBox.addEventListener('change', function(){
   document.querySelectorAll('.row-check').forEach(c => c.checked = this.checked);
 });
 
@@ -167,7 +188,7 @@ function printCombined() {
     alert('Select at least one invoice with a stored PDF (✓ In DB).');
     return;
   }
-  const btn = document.querySelector('.btn-primary');
+  const btn = document.getElementById('printCombinedBtn');
   btn.textContent = '⏳ Generating PDF...';
   btn.disabled = true;
   document.getElementById('combinedSubmitBtn').click();
