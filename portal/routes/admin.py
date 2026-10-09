@@ -1247,6 +1247,33 @@ def _detect_brand(description):
     return best or 'Other'
 
 
+def _attach_item_lines(cur, rows):
+    """Give each order row its item summary: item_lines (grouped by description
+    + SKU so Apple's one-row-per-serial collapses into "3× iPhone"), unit_count,
+    and the set of brands. Used by Print Batches and the batch detail page."""
+    items_by_tid = {}
+    tids = [str(r['transaction_id']) for r in rows]
+    if tids:
+        cur.execute("""
+            SELECT transaction_id, item_description, sku_model_color,
+                   SUM(quantity)   AS qty,
+                   SUM(line_total) AS amount
+            FROM transaction_items
+            WHERE transaction_id = ANY(%s::uuid[])
+            GROUP BY transaction_id, item_description, sku_model_color
+            ORDER BY transaction_id, SUM(line_total) DESC, item_description
+        """, (tids,))
+        for it in cur.fetchall():
+            it['brand'] = _detect_brand(it['item_description'])
+            items_by_tid.setdefault(str(it['transaction_id']), []).append(it)
+    for r in rows:
+        lines = items_by_tid.get(str(r['transaction_id']), [])
+        r['item_lines'] = lines
+        r['unit_count'] = sum(int(l['qty'] or 0) for l in lines)
+        r['brands'] = sorted({l['brand'] for l in lines})
+    return rows
+
+
 @admin_bp.route('/print-batch', methods=['GET', 'POST'])
 @login_required
 @require_role('admin')
@@ -1350,28 +1377,8 @@ def print_batch():
         """, params)
         unprinted = cur.fetchall()
 
-        # Item summary per order for the "Items" column. Grouped by description +
-        # SKU so per-unit rows (Apple stores one row per serial) collapse back
-        # into a single "qty × item" line. Biggest lines first.
-        items_by_tid = {}
-        tids = [str(r['transaction_id']) for r in unprinted]
-        if tids:
-            cur.execute("""
-                SELECT transaction_id, item_description, sku_model_color,
-                       SUM(quantity)   AS qty,
-                       SUM(line_total) AS amount
-                FROM transaction_items
-                WHERE transaction_id = ANY(%s::uuid[])
-                GROUP BY transaction_id, item_description, sku_model_color
-                ORDER BY transaction_id, SUM(line_total) DESC, item_description
-            """, (tids,))
-            for it in cur.fetchall():
-                items_by_tid.setdefault(str(it['transaction_id']), []).append(it)
-        for r in unprinted:
-            lines = items_by_tid.get(str(r['transaction_id']), [])
-            r['item_lines'] = lines
-            r['unit_count'] = sum(int(l['qty'] or 0) for l in lines)
-            r['brands'] = sorted({_detect_brand(l['item_description']) for l in lines})
+        # Item summary per order for the "Items" column.
+        _attach_item_lines(cur, unprinted)
 
         # Keyword search: every word must appear somewhere in the order --
         # order #, retailer, person, or any item's description / SKU.
@@ -1636,6 +1643,7 @@ def batch_detail(batch_id):
         """, (batch_id,))
         invoices = cur.fetchall()
         batch_date = invoices[0]['print_date'] if invoices else None
+        _attach_item_lines(cur, invoices)
 
         cur.execute("SELECT batch_name FROM print_batches WHERE batch_id = %s", (batch_id,))
         pb = cur.fetchone()
