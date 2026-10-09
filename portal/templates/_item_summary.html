@@ -1,0 +1,47 @@
+{# Shared item-summary pieces: Print Batches + Batch detail.
+   Usage:  {% import "_item_summary.html" as isum %}  then  {{ isum.styles() }},
+   {{ isum.count(r) }} under the order #, and {{ isum.cell(r) }} in the Items column.
+   Rows need item_lines / unit_count from _attach_item_lines() in admin.py. #}
+
+{% macro styles() %}
+<style>
+.isum-line{display:flex;align-items:flex-start;gap:10px;padding:4px 0;font-size:12.5px;line-height:1.4}
+.isum-line + .isum-line{border-top:1px dashed var(--border)}
+.isum-qty{flex:none;min-width:30px;margin-top:1px;text-align:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent2);background:rgba(79,110,247,.12);border-radius:4px;padding:0 5px}
+.isum-name{flex:1;min-width:0;color:var(--text);overflow-wrap:anywhere}
+.isum-sku{display:block;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.isum-amt{flex:none;font-family:var(--mono);font-size:12px;color:var(--muted);padding-left:8px}
+.isum-count{margin-top:3px;font-family:var(--font);font-size:11px;color:var(--muted)}
+.isum-more summary{cursor:pointer;font-size:11px;color:var(--accent2);padding-top:4px;list-style:none}
+.isum-more summary::-webkit-details-marker{display:none}
+.isum-more[open] summary{color:var(--muted)}
+.isum-more[open] summary::after{content:' — hide'}
+.isum-empty{font-size:12px;color:var(--hint);font-style:italic}
+</style>
+{% endmacro %}
+
+{% macro line(l) %}
+<div class="isum-line" title="{{ l.item_description }}{{ ' — ' ~ l.sku_model_color if l.sku_model_color }}">
+  <span class="isum-qty">{{ l.qty }}×</span>
+  <span class="isum-name">{{ l.item_description }}{% if l.sku_model_color %}<span class="isum-sku">{{ l.sku_model_color }}</span>{% endif %}</span>
+  <span class="isum-amt">${{ "{:,.2f}".format(l.amount or 0) }}</span>
+</div>
+{% endmacro %}
+
+{% macro count(r) %}
+{% if r.item_lines %}<div class="isum-count">{{ r.unit_count }} unit{{ 's' if r.unit_count != 1 }} · {{ r.item_lines|length }} line{{ 's' if r.item_lines|length != 1 }}</div>{% endif %}
+{% endmacro %}
+
+{% macro cell(r, show=3) %}
+{% if r.item_lines %}
+  {% for l in r.item_lines[:show] %}{{ line(l) }}{% endfor %}
+  {% if r.item_lines|length > show %}
+  <details class="isum-more">
+    <summary>+{{ r.item_lines|length - show }} more</summary>
+    {% for l in r.item_lines[show:] %}{{ line(l) }}{% endfor %}
+  </details>
+  {% endif %}
+{% else %}
+  <span class="isum-empty">No items parsed</span>
+{% endif %}
+{% endmacro %}
